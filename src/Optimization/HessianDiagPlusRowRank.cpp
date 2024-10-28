@@ -1,6 +1,5 @@
 // Copyright (c) 2017, Lawrence Livermore National Security, LLC.
 // Produced at the Lawrence Livermore National Laboratory (LLNL).
-// Written by Cosmin G. Petra, petra1@llnl.gov.
 // LLNL-CODE-742473. All rights reserved.
 //
 // This file is part of HiOp. For details, see https://github.com/LLNL/hiop. HiOp 
@@ -46,6 +45,13 @@
 // Lawrence Livermore National Security, LLC, and shall not be used for advertising or 
 // product endorsement purposes.
 
+/**
+ * @file HessianDiagPlusRowRank.cpp
+ *
+ * @author Cosmin G. Petra <petra1@llnl.gov>, LLNL
+ *
+ */
+
 #include "HessianDiagPlusRowRank.hpp"
 #include "LinAlgFactory.hpp"
 #include "hiopVectorPar.hpp"
@@ -55,8 +61,6 @@
 #ifdef HIOP_USE_MPI
 #include "mpi.h"
 #endif
-
-//#include <unistd.h> //!remove me
 
 #include <cassert>
 #include <cstring>
@@ -552,7 +556,7 @@ void HessianDiagPlusRowRank::solve(const hiopVector& rhsx, hiopVector& x)
 
   //3. solve with V
   hiopVector& spart=stx; hiopVector& ypart=ytx;
-  solveWithV(spart,ypart);
+  solve_with_V(spart,ypart);
 
   //4. multiply with  DhInv*[B0*S Y], namely
   // result = DhInv*(B0*S*spart + Y*ypart)
@@ -639,7 +643,7 @@ void HessianDiagPlusRowRank::sym_mat_times_inverse_times_mattrans(double beta,
   //S2Y2 is exactly [S1^T] when Fortran Lapack looks at it
   //                [Y1^T]
   hiopMatrixDense& RHS_fortran = S2Y2; 
-  solveWithV(RHS_fortran);
+  solve_with_V(RHS_fortran);
 
   //5. W = W-alpha*[S1 Y1]*[S2^T] 
   //                       [Y2^T]
@@ -717,7 +721,7 @@ void HessianDiagPlusRowRank::factorizeV()
 
 }
 
-void HessianDiagPlusRowRank::solveWithV(hiopVector& rhs_s, hiopVector& rhs_y)
+void HessianDiagPlusRowRank::solve_with_V(hiopVector& rhs_s, hiopVector& rhs_y)
 {
   int N = V_->n();
   if(N==0) {
@@ -727,8 +731,8 @@ void HessianDiagPlusRowRank::solveWithV(hiopVector& rhs_s, hiopVector& rhs_y)
   int l = rhs_s.get_size();
 
 #ifdef HIOP_DEEPCHECKS
-  nlp_->log->write("HessianDiagPlusRowRank::solveWithV: RHS IN 's' part: ", rhs_s, hovMatrices);
-  nlp_->log->write("HessianDiagPlusRowRank::solveWithV: RHS IN 'y' part: ", rhs_y, hovMatrices);
+  nlp_->log->write("HessianDiagPlusRowRank::solve_with_V: RHS IN 's' part: ", rhs_s, hovMatrices);
+  nlp_->log->write("HessianDiagPlusRowRank::solve_with_V: RHS IN 'y' part: ", rhs_y, hovMatrices);
   hiopVector* rhs_saved= LinearAlgebraFactory::create_vector("DEFAULT", rhs_s.get_size()+rhs_y.get_size());
   rhs_saved->copyFromStarting(0, rhs_s);
   rhs_saved->copyFromStarting(l, rhs_y);
@@ -746,7 +750,7 @@ void HessianDiagPlusRowRank::solveWithV(hiopVector& rhs_s, hiopVector& rhs_y)
   DSYTRS(&uplo, &N, &one, V_->local_data(), &lda, V_ipiv_vec_, rhs.local_data(), &N, &info);
 
   if(info<0) {
-    nlp_->log->printf(hovError, "HessianDiagPlusRowRank::solveWithV error: %d arg to dsytrf has an illegal value\n", -info);
+    nlp_->log->printf(hovError, "HessianDiagPlusRowRank::solve_with_V error: %d arg to dsytrf has an illegal value\n", -info);
   }
   assert(info==0);
 
@@ -755,24 +759,24 @@ void HessianDiagPlusRowRank::solveWithV(hiopVector& rhs_s, hiopVector& rhs_y)
   rhs.copyToStarting(l,rhs_y);
 
 #ifdef HIOP_DEEPCHECKS
-  nlp_->log->write("solveWithV: SOL OUT 's' part: ", rhs_s, hovMatrices);
-  nlp_->log->write("solveWithV: SOL OUT 'y' part: ", rhs_y, hovMatrices);
+  nlp_->log->write("solve_with_V: SOL OUT 's' part: ", rhs_s, hovMatrices);
+  nlp_->log->write("solve_with_V: SOL OUT 'y' part: ", rhs_y, hovMatrices);
 
   //residual calculation
   double nrmrhs=rhs_saved->infnorm();
   Vmat_->timesVec(1.0, *rhs_saved, -1.0, rhs);
   double nrmres=rhs_saved->infnorm();
-  //nlp_->log->printf(hovLinAlgScalars, "HessianDiagPlusRowRank::solveWithV 1rhs: rel resid norm=%g\n", nrmres/(1+nrmrhs));
-  nlp_->log->printf(hovScalars, "HessianDiagPlusRowRank::solveWithV 1rhs: rel resid norm=%g\n", nrmres/(1+nrmrhs));
+  //nlp_->log->printf(hovLinAlgScalars, "HessianDiagPlusRowRank::solve_with_V 1rhs: rel resid norm=%g\n", nrmres/(1+nrmrhs));
+  nlp_->log->printf(hovScalars, "HessianDiagPlusRowRank::solve_with_V 1rhs: rel resid norm=%g\n", nrmres/(1+nrmrhs));
   if(nrmres>1e-8) {
-    nlp_->log->printf(hovWarning, "HessianDiagPlusRowRank::solveWithV large residual=%g\n", nrmres);
+    nlp_->log->printf(hovWarning, "HessianDiagPlusRowRank::solve_with_V large residual=%g\n", nrmres);
   }
   delete rhs_saved;
 #endif
 
 }
 
-void HessianDiagPlusRowRank::solveWithV(hiopMatrixDense& rhs)
+void HessianDiagPlusRowRank::solve_with_V(hiopMatrixDense& rhs)
 {
   int N = V_->n();
   if(0==N) {
@@ -780,7 +784,7 @@ void HessianDiagPlusRowRank::solveWithV(hiopMatrixDense& rhs)
   }
 
 #ifdef HIOP_DEEPCHECKS
-  nlp_->log->write("solveWithV: RHS IN: ", rhs, hovMatrices);
+  nlp_->log->write("solve_with_V: RHS IN: ", rhs, hovMatrices);
   hiopMatrixDense* rhs_saved = rhs.new_copy();
 #endif
 
@@ -794,11 +798,11 @@ void HessianDiagPlusRowRank::solveWithV(hiopMatrixDense& rhs)
   DSYTRS(&uplo, &N, &nrhs, V_->local_data(), &lda, V_ipiv_vec_, rhs.local_data(), &ldb, &info);
 
   if(info<0) {
-    nlp_->log->printf(hovError, "HessianDiagPlusRowRank::solveWithV error: %d arg to dsytrf has an illegal value\n", -info);
+    nlp_->log->printf(hovError, "HessianDiagPlusRowRank::solve_with_V error: %d arg to dsytrf has an illegal value\n", -info);
   }
   assert(info==0);
 #ifdef HIOP_DEEPCHECKS
-  nlp_->log->write("solveWithV: SOL OUT: ", rhs, hovMatrices);
+  nlp_->log->write("solve_with_V: SOL OUT: ", rhs, hovMatrices);
   
   hiopMatrixDense& sol = rhs; //matrix of solutions
   /// TODO: get rid of these uses of specific hiopVector implementation
@@ -814,7 +818,7 @@ void HessianDiagPlusRowRank::solveWithV(hiopMatrixDense& rhs)
     double nrmres = r->infnorm();
     if(nrmres>1e-8) {
       nlp_->log->printf(hovWarning,
-                        "HessianDiagPlusRowRank::solveWithV mult-rhs: rhs number %d has large resid norm=%g\n",
+                        "HessianDiagPlusRowRank::solve_with_V mult-rhs: rhs number %d has large resid norm=%g\n",
                         k,
                         nrmres);
     }
@@ -822,7 +826,7 @@ void HessianDiagPlusRowRank::solveWithV(hiopMatrixDense& rhs)
       resnorm=nrmres/(nrmrhs+1);
     }
   }
-  nlp_->log->printf(hovLinAlgScalars, "HessianDiagPlusRowRank::solveWithV mult-rhs: rel resid norm=%g\n", resnorm);
+  nlp_->log->printf(hovLinAlgScalars, "HessianDiagPlusRowRank::solve_with_V mult-rhs: rel resid norm=%g\n", resnorm);
   delete x;
   delete r;
   delete rhs_saved;

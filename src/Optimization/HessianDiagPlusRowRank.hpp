@@ -46,6 +46,13 @@
 // Lawrence Livermore National Security, LLC, and shall not be used for advertising or 
 // product endorsement purposes.
 
+/**
+ * @file HessianDiagPlusRowRank.hpp
+ *
+ * @author Cosmin G. Petra <petra1@llnl.gov>, LLNL
+ *
+ */
+
 #ifndef HIOP_HESSIANLOWRANK
 #define HIOP_HESSIANLOWRANK
 
@@ -57,7 +64,8 @@
 namespace hiop
 {
 
-/* Class for storing and solving with the identity plus low-rank Hessian. 
+/** 
+ * Encapsultes storage and solves with the Hessian being identity plus low-rank term. 
  *
  * Stores the Hessian (w.r.t. x) approximation as Hk=Dk+Bk, where 
  *  - Dk is the log barrier diagonal
@@ -279,8 +287,8 @@ private:
   int* V_ipiv_vec_;
   
   void factorizeV();
-  void solveWithV(hiopVector& rhs_s, hiopVector& rhs_y);
-  void solveWithV(hiopMatrixDense& rhs);
+  void solve_with_V(hiopVector& rhs_s, hiopVector& rhs_y);
+  void solve_with_V(hiopMatrixDense& rhs);
 private:
   HessianDiagPlusRowRank() {};
   HessianDiagPlusRowRank(const HessianDiagPlusRowRank&) {};
