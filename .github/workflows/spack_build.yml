@@ -99,9 +99,9 @@ jobs:
     strategy:
       matrix:
         spack_spec:
-          - hiop@develop+mpi~raja~shared~kron~sparse ^openblas ^openmpi ^libevent~openssl
-          - hiop@develop~mpi~raja~shared~kron~sparse ^openblas ^libevent~openssl
-          - hiop@develop~mpi+raja~shared~kron~sparse ^openblas ^libevent~openssl
+          - hiop@develop+mpi~raja~shared~kron~sparse ^openmpi 
+          - hiop@develop~mpi~raja~shared~kron~sparse
+          - hiop@develop~mpi+raja~shared~kron~sparse
 
             # We will need coinhsl for this, but what are the rules for using
             # a coinhsl tarball?
@@ -129,7 +129,7 @@ jobs:
           cat << EOF > spack.yaml
           spack:
             specs:
-            - ${{ matrix.spack_spec }} target=x86_64_v2
+            - ${{ matrix.spack_spec }} ^openblas ^cmake~qtgui~ncurses ^libevent~openssl target=x86_64_v2
             concretizer:
               reuse: dependencies
             config:
