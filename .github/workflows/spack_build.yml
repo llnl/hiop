@@ -133,7 +133,7 @@ jobs:
             - openblas
             - libevent~openssl
             concretizer:
-              reuse: false
+              reuse: true
               unify: true
             config:
               source_cache: $SPACK_CACHE/source_cache
