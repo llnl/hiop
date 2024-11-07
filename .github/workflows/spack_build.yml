@@ -129,7 +129,7 @@ jobs:
           cat << EOF > spack.yaml
           spack:
             specs:
-            - ${{ matrix.spack_spec }} ^openblas ^cmake~qtgui~ncurses ^libevent~openssl target=x86_64_v2
+            - ${{ matrix.spack_spec }} ^libevent~openssl target=x86_64_v2
             concretizer:
               reuse: dependencies
             config:
@@ -141,10 +141,15 @@ jobs:
                 padded_length: False
             mirrors:
               local-buildcache: oci://${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-            # spack: https://binaries.spack.io/develop
+              spack: https://binaries.spack.io/develop
             packages:
               all:
                 require: "%gcc"
+              # https://spack.readthedocs.io/en/latest/packages_yaml.html#setting-requirements-on-virtual-specs
+              blas:
+                require: "openblas"
+              cmake:
+                require: "~qtgui~ncurses"
           EOF
 
       - name: Configure GHCR mirror
