@@ -99,9 +99,9 @@ jobs:
     strategy:
       matrix:
         spack_spec:
-          - hiop@develop+mpi~raja~shared~kron~sparse ^openmpi 
-          - hiop@develop~mpi~raja~shared~kron~sparse
-          - hiop@develop~mpi+raja~shared~kron~sparse
+          - hiop@develop+mpi~raja~shared~kron~sparse ^openblas ^openmpi 
+          - hiop@develop~mpi~raja~shared~kron~sparse ^openblas
+          - hiop@develop~mpi+raja~shared~kron~sparse ^openblas
 
             # We will need coinhsl for this, but what are the rules for using
             # a coinhsl tarball?
@@ -146,8 +146,6 @@ jobs:
               all:
                 require: "%gcc"
               # https://spack.readthedocs.io/en/latest/packages_yaml.html#setting-requirements-on-virtual-specs
-              blas:
-                require: "openblas"
               cmake:
                 require: "~qtgui~ncurses"
           EOF
