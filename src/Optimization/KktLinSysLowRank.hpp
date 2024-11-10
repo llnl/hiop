@@ -1,6 +1,5 @@
 // Copyright (c) 2017, Lawrence Livermore National Security, LLC.
 // Produced at the Lawrence Livermore National Laboratory (LLNL).
-// Written by Cosmin G. Petra, petra1@llnl.gov.
 // LLNL-CODE-742473. All rights reserved.
 //
 // This file is part of HiOp. For details, see https://github.com/LLNL/hiop. HiOp
@@ -47,7 +46,7 @@
 // product endorsement purposes.
 
 /**
- * @file KktLinSysLowRank.cpp
+ * @file KktLinSysLowRank.hpp
  *
  * @author Cosmin G. Petra <petra1@llnl.gov>,  LLNL
  *
@@ -165,6 +164,6 @@ private:
   hiopMatrixDense* kxn_mat_; 
   hiopVector* k_vec1_;
 };
-}; //end namespace
+} //end namespace
 
 #endif // HIOP_KKTLINSYSY_LOWRANK
