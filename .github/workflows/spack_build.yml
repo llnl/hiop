@@ -99,13 +99,16 @@ jobs:
     strategy:
       matrix:
         spack_spec:
-          - hiop@develop+mpi~raja~shared~kron~sparse ^openblas ^openmpi ^libevent~openssl
-          - hiop@develop~mpi~raja~shared~kron~sparse ^openblas ^libevent~openssl
-          - hiop@develop~mpi+raja~shared~kron~sparse ^openblas ^libevent~openssl
-
-            # We will need coinhsl for this, but what are the rules for using
-            # a coinhsl tarball?
-            # - hiop@develop~mpi~raja~shared~kron+sparse
+          - hiop@develop+mpi~raja~shared~kron~sparse ^openmpi 
+          - hiop@develop~mpi~raja~shared~kron~sparse
+          - hiop@develop~mpi+raja~shared~kron~sparse
+          # We will need coinhsl for this, but what are the rules for using
+          # a coinhsl tarball?
+          # - hiop@develop~mpi~raja~shared~kron+sparse
+        blas_provider:
+          - openblas
+        compiler:
+          - gcc
 
     name: Build HiOp with Spack
 
@@ -130,8 +133,10 @@ jobs:
           spack:
             specs:
             - ${{ matrix.spack_spec }} target=x86_64_v2
+            - ${{ matrix.blas_provider }} target=x86_64_v2
             concretizer:
-              reuse: dependencies
+              reuse: true # We want to re-use existing binaries in spack / GHCR mirror
+              unify: true # We want to build the openblas and hiop version together!
             config:
               source_cache: $SPACK_CACHE/source_cache
               misc_cache: $SPACK_CACHE/misc_cache
@@ -141,10 +146,18 @@ jobs:
                 padded_length: False
             mirrors:
               local-buildcache: oci://${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-            # spack: https://binaries.spack.io/develop
+              # If the spack buildcache fails for any readon, feel free to disable
+              spack: https://binaries.spack.io/develop
             packages:
               all:
-                require: "%gcc"
+                require: "%${{ matrix.compiler }}"
+              # https://spack.readthedocs.io/en/latest/packages_yaml.html#setting-requirements-on-virtual-specs
+              cmake:
+                # We don't need CMake GUI features for minimal container builds
+                require: "~qtgui~ncurses"
+              libevent:
+                # Building OpenSSL was causing errors
+                require: "~openssl"
           EOF
 
       - name: Configure GHCR mirror
