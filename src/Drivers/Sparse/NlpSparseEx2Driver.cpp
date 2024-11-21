@@ -248,8 +248,10 @@ int main(int argc, char **argv)
       nlp.options->SetStringValue("linsol_mode", "speculative");
       nlp.options->SetStringValue("linear_solver_sparse", "ginkgo");
       if (use_ginkgo_cuda) {
+          nlp.options->SetStringValue("compute_mode", "gpu");
           nlp.options->SetStringValue("ginkgo_exec", "cuda");
       } else if (use_ginkgo_hip) {
+          nlp.options->SetStringValue("compute_mode", "gpu");
           nlp.options->SetStringValue("ginkgo_exec", "hip");
       } else {
           nlp.options->SetStringValue("ginkgo_exec", "reference");

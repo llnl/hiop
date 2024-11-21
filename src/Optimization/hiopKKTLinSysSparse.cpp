@@ -317,9 +317,7 @@ namespace hiop
         if( (nullptr == linSys_ && linear_solver == "auto") || linear_solver == "ginkgo") {
           //ma57, pardiso and strumpack are not available or user requested ginkgo
 #ifdef HIOP_USE_GINKGO              
-          nlp_->log->printf(hovScalars,
-                            "KKT_SPARSE_XYcYd linsys: alloc GINKGO with matrix size %d (%d cons)\n",
-                            n, neq+nineq);
+          linsol_actual = "GINKGO";
           linSys_ = new hiopLinSolverSymSparseGinkgo(n, nnz, nlp_);
 #endif  // HIOP_USE_GINKGO        
         }
@@ -375,6 +373,14 @@ namespace hiop
           linsol_actual = "PARDISO";
           linSys_ = new hiopLinSolverSymSparsePARDISO(n, nnz, nlp_);
 #endif // HIOP_USE_PARDISO
+        }
+        
+        if( (nullptr == linSys_ && linear_solver == "auto") || linear_solver == "ginkgo") {
+          //ma57, pardiso and strumpack are not available or user requested ginkgo
+#ifdef HIOP_USE_GINKGO              
+          linsol_actual = "GINKGO";
+          linSys_ = new hiopLinSolverSymSparseGinkgo(n, nnz, nlp_);
+#endif  // HIOP_USE_GINKGO        
         }
 
         if(linSys_) {
@@ -747,6 +753,14 @@ namespace hiop
 #endif // HIOP_USE_PARDISO          
         }
 
+        if(nullptr == linSys_ && linear_solver == "ginkgo") {
+          //ma57, pardiso and strumpack are not available or user requested ginkgo
+#ifdef HIOP_USE_GINKGO
+          linSys_ = new hiopLinSolverSymSparseGinkgo(n, nnz, nlp_);
+          actual_lin_solver = "GINKGO";        
+#endif  // HIOP_USE_GINKGO        
+        }
+
         if(linSys_) {
           nlp_->log->printf(hovScalars,
                             "KKT_SPARSE_XDYcYd linsys: alloc [%s] size %d (%d cons) (hybrid)\n",
@@ -781,6 +795,14 @@ namespace hiop
           }
 #endif
         } //end resolve
+        
+        if(nullptr == linSys_ && linear_solver == "ginkgo") {
+          //ma57, pardiso and strumpack are not available or user requested ginkgo
+#ifdef HIOP_USE_GINKGO
+          linSys_ = new hiopLinSolverSymSparseGinkgo(n, nnz, nlp_);
+          actual_lin_solver = "GINKGO";        
+#endif  // HIOP_USE_GINKGO        
+        }
       } // end of compute mode gpu
     }
     assert(linSys_&& "KKT_SPARSE_XDYcYd linsys: cannot instantiate backend linear solver");

@@ -239,8 +239,10 @@ int main(int argc, char **argv)
     nlp.options->SetStringValue("fact_acceptor", "inertia_free");
     nlp.options->SetIntegerValue("ir_outer_maxit", 0);
     if (use_ginkgo_cuda) {
+        nlp.options->SetStringValue("compute_mode", "gpu");
         nlp.options->SetStringValue("ginkgo_exec", "cuda");
     } else if (use_ginkgo_hip) {
+        nlp.options->SetStringValue("compute_mode", "gpu");
         nlp.options->SetStringValue("ginkgo_exec", "hip");
     } else {
         nlp.options->SetStringValue("ginkgo_exec", "reference");

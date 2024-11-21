@@ -256,11 +256,23 @@ int main(int argc, char **argv)
     // only support cusolverLU right now, 2023.02.28
     //lsq initialization of the duals fails for this example since the Jacobian is rank deficient
     //use zero initialization
-    nlp.options->SetStringValue("linear_solver_sparse", "resolve");
     if(use_resolve_cuda_rf) {
+      nlp.options->SetStringValue("linear_solver_sparse", "resolve");
       nlp.options->SetStringValue("resolve_refactorization", "rf");
       nlp.options->SetIntegerValue("ir_inner_maxit", 20);
       nlp.options->SetIntegerValue("ir_outer_maxit", 0);
+    }
+    if (use_ginkgo) {
+      nlp.options->SetStringValue("linear_solver_sparse", "ginkgo");
+      nlp.options->SetIntegerValue("ir_outer_maxit", 0);
+      if (use_ginkgo_cuda) {
+        nlp.options->SetStringValue("ginkgo_exec", "cuda");
+      } else if (use_ginkgo_hip) {
+        nlp.options->SetStringValue("ginkgo_exec", "hip");
+      } else {
+        nlp.options->SetStringValue("ginkgo_exec", "reference");
+        nlp.options->SetStringValue("compute_mode", "cpu");
+      }
     }
     nlp.options->SetStringValue("duals_init", "zero");
     nlp.options->SetStringValue("mem_space", "device");
