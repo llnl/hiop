@@ -5,7 +5,7 @@
 
 #include <cassert>
 
-using size_type  = hiop::size_type;
+using size_type = hiop::size_type;
 using index_type = hiop::index_type;
 
 /* Test with bounds and constraints of all types. For some reason this
@@ -36,45 +36,45 @@ public:
                                       size_type& nnz_sparse_Hess_Lagr);
 
   virtual bool eval_f(const size_type& n, const double* x, bool new_x, double& obj_value);
-  virtual bool eval_cons(const size_type&  n,
-                         const size_type&  m,
-                         const size_type&  num_cons,
+  virtual bool eval_cons(const size_type& n,
+                         const size_type& m,
+                         const size_type& num_cons,
                          const index_type* idx_cons,
-                         const double*     x,
-                         bool              new_x,
-                         double*           cons);
+                         const double* x,
+                         bool new_x,
+                         double* cons);
   virtual bool eval_cons(const size_type& n, const size_type& m, const double* x, bool new_x, double* cons);
   virtual bool eval_grad_f(const size_type& n, const double* x, bool new_x, double* gradf);
-  virtual bool eval_Jac_cons(const size_type&  n,
-                             const size_type&  m,
-                             const size_type&  num_cons,
-                             const index_type* idx_cons,
-                             const double*     x,
-                             bool              new_x,
-                             const size_type&  nnzJacS,
-                             index_type*       iJacS,
-                             index_type*       jJacS,
-                             double*           MJacS);
   virtual bool eval_Jac_cons(const size_type& n,
                              const size_type& m,
-                             const double*    x,
-                             bool             new_x,
+                             const size_type& num_cons,
+                             const index_type* idx_cons,
+                             const double* x,
+                             bool new_x,
                              const size_type& nnzJacS,
-                             index_type*      iJacS,
-                             index_type*      jJacS,
-                             double*          MJacS);
+                             index_type* iJacS,
+                             index_type* jJacS,
+                             double* MJacS);
+  virtual bool eval_Jac_cons(const size_type& n,
+                             const size_type& m,
+                             const double* x,
+                             bool new_x,
+                             const size_type& nnzJacS,
+                             index_type* iJacS,
+                             index_type* jJacS,
+                             double* MJacS);
   virtual bool get_starting_point(const size_type& n, double* x0);
   virtual bool eval_Hess_Lagr(const size_type& n,
                               const size_type& m,
-                              const double*    x,
-                              bool             new_x,
-                              const double&    obj_factor,
-                              const double*    lambda,
-                              bool             new_lambda,
+                              const double* x,
+                              bool new_x,
+                              const double& obj_factor,
+                              const double* lambda,
+                              bool new_lambda,
                               const size_type& nnzHSS,
-                              index_type*      iHSS,
-                              index_type*      jHSS,
-                              double*          MHSS);
+                              index_type* iHSS,
+                              index_type* jHSS,
+                              double* MHSS);
 
   // not implemented
   virtual bool
@@ -91,6 +91,6 @@ public:
 
 private:
   size_type n_vars, n_cons;
-  double    scal;
+  double scal;
 };
 #endif

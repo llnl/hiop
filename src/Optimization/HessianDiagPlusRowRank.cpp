@@ -74,7 +74,7 @@ using namespace std;
 #define SIGMA_STRATEGY2 2
 #define SIGMA_STRATEGY3 3
 #define SIGMA_STRATEGY4 4
-#define SIGMA_CONSTANT  5
+#define SIGMA_CONSTANT 5
 
 namespace hiop
 {
@@ -87,72 +87,67 @@ HessianDiagPlusRowRank::HessianDiagPlusRowRank(hiopNlpDenseConstraints* nlp_in, 
       nlp_(nlp_in),
       matrix_changed_(false)
 {
-  DhInv_       = nlp_->alloc_primal_vec();
-  St_          = nlp_->alloc_multivector_primal(0, l_max_);
-  Yt_          = St_->alloc_clone();  // faster than nlp_->alloc_multivector_primal(...);
+  DhInv_ = nlp_->alloc_primal_vec();
+  St_ = nlp_->alloc_multivector_primal(0, l_max_);
+  Yt_ = St_->alloc_clone();  // faster than nlp_->alloc_multivector_primal(...);
   // these are local
-  L_           = LinearAlgebraFactory::create_matrix_dense("DEFAULT", 0, 0);
-  D_           = LinearAlgebraFactory::create_vector("DEFAULT", 0);
-  V_           = LinearAlgebraFactory::create_matrix_dense("DEFAULT", 0, 0);
+  L_ = LinearAlgebraFactory::create_matrix_dense("DEFAULT", 0, 0);
+  D_ = LinearAlgebraFactory::create_vector("DEFAULT", 0);
+  V_ = LinearAlgebraFactory::create_matrix_dense("DEFAULT", 0, 0);
 
   // the previous iteration
-  it_prev_     = new hiopIterate(nlp_);
+  it_prev_ = new hiopIterate(nlp_);
   grad_f_prev_ = nlp_->alloc_primal_vec();
-  Jac_c_prev_  = nlp_->alloc_Jac_c();
-  Jac_d_prev_  = nlp_->alloc_Jac_d();
+  Jac_c_prev_ = nlp_->alloc_Jac_c();
+  Jac_d_prev_ = nlp_->alloc_Jac_d();
 
   // internal buffers for memory pool (none of them should be in n)
 #ifdef HIOP_USE_MPI
-  buff_kxk_    = new double[nlp_->m() * nlp_->m()];
-  buff_2lxk_   = new double[nlp_->m() * 2 * l_max_];
+  buff_kxk_ = new double[nlp_->m() * nlp_->m()];
+  buff_2lxk_ = new double[nlp_->m() * 2 * l_max_];
   buff1_lxlx3_ = new double[3 * l_max_ * l_max_];
   buff2_lxlx3_ = new double[3 * l_max_ * l_max_];
 #else
   // not needed in non-MPI mode
-  buff_kxk_    = nullptr;
-  buff_2lxk_   = nullptr;
+  buff_kxk_ = nullptr;
+  buff_2lxk_ = nullptr;
   buff1_lxlx3_ = nullptr;
   buff2_lxlx3_ = nullptr;
 #endif
 
   // auxiliary objects/buffers
-  S1_                   = nullptr;
-  Y1_                   = nullptr;
-  lxl_mat1_             = nullptr;
-  kxl_mat1_             = nullptr;
-  kx2l_mat1_            = nullptr;
-  l_vec1_               = nullptr;
-  l_vec2_               = nullptr;
-  twol_vec1_            = nullptr;
-  n_vec1_               = DhInv_->alloc_clone();
-  n_vec2_               = DhInv_->alloc_clone();
+  S1_ = nullptr;
+  Y1_ = nullptr;
+  lxl_mat1_ = nullptr;
+  kxl_mat1_ = nullptr;
+  kx2l_mat1_ = nullptr;
+  l_vec1_ = nullptr;
+  l_vec2_ = nullptr;
+  twol_vec1_ = nullptr;
+  n_vec1_ = DhInv_->alloc_clone();
+  n_vec2_ = DhInv_->alloc_clone();
 
-  V_work_vec_           = LinearAlgebraFactory::create_vector("DEFAULT", 0);
-  V_ipiv_vec_           = nullptr;
-  V_ipiv_size_          = -1;
+  V_work_vec_ = LinearAlgebraFactory::create_vector("DEFAULT", 0);
+  V_ipiv_vec_ = nullptr;
+  V_ipiv_size_ = -1;
 
-  sigma0_               = nlp_->options->GetNumeric("sigma0");
-  sigma_                = sigma0_;
+  sigma0_ = nlp_->options->GetNumeric("sigma0");
+  sigma_ = sigma0_;
 
   string sigma_strategy = nlp_->options->GetString("sigma_update_strategy");
   transform(sigma_strategy.begin(), sigma_strategy.end(), sigma_strategy.begin(), ::tolower);
   sigma_update_strategy_ = SIGMA_STRATEGY3;
-  if (sigma_strategy == "sty") {
+  if(sigma_strategy == "sty") {
     sigma_update_strategy_ = SIGMA_STRATEGY1;
-  }
-  else if (sigma_strategy == "sty_inv") {
+  } else if(sigma_strategy == "sty_inv") {
     sigma_update_strategy_ = SIGMA_STRATEGY2;
-  }
-  else if (sigma_strategy == "snrm_ynrm") {
+  } else if(sigma_strategy == "snrm_ynrm") {
     sigma_update_strategy_ = SIGMA_STRATEGY3;
-  }
-  else if (sigma_strategy == "sty_srnm_ynrm") {
+  } else if(sigma_strategy == "sty_srnm_ynrm") {
     sigma_update_strategy_ = SIGMA_STRATEGY4;
-  }
-  else if (sigma_strategy == "sigma0") {
+  } else if(sigma_strategy == "sigma0") {
     sigma_update_strategy_ = SIGMA_CONSTANT;
-  }
-  else {
+  } else {
     assert(false && "sigma_update_strategy option not recognized");
   }
 
@@ -213,11 +208,11 @@ HessianDiagPlusRowRank::~HessianDiagPlusRowRank()
   delete[] V_ipiv_vec_;
   delete V_work_vec_;
 
-  for (auto* it : a) {
+  for(auto* it: a) {
     delete it;
   }
 
-  for (auto* it : b) {
+  for(auto* it: b) {
     delete it;
   }
 }
@@ -225,7 +220,7 @@ HessianDiagPlusRowRank::~HessianDiagPlusRowRank()
 void HessianDiagPlusRowRank::alloc_for_limited_mem(const size_type& mem_length)
 {
   // note: St_ and Yt_ always have l_curr_ rows
-  if (l_curr_ == mem_length) {
+  if(l_curr_ == mem_length) {
     assert(D_->get_size() == l_curr_);
     return;
   }
@@ -237,8 +232,8 @@ void HessianDiagPlusRowRank::alloc_for_limited_mem(const size_type& mem_length)
   Yt_ = St_->alloc_clone();
 
   // these are local
-  L_  = LinearAlgebraFactory::create_matrix_dense("DEFAULT", mem_length, mem_length);
-  D_  = LinearAlgebraFactory::create_vector("DEFAULT", mem_length);
+  L_ = LinearAlgebraFactory::create_matrix_dense("DEFAULT", mem_length, mem_length);
+  D_ = LinearAlgebraFactory::create_vector("DEFAULT", mem_length);
 }
 
 bool HessianDiagPlusRowRank::update_logbar_diag(const hiopVector& Dx)
@@ -285,9 +280,9 @@ void HessianDiagPlusRowRank::print(FILE* f, hiopOutVerbosity v, const char* msg)
 #include <limits>
 
 bool HessianDiagPlusRowRank::update(const hiopIterate& it_curr,
-                                    const hiopVector&  grad_f_curr,
-                                    const hiopMatrix&  Jac_c_curr_in,
-                                    const hiopMatrix&  Jac_d_curr_in)
+                                    const hiopVector& grad_f_curr,
+                                    const hiopMatrix& Jac_c_curr_in,
+                                    const hiopMatrix& Jac_d_curr_in)
 {
   nlp_->runStats.tmSolverInternal.start();
 
@@ -301,14 +296,14 @@ bool HessianDiagPlusRowRank::update(const hiopIterate& it_curr,
   assert(it_curr.sxu->matchesPattern(nlp_->get_ixu()));
 #endif
   // on first call l_curr_=-1
-  if (l_curr_ >= 0) {
-    size_type   n     = grad_f_curr.get_size();
+  if(l_curr_ >= 0) {
+    size_type n = grad_f_curr.get_size();
     // compute s_new = x_curr-x_prev
     hiopVector& s_new = new_n_vec1(n);
     s_new.copyFrom(*it_curr.x);
     s_new.axpy(-1., *it_prev_->x);
     double s_infnorm = s_new.infnorm();
-    if (s_infnorm >= 100 * std::numeric_limits<double>::epsilon()) {  // norm of s not too small
+    if(s_infnorm >= 100 * std::numeric_limits<double>::epsilon()) {  // norm of s not too small
 
       // compute y_new = \grad J(x_curr,\lambda_curr) - \grad J(x_prev, \lambda_curr) (yes, J(x_prev, \lambda_curr))
       //               = graf_f_curr-grad_f_prev + (Jac_c_curr-Jac_c_prev)yc_curr+ (Jac_d_curr-Jac_c_prev)yd_curr -
@@ -334,22 +329,21 @@ bool HessianDiagPlusRowRank::update(const hiopIterate& it_curr,
       nlp_->log->write("HessianDiagPlusRowRank s_new", s_new, hovIteration);
       nlp_->log->write("HessianDiagPlusRowRank y_new", y_new, hovIteration);
 #endif
-      if (sTy > s_nrm2 * y_nrm2 * sqrt(std::numeric_limits<double>::epsilon())) {  // sTy far away from zero
+      if(sTy > s_nrm2 * y_nrm2 * sqrt(std::numeric_limits<double>::epsilon())) {  // sTy far away from zero
 
-        if (l_max_ > 0) {
+        if(l_max_ > 0) {
           // compute the new row in L, update S and Y (either augment them or shift cols and add s_new and y_new)
           hiopVector& YTs = new_l_vec1(l_curr_);
           Yt_->timesVec(0.0, YTs, 1.0, s_new);
           // update representation
-          if (l_curr_ < l_max_) {
+          if(l_curr_ < l_max_) {
             // just grow/augment the matrices
             St_->appendRow(s_new);
             Yt_->appendRow(y_new);
             growL(l_curr_, l_max_, YTs);
             growD(l_curr_, l_max_, sTy);
             l_curr_++;
-          }
-          else {
+          } else {
             // shift
             St_->shiftRows(-1);
             Yt_->shiftRows(-1);
@@ -367,7 +361,7 @@ bool HessianDiagPlusRowRank::update(const hiopIterate& it_curr,
         nlp_->log->printf(hovMatrices, "\n");
 #endif
         // update B0 (i.e., sigma)
-        switch (sigma_update_strategy_) {
+        switch(sigma_update_strategy_) {
           case SIGMA_STRATEGY1:
             sigma_ = sTy / (s_nrm2 * s_nrm2);
             break;
@@ -390,14 +384,12 @@ bool HessianDiagPlusRowRank::update(const hiopIterate& it_curr,
         // safe guard it
         sigma_ = fmax(fmin(sigma_safe_max_, sigma_), sigma_safe_min_);
         nlp_->log->printf(hovLinAlgScalars, "HessianDiagPlusRowRank: sigma was updated to %22.16e\n", sigma_);
-      }
-      else {  // sTy is too small or negative -> skip
+      } else {  // sTy is too small or negative -> skip
         nlp_->log->printf(hovLinAlgScalars,
                           "HessianDiagPlusRowRank: s^T*y=%12.6e not positive enough... skipping the Hessian update\n",
                           sTy);
       }
-    }
-    else {  // norm of s_new is too small -> skip
+    } else {  // norm of s_new is too small -> skip
       nlp_->log->printf(hovLinAlgScalars,
                         "HessianDiagPlusRowRank: ||s_new||=%12.6e too small... skipping the Hessian update\n",
                         s_infnorm);
@@ -408,8 +400,7 @@ bool HessianDiagPlusRowRank::update(const hiopIterate& it_curr,
     Jac_c_prev_->copyFrom(Jac_c_curr);
     Jac_d_prev_->copyFrom(Jac_d_curr);
     nlp_->log->printf(hovLinAlgScalarsVerb, "HessianDiagPlusRowRank: storing the iteration info as 'previous'\n", s_infnorm);
-  }
-  else {
+  } else {
     // this is the first optimization iterate, just save the iterate and exit
     it_prev_->copyFrom(it_curr);
     grad_f_prev_->copyFrom(grad_f_curr);
@@ -440,15 +431,15 @@ void HessianDiagPlusRowRank::updateInternalBFGSRepresentation()
   size_type l = St_->m();
 
   // grow L,D, andV if needed
-  if (L_->m() != l) {
+  if(L_->m() != l) {
     delete L_;
     L_ = LinearAlgebraFactory::create_matrix_dense("DEFAULT", l, l);
   }
-  if (D_->get_size() != l) {
+  if(D_->get_size() != l) {
     delete D_;
     D_ = LinearAlgebraFactory::create_vector("DEFAULT", l);
   }
-  if (V_->m() != 2 * l) {
+  if(V_->m() != 2 * l) {
     delete V_;
     V_ = LinearAlgebraFactory::create_matrix_dense("DEFAULT", 2 * l, 2 * l);
   }
@@ -466,7 +457,7 @@ void HessianDiagPlusRowRank::updateInternalBFGSRepresentation()
 
   //-- block (1,2)
   hiopMatrixDense& StB0DhInvYmL = DpYtDhInvY;  // just a rename
-  hiopVector&      B0DhInv      = new_n_vec1(n);
+  hiopVector& B0DhInv = new_n_vec1(n);
   B0DhInv.copyFrom(*DhInv_);
   B0DhInv.scale(sigma_);
   mat_times_diag_times_mattrans_local(StB0DhInvYmL, *St_, B0DhInv, *Yt_);
@@ -532,7 +523,7 @@ void HessianDiagPlusRowRank::updateInternalBFGSRepresentation()
  */
 void HessianDiagPlusRowRank::solve(const hiopVector& rhsx, hiopVector& x)
 {
-  if (matrix_changed_) {
+  if(matrix_changed_) {
     updateInternalBFGSRepresentation();
   }
 
@@ -588,12 +579,12 @@ void HessianDiagPlusRowRank::solve(const hiopVector& rhsx, hiopVector& x)
  * W is kxk, S,Y are nxl, DhInv,B0 are n, V is 2lx2l
  * X is kxn
  */
-void HessianDiagPlusRowRank::sym_mat_times_inverse_times_mattrans(double                 beta,
-                                                                  hiopMatrixDense&       W,
-                                                                  double                 alpha,
+void HessianDiagPlusRowRank::sym_mat_times_inverse_times_mattrans(double beta,
+                                                                  hiopMatrixDense& W,
+                                                                  double alpha,
                                                                   const hiopMatrixDense& X)
 {
-  if (matrix_changed_) {
+  if(matrix_changed_) {
     updateInternalBFGSRepresentation();
   }
 
@@ -608,10 +599,9 @@ void HessianDiagPlusRowRank::sym_mat_times_inverse_times_mattrans(double        
 
   // 1. compute W=beta*W + alpha*X*DhInv*X'
 #ifdef HIOP_USE_MPI
-  if (0 == nlp_->get_rank()) {
+  if(0 == nlp_->get_rank()) {
     sym_mat_times_diag_times_mattrans_local(beta, W, alpha, X, *DhInv_);
-  }
-  else {
+  } else {
     sym_mat_times_diag_times_mattrans_local(0.0, W, alpha, X, *DhInv_);
   }
   // W will be MPI_All_reduced later
@@ -619,8 +609,8 @@ void HessianDiagPlusRowRank::sym_mat_times_inverse_times_mattrans(double        
   sym_mat_times_diag_times_mattrans_local(beta, W, alpha, X, *DhInv_);
 #endif
   // 2. compute S1=X*DhInv*B0*S and Y1=X*DhInv*Y
-  auto&       S1      = new_S1(X, *St_);
-  auto&       Y1      = new_Y1(X, *Yt_);  // both are kxl
+  auto& S1 = new_S1(X, *St_);
+  auto& Y1 = new_Y1(X, *Yt_);  // both are kxl
   hiopVector& B0DhInv = new_n_vec1(n);
   B0DhInv.copyFrom(*DhInv_);
   B0DhInv.scale(sigma_);
@@ -655,8 +645,8 @@ void HessianDiagPlusRowRank::sym_mat_times_inverse_times_mattrans(double        
 
   // 5. W = W-alpha*[S1 Y1]*[S2^T]
   //                        [Y2^T]
-  S2Y2                = RHS_fortran;
-  alpha               = 0 - alpha;
+  S2Y2 = RHS_fortran;
+  alpha = 0 - alpha;
   hiopMatrixDense& S2 = new_kxl_mat1(k, l);
   S2.copyFromMatrixBlock(S2Y2, 0, 0);
   S1.timesMatTrans_local(1.0, W, alpha, S2);
@@ -675,10 +665,10 @@ void HessianDiagPlusRowRank::sym_mat_times_inverse_times_mattrans(double        
 
 void HessianDiagPlusRowRank::factorizeV()
 {
-  int N   = V_->n();
+  int N = V_->n();
   int lda = N;
   int info;
-  if (N == 0) {
+  if(N == 0) {
     return;
   }
 
@@ -688,39 +678,36 @@ void HessianDiagPlusRowRank::factorizeV()
 
   char uplo = 'L';  // V is upper in C++ so it's lower in fortran
 
-  if (V_ipiv_vec_ == nullptr) {
+  if(V_ipiv_vec_ == nullptr) {
     V_ipiv_vec_ = new int[N];
-  }
-  else {
-    if (V_ipiv_size_ != N) {
+  } else {
+    if(V_ipiv_size_ != N) {
       delete[] V_ipiv_vec_;
-      V_ipiv_vec_  = new int[N];
+      V_ipiv_vec_ = new int[N];
       V_ipiv_size_ = N;
     }
   }
 
-  int    lwork = -1;  // inquire sizes
+  int lwork = -1;  // inquire sizes
   double Vwork_tmp;
   DSYTRF(&uplo, &N, V_->local_data(), &lda, V_ipiv_vec_, &Vwork_tmp, &lwork, &info);
   assert(info == 0);
 
   lwork = (int)Vwork_tmp;
-  if (lwork != V_work_vec_->get_size()) {
-    if (V_work_vec_ != nullptr) {
+  if(lwork != V_work_vec_->get_size()) {
+    if(V_work_vec_ != nullptr) {
       delete V_work_vec_;
     }
     V_work_vec_ = LinearAlgebraFactory::create_vector("DEFAULT", lwork);
-  }
-  else {
+  } else {
     assert(V_work_vec_);
   }
 
   DSYTRF(&uplo, &N, V_->local_data(), &lda, V_ipiv_vec_, V_work_vec_->local_data(), &lwork, &info);
 
-  if (info < 0) {
+  if(info < 0) {
     nlp_->log->printf(hovError, "HessianDiagPlusRowRank::factorizeV error: %d arg to dsytrf has an illegal value\n", -info);
-  }
-  else if (info > 0) {
+  } else if(info > 0) {
     nlp_->log->printf(hovError,
                       "HessianDiagPlusRowRank::factorizeV error: %d entry in the factorization's diagonal is exactly zero. "
                       "Division by zero will occur if a solve is attempted.\n",
@@ -735,7 +722,7 @@ void HessianDiagPlusRowRank::factorizeV()
 void HessianDiagPlusRowRank::solve_with_V(hiopVector& rhs_s, hiopVector& rhs_y)
 {
   int N = V_->n();
-  if (N == 0) {
+  if(N == 0) {
     return;
   }
 
@@ -749,7 +736,7 @@ void HessianDiagPlusRowRank::solve_with_V(hiopVector& rhs_s, hiopVector& rhs_y)
   rhs_saved->copyFromStarting(l, rhs_y);
 #endif
 
-  int  lda = N, one = 1, info;
+  int lda = N, one = 1, info;
   char uplo = 'L';
 #ifdef HIOP_DEEPCHECKS
   assert(N == rhs_s.get_size() + rhs_y.get_size());
@@ -760,7 +747,7 @@ void HessianDiagPlusRowRank::solve_with_V(hiopVector& rhs_s, hiopVector& rhs_y)
 
   DSYTRS(&uplo, &N, &one, V_->local_data(), &lda, V_ipiv_vec_, rhs.local_data(), &N, &info);
 
-  if (info < 0) {
+  if(info < 0) {
     nlp_->log->printf(hovError,
                       "HessianDiagPlusRowRank::solve_with_V error: %d arg to dsytrf has an illegal value\n",
                       -info);
@@ -782,7 +769,7 @@ void HessianDiagPlusRowRank::solve_with_V(hiopVector& rhs_s, hiopVector& rhs_y)
   // nlp_->log->printf(hovLinAlgScalars, "HessianDiagPlusRowRank::solve_with_V 1rhs: rel resid norm=%g\n",
   // nrmres/(1+nrmrhs));
   nlp_->log->printf(hovScalars, "HessianDiagPlusRowRank::solve_with_V 1rhs: rel resid norm=%g\n", nrmres / (1 + nrmrhs));
-  if (nrmres > 1e-8) {
+  if(nrmres > 1e-8) {
     nlp_->log->printf(hovWarning, "HessianDiagPlusRowRank::solve_with_V large residual=%g\n", nrmres);
   }
   delete rhs_saved;
@@ -792,7 +779,7 @@ void HessianDiagPlusRowRank::solve_with_V(hiopVector& rhs_s, hiopVector& rhs_y)
 void HessianDiagPlusRowRank::solve_with_V(hiopMatrixDense& rhs)
 {
   int N = V_->n();
-  if (0 == N) {
+  if(0 == N) {
     return;
   }
 
@@ -804,13 +791,13 @@ void HessianDiagPlusRowRank::solve_with_V(hiopMatrixDense& rhs)
   // rhs is transpose in C++
 
   char uplo = 'L';
-  int  lda = N, ldb = N, nrhs = rhs.m(), info;
+  int lda = N, ldb = N, nrhs = rhs.m(), info;
 #ifdef HIOP_DEEPCHECKS
   assert(N == rhs.n());
 #endif
   DSYTRS(&uplo, &N, &nrhs, V_->local_data(), &lda, V_ipiv_vec_, rhs.local_data(), &ldb, &info);
 
-  if (info < 0) {
+  if(info < 0) {
     nlp_->log->printf(hovError,
                       "HessianDiagPlusRowRank::solve_with_V error: %d arg to dsytrf has an illegal value\n",
                       -info);
@@ -821,23 +808,23 @@ void HessianDiagPlusRowRank::solve_with_V(hiopMatrixDense& rhs)
 
   hiopMatrixDense& sol = rhs;  // matrix of solutions
   /// TODO: get rid of these uses of specific hiopVector implementation
-  hiopVector*      x   = LinearAlgebraFactory::create_vector("DEFAULT", rhs.n());  // again, keep in mind rhs is transposed
-  hiopVector*      r   = LinearAlgebraFactory::create_vector("DEFAULT", rhs.n());
+  hiopVector* x = LinearAlgebraFactory::create_vector("DEFAULT", rhs.n());  // again, keep in mind rhs is transposed
+  hiopVector* r = LinearAlgebraFactory::create_vector("DEFAULT", rhs.n());
 
-  double           resnorm = 0.0;
-  for (int k = 0; k < rhs.m(); k++) {
+  double resnorm = 0.0;
+  for(int k = 0; k < rhs.m(); k++) {
     rhs_saved->getRow(k, *r);
     sol.getRow(k, *x);
     double nrmrhs = r->infnorm();  // nrmrhs=.0;
     Vmat_->timesVec(1.0, *r, -1.0, *x);
     double nrmres = r->infnorm();
-    if (nrmres > 1e-8) {
+    if(nrmres > 1e-8) {
       nlp_->log->printf(hovWarning,
                         "HessianDiagPlusRowRank::solve_with_V mult-rhs: rhs number %d has large resid norm=%g\n",
                         k,
                         nrmres);
     }
-    if (nrmres / (nrmrhs + 1) > resnorm) {
+    if(nrmres / (nrmrhs + 1) > resnorm) {
       resnorm = nrmres / (nrmrhs + 1);
     }
   }
@@ -863,16 +850,16 @@ void HessianDiagPlusRowRank::growL(const int& lmem_curr, const int& lmem_max, co
   // copy from L to newL
   newL->copyBlockFromMatrix(0, 0, *L_);
 
-  double*       newL_mat = newL->local_data();  // doing the rest here
-  const double* YTs_vec  = YTs.local_data_const();
+  double* newL_mat = newL->local_data();  // doing the rest here
+  const double* YTs_vec = YTs.local_data_const();
   // for(int j=0; j<l; j++) newL_mat[l][j] = YTs_vec[j];
-  for (int j = 0; j < l; j++) {
+  for(int j = 0; j < l; j++) {
     newL_mat[l * (l + 1) + j] = YTs_vec[j];
   }
 
   // and the zero entries of the last column
   // for(int i=0; i<l+1; i++) newL_mat[i][l] = 0.0;
-  for (int i = 0; i < l + 1; i++) {
+  for(int i = 0; i < l + 1; i++) {
     newL_mat[i * (l + 1) + l] = 0.0;
   }
 
@@ -887,8 +874,8 @@ void HessianDiagPlusRowRank::growD(const int& lmem_curr, const int& lmem_max, co
   assert(l == lmem_curr);
   assert(lmem_max >= l);
 
-  hiopVector* Dnew     = LinearAlgebraFactory::create_vector("DEFAULT", l + 1);
-  double*     Dnew_vec = Dnew->local_data();
+  hiopVector* Dnew = LinearAlgebraFactory::create_vector("DEFAULT", l + 1);
+  double* Dnew_vec = Dnew->local_data();
   memcpy(Dnew_vec, D_->local_data_const(), l * sizeof(double));
   Dnew_vec[l] = sTy;
 
@@ -908,11 +895,11 @@ void HessianDiagPlusRowRank::updateL(const hiopVector& YTs, const double& sTy)
   assert(l_curr_ == l);
   assert(l_curr_ == l_max_);
 #endif
-  const int     lm1     = l - 1;
-  double*       L_mat   = L_->local_data();
+  const int lm1 = l - 1;
+  double* L_mat = L_->local_data();
   const double* yts_vec = YTs.local_data_const();
-  for (int i = 1; i < lm1; i++) {
-    for (int j = 0; j < i; j++) {
+  for(int i = 1; i < lm1; i++) {
+    for(int j = 0; j < i; j++) {
       // L_mat[i][j] = L_mat[i+1][j+1];
       L_mat[i * l + j] = L_mat[(i + 1) * l + j + 1];
     }
@@ -923,7 +910,7 @@ void HessianDiagPlusRowRank::updateL(const hiopVector& YTs, const double& sTy)
   //   L_mat[i][lm1]=0.0;
 
   // first entry in YTs corresponds to y_to_be_discarded_since_it_is_the_oldest'* s_new and is discarded
-  for (int j = 0; j < lm1; j++) {
+  for(int j = 0; j < lm1; j++) {
     // L_mat[lm1][j]=yts_vec[j+1];
     L_mat[lm1 * l + j] = yts_vec[j + 1];
   }
@@ -933,9 +920,9 @@ void HessianDiagPlusRowRank::updateL(const hiopVector& YTs, const double& sTy)
 }
 void HessianDiagPlusRowRank::updateD(const double& sTy)
 {
-  int     l     = D_->get_size();
+  int l = D_->get_size();
   double* D_vec = D_->local_data();
-  for (int i = 0; i < l - 1; i++) {
+  for(int i = 0; i < l - 1; i++) {
     D_vec[i] = D_vec[i + 1];
   }
   D_vec[l - 1] = sTy;
@@ -943,10 +930,10 @@ void HessianDiagPlusRowRank::updateD(const double& sTy)
 
 hiopVector& HessianDiagPlusRowRank::new_l_vec1(int l)
 {
-  if (l_vec1_ != nullptr && l_vec1_->get_size() == l) {
+  if(l_vec1_ != nullptr && l_vec1_->get_size() == l) {
     return *l_vec1_;
   }
-  if (l_vec1_ != nullptr) {
+  if(l_vec1_ != nullptr) {
     delete l_vec1_;
   }
   l_vec1_ = LinearAlgebraFactory::create_vector("DEFAULT", l);
@@ -955,10 +942,10 @@ hiopVector& HessianDiagPlusRowRank::new_l_vec1(int l)
 
 hiopVector& HessianDiagPlusRowRank::new_l_vec2(int l)
 {
-  if (l_vec2_ != nullptr && l_vec2_->get_size() == l) {
+  if(l_vec2_ != nullptr && l_vec2_->get_size() == l) {
     return *l_vec2_;
   }
-  if (l_vec2_ != nullptr) {
+  if(l_vec2_ != nullptr) {
     delete l_vec2_;
   }
   l_vec2_ = LinearAlgebraFactory::create_vector("DEFAULT", l);
@@ -967,11 +954,10 @@ hiopVector& HessianDiagPlusRowRank::new_l_vec2(int l)
 
 hiopMatrixDense& HessianDiagPlusRowRank::new_lxl_mat1(int l)
 {
-  if (lxl_mat1_ != nullptr) {
-    if (l == lxl_mat1_->m()) {
+  if(lxl_mat1_ != nullptr) {
+    if(l == lxl_mat1_->m()) {
       return *lxl_mat1_;
-    }
-    else {
+    } else {
       delete lxl_mat1_;
       lxl_mat1_ = nullptr;
     }
@@ -983,12 +969,11 @@ hiopMatrixDense& HessianDiagPlusRowRank::new_lxl_mat1(int l)
 hiopMatrixDense& HessianDiagPlusRowRank::new_kx2l_mat1(int k, int l)
 {
   const int twol = 2 * l;
-  if (nullptr != kx2l_mat1_) {
+  if(nullptr != kx2l_mat1_) {
     assert(kx2l_mat1_->m() == k);
-    if (twol == kx2l_mat1_->n()) {
+    if(twol == kx2l_mat1_->n()) {
       return *kx2l_mat1_;
-    }
-    else {
+    } else {
       delete kx2l_mat1_;
       kx2l_mat1_ = nullptr;
     }
@@ -999,12 +984,11 @@ hiopMatrixDense& HessianDiagPlusRowRank::new_kx2l_mat1(int k, int l)
 
 hiopMatrixDense& HessianDiagPlusRowRank::new_kxl_mat1(int k, int l)
 {
-  if (kxl_mat1_ != nullptr) {
+  if(kxl_mat1_ != nullptr) {
     assert(kxl_mat1_->m() == k);
-    if (l == kxl_mat1_->n()) {
+    if(l == kxl_mat1_->n()) {
       return *kxl_mat1_;
-    }
-    else {
+    } else {
       delete kxl_mat1_;
       kxl_mat1_ = nullptr;
     }
@@ -1020,15 +1004,15 @@ hiopMatrixDense& HessianDiagPlusRowRank::new_S1(const hiopMatrixDense& X, const 
   size_type l = St.m();
 #ifdef HIOP_DEEPCHECKS
   assert(St.n() == X.n());
-  if (S1_ != nullptr) {
+  if(S1_ != nullptr) {
     assert(S1_->m() == k);
   }
 #endif
-  if (nullptr != S1_ && S1_->n() != l) {
+  if(nullptr != S1_ && S1_->n() != l) {
     delete S1_;
     S1_ = nullptr;
   }
-  if (nullptr == S1_) {
+  if(nullptr == S1_) {
     S1_ = LinearAlgebraFactory::create_matrix_dense("DEFAULT", k, l);
   }
   return *S1_;
@@ -1041,15 +1025,15 @@ hiopMatrixDense& HessianDiagPlusRowRank::new_Y1(const hiopMatrixDense& X, const 
   size_type l = Yt.m();
 #ifdef HIOP_DEEPCHECKS
   assert(X.n() == Yt.n());
-  if (Y1_ != nullptr) {
+  if(Y1_ != nullptr) {
     assert(Y1_->m() == k);
   }
 #endif
-  if (nullptr != Y1_ && Y1_->n() != l) {
+  if(nullptr != Y1_ && Y1_->n() != l) {
     delete Y1_;
     Y1_ = nullptr;
   }
-  if (nullptr == Y1_) {
+  if(nullptr == Y1_) {
     Y1_ = LinearAlgebraFactory::create_matrix_dense("DEFAULT", k, l);
   }
   return *Y1_;
@@ -1063,11 +1047,11 @@ void HessianDiagPlusRowRank::times_vec_no_logbar_term(double beta, hiopVector& y
 
 #endif  // HIOP_DEEPCHECKS
 
-void HessianDiagPlusRowRank::times_vec_common(double            beta,
-                                              hiopVector&       y,
-                                              double            alpha,
+void HessianDiagPlusRowRank::times_vec_common(double beta,
+                                              hiopVector& y,
+                                              double alpha,
                                               const hiopVector& x,
-                                              bool              addLogTerm) const
+                                              bool addLogTerm) const
 {
   size_type n = St_->n();
   assert(l_curr_ == St_->m());
@@ -1078,13 +1062,13 @@ void HessianDiagPlusRowRank::times_vec_common(double            beta,
   // B0 is sigma*I. There is an additional diagonal log-barrier term Dx_
 
   bool print = false;
-  if (print) {
+  if(print) {
     nlp_->log->printf(hovMatrices, "---HessianDiagPlusRowRank::times_vec \n");
     nlp_->log->write("S=", *St_, hovMatrices);
     nlp_->log->write("Y=", *Yt_, hovMatrices);
     nlp_->log->write("DhInv=", *DhInv_, hovMatrices);
     nlp_->log->printf(hovMatrices, "sigma=%22.16e;  addLogTerm=%d;\n", sigma_, addLogTerm);
-    if (addLogTerm) {
+    if(addLogTerm) {
       nlp_->log->write("Dx=", *Dx_, hovMatrices);
     }
     nlp_->log->printf(hovMatrices, "y=beta*y + alpha*this*x : beta=%g alpha=%g\n", beta, alpha);
@@ -1097,13 +1081,13 @@ void HessianDiagPlusRowRank::times_vec_common(double            beta,
   a.resize(l_curr_, nullptr);
   b.resize(l_curr_, nullptr);
   int n_local = Yt_->get_local_size_n();
-  for (int k = 0; k < l_curr_; k++) {
+  for(int k = 0; k < l_curr_; k++) {
     // bk=yk/sqrt(yk'*sk)
     yk->copyFrom(Yt_->local_data() + k * n_local);
     sk->copyFrom(St_->local_data() + k * n_local);
     double skTyk = yk->dotProductWith(*sk);
 
-    if (skTyk < std::numeric_limits<double>::epsilon()) {
+    if(skTyk < std::numeric_limits<double>::epsilon()) {
       nlp_->log->printf(hovLinAlgScalars,
                         "HessianDiagPlusRowRank: ||s_k^T*y_k||=%12.6e too small and was set it to mach eps = %12.6e \n",
                         skTyk,
@@ -1111,7 +1095,7 @@ void HessianDiagPlusRowRank::times_vec_common(double            beta,
       skTyk = std::numeric_limits<double>::epsilon();
     }
 
-    if (a[k] == nullptr && b[k] == nullptr) {
+    if(a[k] == nullptr && b[k] == nullptr) {
       b[k] = nlp_->alloc_primal_vec();
       a[k] = nlp_->alloc_primal_vec();
     }
@@ -1123,7 +1107,7 @@ void HessianDiagPlusRowRank::times_vec_common(double            beta,
     a[k]->copyFrom(*sk);
     a[k]->scale(sigma_);
 
-    for (int i = 0; i < k; i++) {
+    for(int i = 0; i < k; i++) {
       double biTsk = b[i]->dotProductWith(*sk);
       a[k]->axpy(+biTsk, *b[i]);
       double aiTsk = a[i]->dotProductWith(*sk);
@@ -1137,13 +1121,13 @@ void HessianDiagPlusRowRank::times_vec_common(double            beta,
   // compute the product with x
   // y = beta*y+alpha*(B0+Dx)*x + alpha* sum { bk'x bk - ak'x ak : k=0,1,...,l_curr-1}
   y.scale(beta);
-  if (addLogTerm) {
+  if(addLogTerm) {
     y.axzpy(alpha, x, *Dx_);
   }
 
   y.axpy(alpha * sigma_, x);
 
-  for (int k = 0; k < l_curr_; k++) {
+  for(int k = 0; k < l_curr_; k++) {
     double bkTx = b[k]->dotProductWith(x);
     double akTx = a[k]->dotProductWith(x);
 
@@ -1151,7 +1135,7 @@ void HessianDiagPlusRowRank::times_vec_common(double            beta,
     y.axpy(-alpha * akTx, *a[k]);
   }
 
-  if (print) {
+  if(print) {
     nlp_->log->write("y_out=", y, hovMatrices);
   }
 }
@@ -1174,13 +1158,13 @@ void HessianDiagPlusRowRank::timesVec(double beta, hiopVector& y, double alpha, 
  * W is kxk local, X is kxn distributed and Diag is n, distributed
  * The ops are perform locally. The reduce is done separately/externally to decrease comm
  */
-void HessianDiagPlusRowRank::sym_mat_times_diag_times_mattrans_local(double                 beta,
-                                                                     hiopMatrixDense&       W,
-                                                                     double                 alpha,
+void HessianDiagPlusRowRank::sym_mat_times_diag_times_mattrans_local(double beta,
+                                                                     hiopMatrixDense& W,
+                                                                     double alpha,
                                                                      const hiopMatrixDense& X,
-                                                                     const hiopVector&      d)
+                                                                     const hiopVector& d)
 {
-  size_type k       = W.m();
+  size_type k = W.m();
   size_type n_local = X.get_local_size_n();
 
   assert(X.m() == k);
@@ -1193,19 +1177,19 @@ void HessianDiagPlusRowRank::sym_mat_times_diag_times_mattrans_local(double     
 
   // #define chunk 512; //!opt
   const double *xi, *xj;
-  double        acc;
-  double*       Wdata = W.local_data();
+  double acc;
+  double* Wdata = W.local_data();
   const double* Xdata = X.local_data_const();
-  const double* dd    = d.local_data_const();
-  for (int i = 0; i < k; i++) {
+  const double* dd = d.local_data_const();
+  for(int i = 0; i < k; i++) {
     // xi=Xdata[i];
     xi = Xdata + i * n_local;
-    for (int j = i; j < k; j++) {
+    for(int j = i; j < k; j++) {
       // xj=Xdata[j];
-      xj  = Xdata + j * n_local;
+      xj = Xdata + j * n_local;
       // compute W[i,j] = sum {X[i,p]*d[p]*X[j,p] : p=1,...,n_local}
       acc = 0.0;
-      for (size_type p = 0; p < n_local; p++) {
+      for(size_type p = 0; p < n_local; p++) {
         acc += xi[p] * dd[p] * xj[p];
       }
 
@@ -1216,9 +1200,9 @@ void HessianDiagPlusRowRank::sym_mat_times_diag_times_mattrans_local(double     
 }
 
 /* W=S*D*X^T, where S is lxn, D is diag nxn, and X is kxn */
-void HessianDiagPlusRowRank::mat_times_diag_times_mattrans_local(hiopMatrixDense&       W,
+void HessianDiagPlusRowRank::mat_times_diag_times_mattrans_local(hiopMatrixDense& W,
                                                                  const hiopMatrixDense& S,
-                                                                 const hiopVector&      d,
+                                                                 const hiopVector& d,
                                                                  const hiopMatrixDense& X)
 {
 #ifdef HIOP_DEEPCHECKS
@@ -1229,24 +1213,24 @@ void HessianDiagPlusRowRank::mat_times_diag_times_mattrans_local(hiopMatrixDense
   assert(X.get_local_size_n() == d.get_local_size());
 
   const double* Sdi;
-  double*       Wdi;
+  double* Wdi;
   const double* Xdj;
-  double        acc;
-  double*       Wd   = W.local_data();
-  const double* Sd   = S.local_data_const();
-  const double* Xd   = X.local_data_const();
+  double acc;
+  double* Wd = W.local_data();
+  const double* Sd = S.local_data_const();
+  const double* Xd = X.local_data_const();
   const double* diag = d.local_data_const();
   //! opt
-  for (int i = 0; i < l; i++) {
+  for(int i = 0; i < l; i++) {
     // Sdi=Sd[i]; Wdi=Wd[i];
     Sdi = Sd + i * n;
     Wdi = Wd + i * W.get_local_size_n();
 
-    for (int j = 0; j < k; j++) {
+    for(int j = 0; j < k; j++) {
       // Xdj=Xd[j];
       Xdj = Xd + j * n;
       acc = 0.;
-      for (int p = 0; p < n; p++) {
+      for(int p = 0; p < n; p++) {
         // acc += Sdi[p]*diag[p]*Xdj[p];
         acc += Sdi[p] * diag[p] * Xdj[p];
       }
