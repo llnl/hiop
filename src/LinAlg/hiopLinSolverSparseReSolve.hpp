@@ -67,17 +67,16 @@
  * @ingroup LinearSolvers
  */
 
-
-namespace ReSolve {
-  // Forward declaration of inner IR class
-  class IterativeRefinement;
-  class MatrixCsr;
-  class RefactorizationSolver;
-}
+namespace ReSolve
+{
+// Forward declaration of inner IR class
+class IterativeRefinement;
+class MatrixCsr;
+class RefactorizationSolver;
+}  // namespace ReSolve
 
 namespace hiop
 {
-
 
 class hiopLinSolverSymSparseReSolve : public hiopLinSolverSymSparse
 {
@@ -86,25 +85,24 @@ public:
   hiopLinSolverSymSparseReSolve(const int& n, const int& nnz, hiopNlpFormulation* nlp);
   virtual ~hiopLinSolverSymSparseReSolve();
 
-  /** 
+  /**
    * @brief Triggers a refactorization of the matrix, if necessary.
    * Overload from base class.
    * In this case, KLU (SuiteSparse) is used to refactor
    */
   virtual int matrixChanged();
 
-  /** 
+  /**
    * @brief Solves a linear system.
-   * 
+   *
    * @param x is on entry the right hand side(s) of the system to be solved.
-   * 
+   *
    * @post On exit `x` is overwritten with the solution(s).
    */
-   virtual bool solve(hiopVector& x_);
+  virtual bool solve(hiopVector& x_);
 
   /** Multiple rhs not supported yet */
-  virtual bool
-  solve(hiopMatrix& /* x */)
+  virtual bool solve(hiopMatrix& /* x */)
   {
     assert(false && "not yet supported");
     return false;
@@ -113,9 +111,9 @@ public:
 protected:
   ReSolve::RefactorizationSolver* solver_;
 
-  int m_;   ///< number of rows of the whole matrix
-  int n_;   ///< number of cols of the whole matrix
-  int nnz_; ///< number of nonzeros in the matrix
+  int m_;    ///< number of rows of the whole matrix
+  int n_;    ///< number of cols of the whole matrix
+  int nnz_;  ///< number of nonzeros in the matrix
 
   // Mapping on the host
   int* index_convert_CSR2Triplet_host_;
@@ -129,7 +127,7 @@ protected:
   int factorizationSetupSucc_;
   bool is_first_call_;
 
-  hiopMatrixSparse* M_host_{ nullptr }; ///< Host mirror for the KKT matrix
+  hiopMatrixSparse* M_host_{nullptr};  ///< Host mirror for the KKT matrix
 
   /* private function: creates a cuSolver data structure from KLU data
    * structures. */
@@ -143,7 +141,7 @@ protected:
 
   /**
    * @brief Updates matrix values from HiOp object.
-   * 
+   *
    * @note This function maps data from HiOp supplied matrix M_ to data structures
    * used by the linear solver.
    */
@@ -154,10 +152,10 @@ protected:
   /** Function to compute column indices and matrix values arrays */
   void set_csr_indices_values();
 
-  template <typename T> void hiopCheckCudaError(T result, const char* const file, int const line);
+  template<typename T>
+  void hiopCheckCudaError(T result, const char* const file, int const line);
 };
 
-} // namespace hiop
-
+}  // namespace hiop
 
 #endif

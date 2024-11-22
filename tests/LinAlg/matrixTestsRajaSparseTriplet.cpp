@@ -53,7 +53,7 @@
  * @author Slaven Peles <slaven.peles@pnnl.gov>, PNNL
  * @author Cameron Rutherford <robert.rutherford@pnnl.gov>, PNNL
  * @author Jake K. Ryan <jake.ryan@pnnl.gov>, PNNL
- * 
+ *
  */
 
 #include <cstring>
@@ -63,88 +63,84 @@
 #include "matrixTestsRajaSparseTriplet.hpp"
 #include "hiopVectorIntRaja.hpp"
 
-//TODO: this is a quick hack. Will need to modify this class to be aware of the instantiated
-// template parameters for vector and matrix RAJA classes. Likely a better approach would be
-// to revise the tests to try out multiple configurations of the memory backends and execution
-// policies for RAJA dense matrix.
+// TODO: this is a quick hack. Will need to modify this class to be aware of the instantiated
+//  template parameters for vector and matrix RAJA classes. Likely a better approach would be
+//  to revise the tests to try out multiple configurations of the memory backends and execution
+//  policies for RAJA dense matrix.
 #if defined(HIOP_USE_CUDA)
 #include <ExecPoliciesRajaCudaImpl.hpp>
 using hiopVectorRajaT = hiop::hiopVectorRaja<hiop::MemBackendUmpire, hiop::ExecPolicyRajaCuda>;
 using hiopVectorIntRajaT = hiop::hiopVectorIntRaja<hiop::MemBackendUmpire, hiop::ExecPolicyRajaCuda>;
 using hiopMatrixRajaDense = hiop::hiopMatrixDenseRaja<hiop::MemBackendUmpire, hiop::ExecPolicyRajaCuda>;
 using hiopMatrixSparseTripletRajaT = hiop::hiopMatrixRajaSparseTriplet<hiop::MemBackendUmpire, hiop::ExecPolicyRajaCuda>;
-using hiopMatrixSymSparseTripletRajaT = hiop::hiopMatrixRajaSymSparseTriplet<hiop::MemBackendUmpire, hiop::ExecPolicyRajaCuda>;
+using hiopMatrixSymSparseTripletRajaT =
+    hiop::hiopMatrixRajaSymSparseTriplet<hiop::MemBackendUmpire, hiop::ExecPolicyRajaCuda>;
 #elif defined(HIOP_USE_HIP)
 #include <ExecPoliciesRajaHipImpl.hpp>
 using hiopVectorRajaT = hiop::hiopVectorRaja<hiop::MemBackendUmpire, hiop::ExecPolicyRajaHip>;
 using hiopVectorIntRajaT = hiop::hiopVectorIntRaja<hiop::MemBackendUmpire, hiop::ExecPolicyRajaHip>;
 using hiopMatrixRajaDense = hiop::hiopMatrixDenseRaja<hiop::MemBackendUmpire, hiop::ExecPolicyRajaHip>;
 using hiopMatrixSparseTripletRajaT = hiop::hiopMatrixRajaSparseTriplet<hiop::MemBackendUmpire, hiop::ExecPolicyRajaHip>;
-using hiopMatrixSymSparseTripletRajaT = hiop::hiopMatrixRajaSymSparseTriplet<hiop::MemBackendUmpire, hiop::ExecPolicyRajaHip>;
+using hiopMatrixSymSparseTripletRajaT =
+    hiop::hiopMatrixRajaSymSparseTriplet<hiop::MemBackendUmpire, hiop::ExecPolicyRajaHip>;
 #else
-//#if !defined(HIOP_USE_CUDA) && !defined(HIOP_USE_HIP)
+// #if !defined(HIOP_USE_CUDA) && !defined(HIOP_USE_HIP)
 #include <ExecPoliciesRajaOmpImpl.hpp>
 using hiopVectorRajaT = hiop::hiopVectorRaja<hiop::MemBackendUmpire, hiop::ExecPolicyRajaOmp>;
 using hiopVectorIntRajaT = hiop::hiopVectorIntRaja<hiop::MemBackendUmpire, hiop::ExecPolicyRajaOmp>;
 using hiopMatrixRajaDense = hiop::hiopMatrixDenseRaja<hiop::MemBackendUmpire, hiop::ExecPolicyRajaOmp>;
 using hiopMatrixSparseTripletRajaT = hiop::hiopMatrixRajaSparseTriplet<hiop::MemBackendUmpire, hiop::ExecPolicyRajaOmp>;
-using hiopMatrixSymSparseTripletRajaT = hiop::hiopMatrixRajaSymSparseTriplet<hiop::MemBackendUmpire, hiop::ExecPolicyRajaOmp>;
+using hiopMatrixSymSparseTripletRajaT =
+    hiop::hiopMatrixRajaSymSparseTriplet<hiop::MemBackendUmpire, hiop::ExecPolicyRajaOmp>;
 #endif
 
+namespace hiop
+{
+namespace tests
+{
 
-namespace hiop{ namespace tests {
-
-/// Set `i`th element of vector `x` 
-void MatrixTestsRajaSparseTriplet::setLocalElement(
-    hiop::hiopVector* xvec,
-    const local_ordinal_type i,
-    const real_type val)
+/// Set `i`th element of vector `x`
+void MatrixTestsRajaSparseTriplet::setLocalElement(hiop::hiopVector* xvec, const local_ordinal_type i, const real_type val)
 {
   auto x = dynamic_cast<hiopVectorRajaT*>(xvec);
-  if(x != nullptr)
-  {
+  if(x != nullptr) {
     x->copyFromDev();
     real_type* data = x->local_data_host();
     data[i] = val;
     x->copyToDev();
-  }
-  else THROW_NULL_DEREF;
+  } else
+    THROW_NULL_DEREF;
 }
 
 /// Returns element (i,j) of a dense matrix `A`.
 /// First need to retrieve hiopMatrixDense from the abstract interface
-real_type MatrixTestsRajaSparseTriplet::getLocalElement(
-    const hiop::hiopMatrix* A,
-    local_ordinal_type row,
-    local_ordinal_type col)
+real_type MatrixTestsRajaSparseTriplet::getLocalElement(const hiop::hiopMatrix* A,
+                                                        local_ordinal_type row,
+                                                        local_ordinal_type col)
 {
   const auto* mat = dynamic_cast<const hiopMatrixRajaDense*>(A);
-  
-  if (mat != nullptr)
-  {
+
+  if(mat != nullptr) {
     auto* amat = const_cast<hiopMatrixRajaDense*>(mat);
     amat->copyFromDev();
-    //double** M = amat->get_M_host();
-    //return M[row][col];
-    return amat->local_data_const()[row*amat->get_local_size_n() + col];
-  }
-  else THROW_NULL_DEREF;
+    // double** M = amat->get_M_host();
+    // return M[row][col];
+    return amat->local_data_const()[row * amat->get_local_size_n() + col];
+  } else
+    THROW_NULL_DEREF;
 }
 
 /// Returns element _i_ of vector _x_.
 /// First need to retrieve hiopVectorPar from the abstract interface
-real_type MatrixTestsRajaSparseTriplet::getLocalElement(
-    const hiop::hiopVector* x,
-    local_ordinal_type i)
+real_type MatrixTestsRajaSparseTriplet::getLocalElement(const hiop::hiopVector* x, local_ordinal_type i)
 {
   const auto* xvec = dynamic_cast<const hiopVectorRajaT*>(x);
-  if(xvec != nullptr)
-  {
+  if(xvec != nullptr) {
     auto* axvec = const_cast<hiopVectorRajaT*>(xvec);
     axvec->copyFromDev();
     return xvec->local_data_host_const()[i];
-  }
-  else THROW_NULL_DEREF;
+  } else
+    THROW_NULL_DEREF;
 }
 
 real_type* MatrixTestsRajaSparseTriplet::getMatrixData(hiop::hiopMatrixSparse* A)
@@ -157,14 +153,14 @@ real_type* MatrixTestsRajaSparseTriplet::getMatrixData(hiop::hiopMatrixSparse* A
 const local_ordinal_type* MatrixTestsRajaSparseTriplet::getRowIndices(const hiop::hiopMatrixSparse* A)
 {
   const auto* mat = dynamic_cast<const hiopMatrixSparseTripletRajaT*>(A);
-  const_cast<hiopMatrixSparseTripletRajaT*>(mat)->copyFromDev(); // UB?
+  const_cast<hiopMatrixSparseTripletRajaT*>(mat)->copyFromDev();  // UB?
   return mat->i_row_host();
 }
 
 const local_ordinal_type* MatrixTestsRajaSparseTriplet::getColumnIndices(const hiop::hiopMatrixSparse* A)
 {
   const auto* mat = dynamic_cast<const hiopMatrixSparseTripletRajaT*>(A);
-  const_cast<hiopMatrixSparseTripletRajaT*>(mat)->copyFromDev(); // UB?
+  const_cast<hiopMatrixSparseTripletRajaT*>(mat)->copyFromDev();  // UB?
   return mat->j_col_host();
 }
 
@@ -174,7 +170,8 @@ int MatrixTestsRajaSparseTriplet::getLocalSize(const hiop::hiopVector* x)
   const auto* xvec = dynamic_cast<const hiopVectorRajaT*>(x);
   if(xvec != nullptr)
     return static_cast<int>(xvec->get_local_size());
-  else THROW_NULL_DEREF;
+  else
+    THROW_NULL_DEREF;
 }
 
 /**
@@ -186,17 +183,14 @@ int MatrixTestsRajaSparseTriplet::getLocalSize(const hiop::hiopVector* x)
 [[nodiscard]]
 int MatrixTestsRajaSparseTriplet::verifyAnswer(hiop::hiopMatrixSparse* A, const double answer)
 {
-  if(A == nullptr)
-    return 1;
+  if(A == nullptr) return 1;
   auto* mat = dynamic_cast<hiopMatrixSparseTripletRajaT*>(A);
   mat->copyFromDev();
   const local_ordinal_type nnz = mat->numberOfNonzeros();
   const real_type* values = mat->M_host();
   int fail = 0;
-  for (local_ordinal_type i=0; i<nnz; i++)
-  {
-    if (!isEqual(values[i], answer))
-    {
+  for(local_ordinal_type i = 0; i < nnz; i++) {
+    if(!isEqual(values[i], answer)) {
       printf("Failed. %f != %f.\n", values[i], answer);
       fail++;
     }
@@ -208,7 +202,10 @@ int MatrixTestsRajaSparseTriplet::verifyAnswer(hiop::hiopMatrixSparse* A, const 
  * @brief Verifies a range of nonzeros in a sparse matrix, starting from index "nnz_from" to index "nnz_to"-1.
  */
 [[nodiscard]]
-int MatrixTestsRajaSparseTriplet::verifyAnswer(hiop::hiopMatrix* A, local_ordinal_type nnz_from, local_ordinal_type nnz_to, const double answer)
+int MatrixTestsRajaSparseTriplet::verifyAnswer(hiop::hiopMatrix* A,
+                                               local_ordinal_type nnz_from,
+                                               local_ordinal_type nnz_to,
+                                               const double answer)
 {
   if(A == nullptr) {
     return 1;
@@ -216,15 +213,13 @@ int MatrixTestsRajaSparseTriplet::verifyAnswer(hiop::hiopMatrix* A, local_ordina
   auto mat = dynamic_cast<hiopMatrixSparseTripletRajaT*>(A);
   mat->copyFromDev();
   const local_ordinal_type nnz = mat->numberOfNonzeros();
-  if(nnz_to-nnz_from > nnz) {
+  if(nnz_to - nnz_from > nnz) {
     return 1;
   }
   const real_type* values = mat->M_host();
   int fail = 0;
-  for (local_ordinal_type i=nnz_from; i<nnz_to; i++)
-  {
-    if (!isEqual(values[i], answer))
-    {
+  for(local_ordinal_type i = nnz_from; i < nnz_to; i++) {
+    if(!isEqual(values[i], answer)) {
       fail++;
     }
   }
@@ -235,10 +230,9 @@ int MatrixTestsRajaSparseTriplet::verifyAnswer(hiop::hiopMatrix* A, local_ordina
  * Pass a function-like object to calculate the expected
  * answer dynamically, based on the row and column
  */
-  [[nodiscard]]
-int MatrixTestsRajaSparseTriplet::verifyAnswer(
-    hiop::hiopMatrixDense* Amat,
-    std::function<real_type(local_ordinal_type, local_ordinal_type)> expect)
+[[nodiscard]]
+int MatrixTestsRajaSparseTriplet::verifyAnswer(hiop::hiopMatrixDense* Amat,
+                                               std::function<real_type(local_ordinal_type, local_ordinal_type)> expect)
 {
   auto* A = dynamic_cast<hiopMatrixRajaDense*>(Amat);
   assert(A->get_local_size_n() == A->n() && "Matrix should not be distributed");
@@ -247,13 +241,10 @@ int MatrixTestsRajaSparseTriplet::verifyAnswer(
   int fail = 0;
   A->copyFromDev();
   const double* mat = A->local_data_host();
-  for (local_ordinal_type i=0; i<M; i++)
-  {
-    for (local_ordinal_type j=0; j<N; j++)
-    {
-      if (!isEqual(mat[i*N+j], expect(i, j)))
-      {
-        printf("(%d, %d) failed. %f != %f.\n", i, j, mat[i*N+j], expect(i, j));
+  for(local_ordinal_type i = 0; i < M; i++) {
+    for(local_ordinal_type j = 0; j < N; j++) {
+      if(!isEqual(mat[i * N + j], expect(i, j))) {
+        printf("(%d, %d) failed. %f != %f.\n", i, j, mat[i * N + j], expect(i, j));
         fail++;
       }
       // else
@@ -264,7 +255,7 @@ int MatrixTestsRajaSparseTriplet::verifyAnswer(
 }
 
 /// Checks if _local_ vector elements are set to `answer`.
-  [[nodiscard]]
+[[nodiscard]]
 int MatrixTestsRajaSparseTriplet::verifyAnswer(hiop::hiopVector* x, double answer)
 {
   auto* xvec = dynamic_cast<hiopVectorRajaT*>(x);
@@ -273,10 +264,8 @@ int MatrixTestsRajaSparseTriplet::verifyAnswer(hiop::hiopVector* x, double answe
   const auto* vec = xvec->local_data_host_const();
 
   int local_fail = 0;
-  for(local_ordinal_type i=0; i<N; ++i)
-  {
-    if(!isEqual(vec[i], answer))
-    {
+  for(local_ordinal_type i = 0; i < N; ++i) {
+    if(!isEqual(vec[i], answer)) {
       printf("Failed. %f != %f.\n", vec[i], answer);
       ++local_fail;
     }
@@ -284,10 +273,8 @@ int MatrixTestsRajaSparseTriplet::verifyAnswer(hiop::hiopVector* x, double answe
   return local_fail;
 }
 
-  [[nodiscard]]
-int MatrixTestsRajaSparseTriplet::verifyAnswer(
-    hiop::hiopVector* x,
-    std::function<real_type(local_ordinal_type)> expect)
+[[nodiscard]]
+int MatrixTestsRajaSparseTriplet::verifyAnswer(hiop::hiopVector* x, std::function<real_type(local_ordinal_type)> expect)
 {
   const local_ordinal_type N = getLocalSize(x);
 
@@ -296,10 +283,8 @@ int MatrixTestsRajaSparseTriplet::verifyAnswer(
   const auto* vec = xvec->local_data_host_const();
 
   int local_fail = 0;
-  for (int i=0; i<N; i++)
-  {
-    if(!isEqual(vec[i], expect(i)))
-    {
+  for(int i = 0; i < N; i++) {
+    if(!isEqual(vec[i], expect(i))) {
       printf("%d failed. %f != %f (exp.)\n", i, vec[i], expect(i));
       ++local_fail;
     }
@@ -318,8 +303,7 @@ local_ordinal_type* MatrixTestsRajaSparseTriplet::numNonzerosPerRow(hiop::hiopMa
   auto sparsity_pattern = new local_ordinal_type[mat->m()];
   std::memset(sparsity_pattern, 0, sizeof(local_ordinal_type) * mat->m());
 
-  for(local_ordinal_type i = 0; i < nnz; i++)
-  {
+  for(local_ordinal_type i = 0; i < nnz; i++) {
     sparsity_pattern[iRow[i]]++;
   }
   return sparsity_pattern;
@@ -334,40 +318,34 @@ local_ordinal_type* MatrixTestsRajaSparseTriplet::numNonzerosPerCol(hiop::hiopMa
   auto sparsity_pattern = new local_ordinal_type[mat->n()];
   std::memset(sparsity_pattern, 0, sizeof(local_ordinal_type) * mat->n());
 
-  for(local_ordinal_type i = 0; i < nnz; i++)
-  {
+  for(local_ordinal_type i = 0; i < nnz; i++) {
     sparsity_pattern[jCol[i]]++;
   }
   return sparsity_pattern;
 }
 
-void MatrixTestsRajaSparseTriplet::initializeMatrix(
-    hiop::hiopMatrixSparse* mat,
-    local_ordinal_type entries_per_row)
+void MatrixTestsRajaSparseTriplet::initializeMatrix(hiop::hiopMatrixSparse* mat, local_ordinal_type entries_per_row)
 {
   auto* A = dynamic_cast<hiopMatrixSparseTripletRajaT*>(mat);
-  local_ordinal_type * iRow = A->i_row_host();
-  local_ordinal_type * jCol = A->j_col_host();
-  double * val = A->M_host();
+  local_ordinal_type* iRow = A->i_row_host();
+  local_ordinal_type* jCol = A->j_col_host();
+  double* val = A->M_host();
 
   local_ordinal_type m = A->m();
   local_ordinal_type n = A->n();
 
   assert(A->numberOfNonzeros() == m * entries_per_row && "Matrix initialized with insufficent number of non-zero entries");
   A->copyFromDev();
-  for(local_ordinal_type row = 0, col = 0, i = 0; row < m && i < A->numberOfNonzeros(); row++, col = 0) 
-  {
-    for(local_ordinal_type j=0; j<entries_per_row-1; i++, j++, col += n / entries_per_row)
-    {
+  for(local_ordinal_type row = 0, col = 0, i = 0; row < m && i < A->numberOfNonzeros(); row++, col = 0) {
+    for(local_ordinal_type j = 0; j < entries_per_row - 1; i++, j++, col += n / entries_per_row) {
       iRow[i] = row;
       jCol[i] = col;
       val[i] = one;
     }
 
     iRow[i] = row;
-    jCol[i] = n-1;
+    jCol[i] = n - 1;
     val[i++] = one;
-    
   }
   A->copyToDev();
 }
@@ -377,16 +355,13 @@ void MatrixTestsRajaSparseTriplet::initializeMatrix(
  */
 void MatrixTestsRajaSparseTriplet::maybeCopyToDev(hiop::hiopMatrixSparse* mat)
 {
-  if (auto* A = dynamic_cast<hiopMatrixSparseTripletRajaT*>(mat))
-  {
+  if(auto* A = dynamic_cast<hiopMatrixSparseTripletRajaT*>(mat)) {
     A->copyToDev();
-  }
-  else if (auto* A = dynamic_cast<hiopMatrixSymSparseTripletRajaT*>(mat))
-  {
+  } else if(auto* A = dynamic_cast<hiopMatrixSymSparseTripletRajaT*>(mat)) {
     A->copyToDev();
+  } else  // do nothing, raja sparse mat class was not passed in
+  {
   }
-  else // do nothing, raja sparse mat class was not passed in
-  { }
 }
 
 /**
@@ -395,16 +370,13 @@ void MatrixTestsRajaSparseTriplet::maybeCopyToDev(hiop::hiopMatrixSparse* mat)
  */
 void MatrixTestsRajaSparseTriplet::maybeCopyFromDev(hiop::hiopMatrixSparse* mat)
 {
-  if (auto* A = dynamic_cast<hiopMatrixSparseTripletRajaT*>(mat))
-  {
+  if(auto* A = dynamic_cast<hiopMatrixSparseTripletRajaT*>(mat)) {
     A->copyFromDev();
-  }
-  else if (auto* A = dynamic_cast<hiopMatrixSymSparseTripletRajaT*>(mat))
-  {
+  } else if(auto* A = dynamic_cast<hiopMatrixSymSparseTripletRajaT*>(mat)) {
     A->copyFromDev();
+  } else  // do nothing, raja sparse mat class was not passed in
+  {
   }
-  else // do nothing, raja sparse mat class was not passed in
-  { }
 }
 
 int MatrixTestsRajaSparseTriplet::getLocalElement(hiop::hiopVectorInt* xvec, int idx) const
@@ -429,4 +401,5 @@ void MatrixTestsRajaSparseTriplet::setLocalElement(hiop::hiopVectorInt* xvec, in
   }
 }
 
-}} // namespace hiop::tests
+}  // namespace tests
+}  // namespace hiop

@@ -53,7 +53,7 @@
  * @author Slaven Peles <slaven.peles@pnnl.gov>, PNNL
  * @author Cameron Rutherford <robert.rutherford@pnnl.gov>, PNNL
  * @author Jake K. Ryan <jake.ryan@pnnl.gov>, PNNL
- * 
+ *
  */
 
 #pragma once
@@ -62,37 +62,37 @@
 #include <hiopMatrixRajaSparseTriplet.hpp>
 #include "matrixTestsSymSparse.hpp"
 
-namespace hiop { namespace tests {
+namespace hiop
+{
+namespace tests
+{
 
 /**
  * @brief Tests are re-implemented here if necessary for SparseTriplet Matrices,
  * as the data layout is significantly different compares to dense matrices.
  * Any tests that would modify the sparsity pattern are not implemented.
  * Any tests that would make calls to non-implemented/needed functions are not implemented.
- * 
-*/
+ *
+ */
 class MatrixTestsSymSparseTriplet : public MatrixTestsSymSparse
 {
 public:
   MatrixTestsSymSparseTriplet() {}
-  virtual ~MatrixTestsSymSparseTriplet(){}
-
+  virtual ~MatrixTestsSymSparseTriplet() {}
 
 private:
-  virtual real_type getLocalElement(const hiop::hiopMatrix *a, local_ordinal_type i, local_ordinal_type j) override;
-  virtual real_type getLocalElement(const hiop::hiopVector *x, local_ordinal_type i) override;
+  virtual real_type getLocalElement(const hiop::hiopMatrix* a, local_ordinal_type i, local_ordinal_type j) override;
+  virtual real_type getLocalElement(const hiop::hiopVector* x, local_ordinal_type i) override;
   virtual real_type* getMatrixData(hiop::hiopMatrixSparse* a) override;
   virtual const local_ordinal_type* getRowIndices(const hiop::hiopMatrixSparse* a) override;
   virtual const local_ordinal_type* getColumnIndices(const hiop::hiopMatrixSparse* a) override;
-  virtual local_ordinal_type getLocalSize(const hiop::hiopVector *x) override;
-  virtual int verifyAnswer(
-      hiop::hiopMatrixDense* A,
-      std::function<real_type(local_ordinal_type, local_ordinal_type)> expect) override;
-  virtual int verifyAnswer(
-      hiop::hiopVector *x,
-      std::function<real_type(local_ordinal_type)> expect) override;
+  virtual local_ordinal_type getLocalSize(const hiop::hiopVector* x) override;
+  virtual int verifyAnswer(hiop::hiopMatrixDense* A,
+                           std::function<real_type(local_ordinal_type, local_ordinal_type)> expect) override;
+  virtual int verifyAnswer(hiop::hiopVector* x, std::function<real_type(local_ordinal_type)> expect) override;
   virtual local_ordinal_type* numNonzerosPerRow(hiop::hiopMatrixSparse* mat) override;
   virtual local_ordinal_type* numNonzerosPerCol(hiop::hiopMatrixSparse* mat) override;
 };
 
-}} // namespace hiop::tests
+}  // namespace tests
+}  // namespace hiop

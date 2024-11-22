@@ -94,22 +94,13 @@ struct hiopVersion
 
   static inline std::string fullVersionInfo()
   {
-    auto fmt = [] (bool use) { return use ? "YES" : "NO"; };
+    auto fmt = [](bool use) { return use ? "YES" : "NO"; };
     std::stringstream ss;
-    ss << "HiOp "
-      << version() << " compiled on "
-      << releaseDate() << "\n"
-      << "Built with:"
-      << "\nGPU: " << fmt(useGPU)
-      << "\nMPI: " << fmt(useMPI)
-      << "\nMAGMA: " << fmt(useMagma)
-      << "\nRAJA: " << fmt(useRAJA)
-      << "\nSparse: " << fmt(useSparse)
-      << "\nCOINHSL: " << fmt(useCOINHSL)
-      << "\nSTRUMPACK: " << fmt(useSTRUMPACK)
-      << "\nPARDISO: " << fmt(usePARDISO)
-      << "\nReSolve: " << fmt(useReSolve)
-      << "\n";
+    ss << "HiOp " << version() << " compiled on " << releaseDate() << "\n"
+       << "Built with:"
+       << "\nGPU: " << fmt(useGPU) << "\nMPI: " << fmt(useMPI) << "\nMAGMA: " << fmt(useMagma) << "\nRAJA: " << fmt(useRAJA)
+       << "\nSparse: " << fmt(useSparse) << "\nCOINHSL: " << fmt(useCOINHSL) << "\nSTRUMPACK: " << fmt(useSTRUMPACK)
+       << "\nPARDISO: " << fmt(usePARDISO) << "\nReSolve: " << fmt(useReSolve) << "\n";
     return ss.str();
   }
 };

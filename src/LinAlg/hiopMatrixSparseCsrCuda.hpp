@@ -58,7 +58,7 @@
 
 #include "ExecSpace.hpp"
 
-#ifdef HIOP_USE_CUDA 
+#ifdef HIOP_USE_CUDA
 
 #include <cuda_runtime.h>
 #include <cusparse.h>
@@ -79,8 +79,8 @@ namespace hiop
  * @brief Sparse matrix of doubles in compressed row format for use on CUDA GPUs. Data
  * is not (memory, MPI) distributed.
  *
- * @note The methods of this class expect and maintains unique and ordered column indexes 
- * within the same row. 
+ * @note The methods of this class expect and maintains unique and ordered column indexes
+ * within the same row.
  *
  * Note: most of the methods are not implemented (TODO) as this is work in progress (wip).
  */
@@ -101,16 +101,16 @@ public:
    * code that will be removed in the future.
    */
   void copy_to(hiopMatrixSparseCSRSeq& src);
-  
+
   virtual void copy_to(hiopMatrixDense& W);
 
   virtual void copyRowsFrom(const hiopMatrix& src, const index_type* rows_idxs, size_type n_rows);
 
-  virtual void timesVec(double beta,  hiopVector& y, double alpha, const hiopVector& x) const;
-  virtual void timesVec(double beta,  double* y, double alpha, const double* x) const;
+  virtual void timesVec(double beta, hiopVector& y, double alpha, const hiopVector& x) const;
+  virtual void timesVec(double beta, double* y, double alpha, const double* x) const;
 
-  virtual void transTimesVec(double beta,   hiopVector& y, double alpha, const hiopVector& x) const;
-  virtual void transTimesVec(double beta,   double* y, double alpha, const double* x) const;
+  virtual void transTimesVec(double beta, hiopVector& y, double alpha, const hiopVector& x) const;
+  virtual void transTimesVec(double beta, double* y, double alpha, const double* x) const;
 
   virtual void timesMat(double beta, hiopMatrix& W, double alpha, const hiopMatrix& X) const;
 
@@ -121,7 +121,7 @@ public:
   virtual void addDiagonal(const double& alpha, const hiopVector& d_);
   virtual void addDiagonal(const double& value);
   virtual void addSubDiagonal(const double& alpha, index_type start, const hiopVector& d_);
-  
+
   /* add to the diagonal of 'this' (destination) starting at 'start_on_dest_diag' elements of
    * 'd_' (source) starting at index 'start_on_src_vec'. The number of elements added is 'num_elems'
    * when num_elems>=0, or the remaining elems on 'd_' starting at 'start_on_src_vec'. */
@@ -129,7 +129,7 @@ public:
                               const double& alpha,
                               const hiopVector& d_,
                               index_type start_on_src_vec,
-                              int num_elems=-1)
+                              int num_elems = -1)
   {
     assert(false && "not needed / implemented");
   }
@@ -139,18 +139,18 @@ public:
   }
 
   /* Add to the diagonal of 'this' (destination) starting at 'start_on_dest_diag' elements of
-  * 'd_' (source) starting at index 'start_on_src_vec'. The number of elements added is 'num_elems', 
-  * scaled by 'scal'
-  */
+   * 'd_' (source) starting at index 'start_on_src_vec'. The number of elements added is 'num_elems',
+   * scaled by 'scal'
+   */
   virtual void copySubDiagonalFrom(const index_type& start_on_dest_diag,
                                    const size_type& num_elems,
                                    const hiopVector& d_,
                                    const index_type& start_on_nnz_idx,
-                                   double scal=1.0);
+                                   double scal = 1.0);
 
   /* add constant 'c' to the diagonal of 'this' (destination) starting at 'start_on_dest_diag' elements.
-  * The number of elements added is 'num_elems'
-  */
+   * The number of elements added is 'num_elems'
+   */
   virtual void setSubDiagonalTo(const index_type& start_on_dest_diag,
                                 const size_type& num_elems,
                                 const double& c,
@@ -163,16 +163,12 @@ public:
                                                      index_type col_dest_start,
                                                      double alpha,
                                                      hiopMatrixDense& W) const;
-  virtual void addUpperTriangleToSymDenseMatrixUpperTriangle(index_type diag_start,
-                                                             double alpha,
-                                                             hiopMatrixDense& W) const
+  virtual void addUpperTriangleToSymDenseMatrixUpperTriangle(index_type diag_start, double alpha, hiopMatrixDense& W) const
   {
     assert(false && "not yet implemented");
   }
 
-  virtual void addUpperTriangleToSymSparseMatrixUpperTriangle(index_type diag_start,
-                                                              double alpha,
-                                                              hiopMatrixSparse& W) const
+  virtual void addUpperTriangleToSymSparseMatrixUpperTriangle(index_type diag_start, double alpha, hiopMatrixSparse& W) const
   {
     assert(false && "not yet implemented");
   }
@@ -183,7 +179,7 @@ public:
    */
   virtual void addMDinvMtransToDiagBlockOfSymDeMatUTri(index_type rowCol_dest_start,
                                                        const double& alpha,
-						       const hiopVector& D,
+                                                       const hiopVector& D,
                                                        hiopMatrixDense& W) const;
 
   /* Block of W += alpha * M * D^{-1} * transpose(N), where M=this
@@ -209,32 +205,32 @@ public:
                                  const size_type& dest_nnz_st);
 
   /**
-  * @brief Copy matrix 'src_gen', into 'this' as a submatrix from corner 'dest_row_st' and 'dest_col_st'
-  * The non-zero elements start from 'dest_nnz_st' will be replaced by the new elements. 
-  * When `offdiag_only` is set to true, only the off-diagonal part of `src_gen` is copied.
-  *
-  * @pre 'this' must have enough rows and cols after row 'dest_row_st' and col 'dest_col_st'
-  * @pre 'dest_nnz_st' + the number of non-zeros in the copied matrix must be less or equal to 
-  * this->numOfNumbers()
-  * @pre User must know the nonzero pattern of src and dest matrices. The method assumes 
-  * that non-zero patterns does not change between calls and that 'src_gen' is a valid
-  *  submatrix of 'this'
-  * @pre This function does NOT preserve the sorted row/col indices. USE WITH CAUTION!
-  */
+   * @brief Copy matrix 'src_gen', into 'this' as a submatrix from corner 'dest_row_st' and 'dest_col_st'
+   * The non-zero elements start from 'dest_nnz_st' will be replaced by the new elements.
+   * When `offdiag_only` is set to true, only the off-diagonal part of `src_gen` is copied.
+   *
+   * @pre 'this' must have enough rows and cols after row 'dest_row_st' and col 'dest_col_st'
+   * @pre 'dest_nnz_st' + the number of non-zeros in the copied matrix must be less or equal to
+   * this->numOfNumbers()
+   * @pre User must know the nonzero pattern of src and dest matrices. The method assumes
+   * that non-zero patterns does not change between calls and that 'src_gen' is a valid
+   *  submatrix of 'this'
+   * @pre This function does NOT preserve the sorted row/col indices. USE WITH CAUTION!
+   */
   virtual void copySubmatrixFrom(const hiopMatrix& src_gen,
                                  const index_type& dest_row_st,
                                  const index_type& dest_col_st,
                                  const size_type& dest_nnz_st,
                                  const bool offdiag_only = false);
-  
+
   /**
-  * @brief Copy the transpose of matrix 'src_gen', into 'this' as a submatrix from corner 
-  * 'dest_row_st' and 'dest_col_st'.
-  * The non-zero elements start from 'dest_nnz_st' will be replaced by the new elements.
-  * When `offdiag_only` is set to true, only the off-diagonal part of `src_gen` is copied.
-  * 
-  * @pre This function does NOT preserve the sorted row/col indices. USE WITH CAUTION!
-  */
+   * @brief Copy the transpose of matrix 'src_gen', into 'this' as a submatrix from corner
+   * 'dest_row_st' and 'dest_col_st'.
+   * The non-zero elements start from 'dest_nnz_st' will be replaced by the new elements.
+   * When `offdiag_only` is set to true, only the off-diagonal part of `src_gen` is copied.
+   *
+   * @pre This function does NOT preserve the sorted row/col indices. USE WITH CAUTION!
+   */
   virtual void copySubmatrixFromTrans(const hiopMatrix& src_gen,
                                       const index_type& dest_row_st,
                                       const index_type& dest_col_st,
@@ -242,12 +238,12 @@ public:
                                       const bool offdiag_only = false);
 
   /**
-  * @brief Copy selected columns of a diagonal matrix (a constant 'scalar' times identity),
-  * into 'this' as a submatrix from corner 'dest_row_st' and 'dest_col_st'
-  * The non-zero elements start from 'dest_nnz_st' will be replaced by the new elements.
-  * @pre The diagonal entries in the destination need to be contiguous in the sparse triplet arrays of the destinations.
-  * @pre this function does NOT preserve the sorted row/col indices. USE WITH CAUTION!
-  */
+   * @brief Copy selected columns of a diagonal matrix (a constant 'scalar' times identity),
+   * into 'this' as a submatrix from corner 'dest_row_st' and 'dest_col_st'
+   * The non-zero elements start from 'dest_nnz_st' will be replaced by the new elements.
+   * @pre The diagonal entries in the destination need to be contiguous in the sparse triplet arrays of the destinations.
+   * @pre this function does NOT preserve the sorted row/col indices. USE WITH CAUTION!
+   */
   virtual void setSubmatrixToConstantDiag_w_colpattern(const double& scalar,
                                                        const index_type& dest_row_st,
                                                        const index_type& dest_col_st,
@@ -256,12 +252,12 @@ public:
                                                        const hiopVector& ix);
 
   /**
-  * @brief Copy selected rows of a diagonal matrix (a constant 'scalar' times identity),
-  * into 'this' as a submatrix from corner 'dest_row_st' and 'dest_col_st'
-  * The non-zero elements start from 'dest_nnz_st' will be replaced by the new elements.
-  * @pre The diagonal entries in the destination need to be contiguous in the sparse triplet arrays of the destinations.
-  * @pre this function does NOT preserve the sorted row/col indices. USE WITH CAUTION!
-  */
+   * @brief Copy selected rows of a diagonal matrix (a constant 'scalar' times identity),
+   * into 'this' as a submatrix from corner 'dest_row_st' and 'dest_col_st'
+   * The non-zero elements start from 'dest_nnz_st' will be replaced by the new elements.
+   * @pre The diagonal entries in the destination need to be contiguous in the sparse triplet arrays of the destinations.
+   * @pre this function does NOT preserve the sorted row/col indices. USE WITH CAUTION!
+   */
   virtual void setSubmatrixToConstantDiag_w_rowpattern(const double& scalar,
                                                        const index_type& dest_row_st,
                                                        const index_type& dest_col_st,
@@ -270,46 +266,46 @@ public:
                                                        const hiopVector& ix);
 
   /**
-  * @brief Copy a diagonal matrix to destination.
-  * This diagonal matrix is 'src_val'*identity matrix with size 'nnz_to_copy'x'nnz_to_copy'.
-  * The destination is updated from the start row 'row_dest_st' and start column 'col_dest_st'. USE WITH CAUTION!
-  */
+   * @brief Copy a diagonal matrix to destination.
+   * This diagonal matrix is 'src_val'*identity matrix with size 'nnz_to_copy'x'nnz_to_copy'.
+   * The destination is updated from the start row 'row_dest_st' and start column 'col_dest_st'. USE WITH CAUTION!
+   */
   virtual void copyDiagMatrixToSubblock(const double& src_val,
                                         const index_type& dest_row_st,
                                         const index_type& dest_col_st,
                                         const size_type& dest_nnz_st,
-                                        const size_type &nnz_to_copy);
+                                        const size_type& nnz_to_copy);
 
-  /** 
-  * @brief same as @copyDiagMatrixToSubblock, but copies only diagonal entries specified by `pattern`.
-  * At the destination, 'nnz_to_copy` nonzeros starting from index `dest_nnz_st` will be replaced.
-  * @pre The added entries in the destination need to be contiguous in the sparse triplet arrays of the destinations.
-  * @pre This function does NOT preserve the sorted row/col indices. USE WITH CAUTION!
-  * @pre 'pattern' has same size as `x`. 
-  * @pre 'pattern` has exactly `nnz_to_copy` nonzeros.
-  */
+  /**
+   * @brief same as @copyDiagMatrixToSubblock, but copies only diagonal entries specified by `pattern`.
+   * At the destination, 'nnz_to_copy` nonzeros starting from index `dest_nnz_st` will be replaced.
+   * @pre The added entries in the destination need to be contiguous in the sparse triplet arrays of the destinations.
+   * @pre This function does NOT preserve the sorted row/col indices. USE WITH CAUTION!
+   * @pre 'pattern' has same size as `x`.
+   * @pre 'pattern` has exactly `nnz_to_copy` nonzeros.
+   */
   virtual void copyDiagMatrixToSubblock_w_pattern(const hiopVector& x,
                                                   const index_type& dest_row_st,
                                                   const index_type& dest_col_st,
                                                   const size_type& dest_nnz_st,
-                                                  const size_type &nnz_to_copy,
+                                                  const size_type& nnz_to_copy,
                                                   const hiopVector& pattern);
 
   virtual double max_abs_value();
 
-  virtual void row_max_abs_value(hiopVector &ret_vec);
-  
-  virtual void scale_row(hiopVector &vec_scal, const bool inv_scale=false);
+  virtual void row_max_abs_value(hiopVector& ret_vec);
+
+  virtual void scale_row(hiopVector& vec_scal, const bool inv_scale = false);
 
   virtual bool isfinite() const;
 
-  virtual void print(FILE* f=nullptr, const char* msg=nullptr, int maxRows=-1, int maxCols=-1, int rank=-1) const;
+  virtual void print(FILE* f = nullptr, const char* msg = nullptr, int maxRows = -1, int maxCols = -1, int rank = -1) const;
 
   virtual void startingAtAddSubDiagonalToStartingAt(index_type diag_src_start,
                                                     const double& alpha,
                                                     hiopVector& vec_dest,
                                                     index_type vec_start,
-                                                    size_type num_elems=-1) const
+                                                    size_type num_elems = -1) const
   {
     assert(0 && "not implemented; should be used only for symmetric matrices.");
   }
@@ -349,41 +345,20 @@ public:
   virtual hiopMatrixSparse* alloc_clone() const;
   virtual hiopMatrixSparse* new_copy() const;
 
-  inline index_type* i_row()
-  {
-    return irowptr_;
-  }
-  inline index_type* j_col()
-  {
-    return jcolind_;
-  }
-  inline double* M()
-  {
-    return values_;
-  }
-  inline const index_type* i_row() const
-  {
-    return irowptr_;
-  }
-  inline const index_type* j_col() const
-  {
-    return jcolind_;
-  }
-  inline const double* M() const
-  {
-    return values_;
-  }
+  inline index_type* i_row() { return irowptr_; }
+  inline index_type* j_col() { return jcolind_; }
+  inline double* M() { return values_; }
+  inline const index_type* i_row() const { return irowptr_; }
+  inline const index_type* j_col() const { return jcolind_; }
+  inline const double* M() const { return values_; }
 
 #ifdef HIOP_DEEPCHECKS
-  virtual bool assertSymmetry(double tol=1e-16) const
+  virtual bool assertSymmetry(double tol = 1e-16) const
   {
     assert(false && "not yet implemented");
     return false;
   }
-  virtual bool checkIndexesAreOrdered() const
-  {
-    return true;
-  }
+  virtual bool checkIndexesAreOrdered() const { return true; }
 #endif
 
   /**
@@ -402,57 +377,57 @@ public:
   virtual void set_diagonal(const double& val);
 
   /**
-   * Allocates a CSR matrix capable of storing the multiplication result of M = X*Y, where X 
+   * Allocates a CSR matrix capable of storing the multiplication result of M = X*Y, where X
    * is the calling matrix class (`this`) and Y is the `Y` argument of the method.
    *
    * @note Should be used in conjunction with `times_mat_symbolic` and `times_mat_numeric`
-   * 
+   *
    * @pre The dimensions of the matrices should be consistent with the multiplication.
-   * 
+   *
    */
   hiopMatrixSparseCSR* times_mat_alloc(const hiopMatrixSparseCSR& Y) const;
-  
+
   /**
    * Computes sparsity pattern, meaning computes row pointers and column indexes of `M`,
-   * of M = X*Y, where X is the calling matrix class (`this`) and Y is the second argument. 
+   * of M = X*Y, where X is the calling matrix class (`this`) and Y is the second argument.
    *
    * @note The output matrix `M` will have unique and ordered column indexes (with the same
    * row)
    *
    * @note Specializations of this class may only be able to compute the sparsity pattern in
-   * tandem with the numerical multiplications (for example, because of API limitations). 
-   * In this cases, the `times_mat_numeric` will take over sparsity computations and the 
+   * tandem with the numerical multiplications (for example, because of API limitations).
+   * In this cases, the `times_mat_numeric` will take over sparsity computations and the
    * arrays with row pointers and column indexes may be uninitialized after this call.
-   * 
+   *
    * @pre The dimensions of the matrices should be consistent with the multiplication.
-   * 
+   *
    * @pre The column indexes within the same row must be unique and ordered for `Y`.
-   * 
-   * @pre The internal arrays of `M` should have enough storage to hold the sparsity 
-   * pattern (row pointers and column indexes) and values of the multiplication result. 
+   *
+   * @pre The internal arrays of `M` should have enough storage to hold the sparsity
+   * pattern (row pointers and column indexes) and values of the multiplication result.
    * This preallocation can be done by calling `times_mat_alloc` prior to this method.
-   * 
+   *
    */
-  void times_mat_symbolic(hiopMatrixSparseCSR& M, const hiopMatrixSparseCSR& Y) const;  
+  void times_mat_symbolic(hiopMatrixSparseCSR& M, const hiopMatrixSparseCSR& Y) const;
 
   /**
    * Computes (numerical values of) M = beta*M + alpha*X*D*Y, where X is the calling matrix
    * class (`this`), beta and alpha are scalars passed as arguments, and M and Y are matrices
    * of appropriate sizes passed as arguments.
    *
-   * @note Generally, only the nonzero values of the input/output argument `M` are updated 
+   * @note Generally, only the nonzero values of the input/output argument `M` are updated
    * since the sparsity pattern (row pointers and column indexes) of `M` should have been
    * already computed by `times_mat_symbolic`. Some specializations of this method may be
-   * restricted to performing both phases in inside this method. 
+   * restricted to performing both phases in inside this method.
    *
    * @pre The dimensions of the matrices should be consistent with the multiplication.
    *
    * @pre The column indexes within the same row must be unique and ordered both for input
    * matrices and result matrix `M`.
    *
-   * @pre The indexes arrays of `this`, `Y`, and `M` should not have changed since the 
+   * @pre The indexes arrays of `this`, `Y`, and `M` should not have changed since the
    * last call to `times_diag_times_mat`.
-   * 
+   *
    * Example of usage:
    * //initially allocate and compute M
    * auto* M = X.times_mat_alloc(Y);
@@ -461,12 +436,9 @@ public:
    * ... calculations ....
    * //if only nonzero entries of X and Y have changed, call the fast multiplication routine
    * X.times_mat_numeric(0.0, M, 1.0, Y);
-   * 
+   *
    */
-  void times_mat_numeric(double beta,
-                         hiopMatrixSparseCSR& M,
-                         double alpha,
-                         const hiopMatrixSparseCSR& Y);
+  void times_mat_numeric(double beta, hiopMatrixSparseCSR& M, double alpha, const hiopMatrixSparseCSR& Y);
 
   /// @brief Column scaling or right multiplication by a diagonal: `this`=`this`*D
   void scale_cols(const hiopVector& D);
@@ -474,11 +446,10 @@ public:
   /// @brief Row scaling or left multiplication by a diagonal: `this`=D*`this`
   void scale_rows(const hiopVector& D);
 
-  
   /**
-   * Allocates and populates the sparsity pattern of `this` as the CSR representation 
+   * Allocates and populates the sparsity pattern of `this` as the CSR representation
    * of the triplet matrix `M`.
-   * 
+   *
    * @pre The input argument should have the nonzeros sorted by row and then by column
    * indexes.
    */
@@ -487,7 +458,7 @@ public:
   /**
    * Copies the numerical values of the triplet matrix M into the CSR matrix `this`
    *
-   * @pre The sparsity pattern (row pointers and column indexes arrays) of `this` should be 
+   * @pre The sparsity pattern (row pointers and column indexes arrays) of `this` should be
    * allocated and populated, possibly by a previous call to `form_from_symbolic`
    *
    * @pre The input argument should have the nonzeros sorted by row and then by column
@@ -495,72 +466,72 @@ public:
    */
   //// note: only device cuda memcpy
   void form_from_numeric(const hiopMatrixSparseTriplet& M);
-  
+
   /**
-   * Allocates and populates the sparsity pattern of `this` as the CSR representation 
+   * Allocates and populates the sparsity pattern of `this` as the CSR representation
    * of transpose of the triplet matrix `M`.
-   * 
+   *
    * @pre The input argument should have the nonzeros sorted by row and then by column
    * indexes.
    */
   void form_transpose_from_symbolic(const hiopMatrixSparseTriplet& M);
 
-    /**
-   * Allocates and populates the sparsity pattern of `this` as the CSR representation 
+  /**
+   * Allocates and populates the sparsity pattern of `this` as the CSR representation
    * of transpose of the CSR matrix `M`.
-   * 
+   *
    * @pre The input argument should have the column indexes sorted and unique within a row.
    */
   virtual void form_transpose_from_symbolic(const hiopMatrixSparseCSR& M);
-  
+
   /**
    * Copies the numerical values of the transpose of the CSR matrix M into the CSR matrix `this`.
    *
-   * @pre The sparsity pattern (row pointers and column indexes arrays) of `this` should be 
+   * @pre The sparsity pattern (row pointers and column indexes arrays) of `this` should be
    * allocated and populated, possibly by a previous call to `form_transpose_from_symbolic`
    *
    * @pre The input argument should have the column indexes sorted and unique within a row.
-   */  
+   */
   virtual void form_transpose_from_numeric(const hiopMatrixSparseCSR& M);
-  
+
   /**
-   * Copies the numerical values of the transpose of the triplet matrix M into the 
+   * Copies the numerical values of the transpose of the triplet matrix M into the
    * CSR matrix `this`
    *
-   * @pre The sparsity pattern (row pointers and column indexes arrays) of `this` should be 
+   * @pre The sparsity pattern (row pointers and column indexes arrays) of `this` should be
    * allocated and populated, possibly by a previous call to `form_transpose_from_symbolic`
    *
    * @pre The input argument should have the nonzeros sorted by row and then by column
    * indexes.
-   */  
+   */
   void form_transpose_from_numeric(const hiopMatrixSparseTriplet& M);
 
   /**
    * Forms `this` as a diagonal matrix with diagonal entries given by D.
    */
   void form_diag_from_symbolic(const hiopVector& D);
-  
+
   /**
    * Sets the diagonal entries of `this` equal to entries of D
-   * 
+   *
    * @pre Length of `D` should be equal to size(s) of `this`
-   * 
+   *
    * @pre `this` should be a diagonal matrix (in CSR format) with storage for
    * all the diagonal entries, which can be ensured by calling the sister method
    * `form_diag_from_symbolic`
    */
   void form_diag_from_numeric(const hiopVector& D);
-  
+
   /**
-   * Allocates and returns CSR matrix `M` capable of holding M = X+Y, where X is 
+   * Allocates and returns CSR matrix `M` capable of holding M = X+Y, where X is
    * the calling matrix class (`this`) and Y is the argument passed to the method.
    */
   hiopMatrixSparseCSR* add_matrix_alloc(const hiopMatrixSparseCSR& Y) const;
 
   /**
-   * Computes sparsity pattern of M = X+Y (i.e., populates the row pointers and 
+   * Computes sparsity pattern of M = X+Y (i.e., populates the row pointers and
    * column indexes arrays) of `M`. X is `this`.
-   * 
+   *
    * @pre `this` and `Y` should hold matrices of identical dimensions.
    *
    */
@@ -569,33 +540,29 @@ public:
   /**
    * Performs matrix addition M = alpha*X + beta*Y numerically, where
    * X is `this` and alpha and beta are scalars.
-   * 
+   *
    * @pre `M`, `this` and `Y` should hold matrices of identical dimensions.
-   * 
-   * @pre `M` and `X+Y` should have identical sparsity pattern, namely the 
+   *
+   * @pre `M` and `X+Y` should have identical sparsity pattern, namely the
    * `add_matrix_symbolic` should have been called previously.
    *
    */
-  void add_matrix_numeric(hiopMatrixSparseCSR& M,
-                          double alpha,
-                          const hiopMatrixSparseCSR& Y,
-                          double beta) const;
+  void add_matrix_numeric(hiopMatrixSparseCSR& M, double alpha, const hiopMatrixSparseCSR& Y, double beta) const;
 
-  /** Performs a quick check and returns false if the CSR indexes are not ordered. 
-   * 
+  /** Performs a quick check and returns false if the CSR indexes are not ordered.
+   *
    * Should be used with caution, for example only under HIOP_DEEPCHECKS or for debugging purposes
-   * because it is a computationally intensive method for GPU implementations as transfers the 
-   * matrix data from device to host. 
+   * because it is a computationally intensive method for GPU implementations as transfers the
+   * matrix data from device to host.
    */
   bool check_csr_is_ordered();
-  
+
   /////////////////////////////////////////////////////////////////////
   // end of new CSR-specific methods
   /////////////////////////////////////////////////////////////////////
 
   //(re)setters for internals
 protected:
-
   /** Set the sparse gemm descriptor that was used before the instantiation of this class. This class
    * takes ownership of the input descriptor/pointer.
    */
@@ -615,7 +582,7 @@ protected:
     assert(st == CUSPARSE_STATUS_SUCCESS);
     mat_sp_descr_ = sp_mat_descr;
 
-    //set pointers since the input descriptor does not have the values_ pointer
+    // set pointers since the input descriptor does not have the values_ pointer
     st = cusparseCsrSetPointers(mat_sp_descr_, irowptr_, jcolind_, values_);
     assert(st == CUSPARSE_STATUS_SUCCESS);
   }
@@ -623,8 +590,8 @@ protected:
   ///@brief Set and take ownwership of the buffer
   inline void set_gemm_buffer3(void* buff_in)
   {
-    //should not be previously allocated
-    assert(buffer_gemm3_==nullptr);
+    // should not be previously allocated
+    assert(buffer_gemm3_ == nullptr);
     //`this` takes ownership of the pointer
     buffer_gemm3_ = buff_in;
   }
@@ -639,8 +606,8 @@ protected:
   ///@brief Set and take ownwership of the buffer
   inline void set_gemm_buffer4(void* buff_in)
   {
-    //should not be previously allocated
-    assert(buffer_gemm4_==nullptr);
+    // should not be previously allocated
+    assert(buffer_gemm4_ == nullptr);
     //`this` takes ownership of the pointer
     buffer_gemm4_ = buff_in;
   }
@@ -653,14 +620,16 @@ protected:
     assert(cudaSuccess == cret);
     return buffer_gemm5_;
   }
+
 private:
   void alloc();
   void dealloc();
+
 protected:
-  ExecSpace<MemBackendCuda, ExecPolicyCuda> exec_space_; 
-  
+  ExecSpace<MemBackendCuda, ExecPolicyCuda> exec_space_;
+
   //// inherits nrows_, ncols_, and nnz_ from  hiopSparseMatrix
-  
+
   /// Row pointers (starting indexes) in the column and values arrays
   index_type* irowptr_;
 
@@ -670,21 +639,21 @@ protected:
   /// Nonzero values
   double* values_;
 
-  ///Internal buffer used by transpose/csr2csc (allocated on demand)
+  /// Internal buffer used by transpose/csr2csc (allocated on demand)
   void* buffer_csc2csr_;
 
-  ///Internal buffer used by add_matrix/geam2
+  /// Internal buffer used by add_matrix/geam2
   void* buffer_geam2_;
 
-  ///Internal buffer used by times_mat/SpGEMMreuse
+  /// Internal buffer used by times_mat/SpGEMMreuse
   void* buffer_gemm3_;
 
-  ///Internal buffer used by times_mat/SpGEMMreuse
+  /// Internal buffer used by times_mat/SpGEMMreuse
   void* buffer_gemm4_;
 
-  ///Internal buffer used by times_mat/SpGEMMreuse
+  /// Internal buffer used by times_mat/SpGEMMreuse
   void* buffer_gemm5_;
-  
+
   /// Internal handle required by cuSPARSE functions
   cusparseHandle_t h_cusparse_;
 
@@ -696,12 +665,12 @@ protected:
 
   /// Internal cuSPARSE gemm descriptor
   cusparseSpGEMMDescr_t gemm_sp_descr_;
+
 private:
   hiopMatrixSparseCSRCUDA(const hiopMatrixSparseCSRCUDA&) = delete;
 };
 
+}  // namespace hiop
 
-} //end of namespace
-
-#endif //#ifdef HIOP_USE_CUDA
+#endif  // #ifdef HIOP_USE_CUDA
 #endif

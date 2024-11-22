@@ -72,8 +72,8 @@ namespace tests
 class VectorTestsRajaPar : public VectorTests
 {
 public:
-  VectorTestsRajaPar(){}
-  virtual ~VectorTestsRajaPar(){}
+  VectorTestsRajaPar() {}
+  virtual ~VectorTestsRajaPar() {}
 
 private:
   virtual const real_type* getLocalDataConst(hiop::hiopVector* x);
@@ -85,4 +85,5 @@ private:
   MPI_Comm getMPIComm(hiop::hiopVector* x);
 };
 
-}} // namespace hiopTest
+}  // namespace tests
+}  // namespace hiop

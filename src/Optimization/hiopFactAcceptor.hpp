@@ -47,12 +47,12 @@
 //
 
 /**
-  * @file hiopFactAcceptor.cpp
-  *
-  * @author Nai-Yuan Chiang <chiang7@lnnl.gov>, LLNL
-  * @author Cosmin G. Petra <petra@lnnl.gov>, LLNL
-  *
-  */
+ * @file hiopFactAcceptor.cpp
+ *
+ * @author Nai-Yuan Chiang <chiang7@lnnl.gov>, LLNL
+ * @author Cosmin G. Petra <petra@lnnl.gov>, LLNL
+ *
+ */
 
 #ifndef HIOP_FACT_ACCEPTOR
 #define HIOP_FACT_ACCEPTOR
@@ -66,80 +66,69 @@ namespace hiop
 class hiopFactAcceptor
 {
 public:
-  /** 
-   * Default constructor 
+  /**
+   * Default constructor
    * Determine if a factorization is acceptable or not
    */
   hiopFactAcceptor(hiopPDPerturbation* p)
-  : perturb_calc_{p}
+      : perturb_calc_{p}
   {}
 
-  virtual ~hiopFactAcceptor() 
-  {}
-  
-  /** 
+  virtual ~hiopFactAcceptor() {}
+
+  /**
    * @brief method to check if current factorization is acceptable or/and if
-   * a re-factorization is reqired by increasing 'delta_wx'-'delta_cd'. 
-   * 
+   * a re-factorization is reqired by increasing 'delta_wx'-'delta_cd'.
+   *
    * Returns '1' if current factorization is rejected
    * Returns '0' if current factorization is ok
    * Returns '-1' if current factorization failed due to singularity
    */
-  virtual int requireReFactorization(const hiopNlpFormulation& nlp,
-                                     const int& n_neg_eig,
-                                     const bool force_reg=false) = 0;
-      
-protected:  
+  virtual int requireReFactorization(const hiopNlpFormulation& nlp, const int& n_neg_eig, const bool force_reg = false) = 0;
+
+protected:
   hiopPDPerturbation* perturb_calc_;
-  
 };
-  
+
 class hiopFactAcceptorIC : public hiopFactAcceptor
 {
 public:
-  /** 
-   * Default constructor 
+  /**
+   * Default constructor
    * Check inertia condition to determine if a factorization is acceptable or not
    */
   hiopFactAcceptorIC(hiopPDPerturbation* p, const size_type n_required_neg_eig)
-    : hiopFactAcceptor(p),
-      n_required_neg_eig_(n_required_neg_eig)
+      : hiopFactAcceptor(p),
+        n_required_neg_eig_(n_required_neg_eig)
   {}
 
-  virtual ~hiopFactAcceptorIC() 
-  {}
-   
-  virtual int requireReFactorization(const hiopNlpFormulation& nlp,
-                                     const int& n_neg_eig,
-                                     const bool force_reg=false);
- 
+  virtual ~hiopFactAcceptorIC() {}
+
+  virtual int requireReFactorization(const hiopNlpFormulation& nlp, const int& n_neg_eig, const bool force_reg = false);
+
 protected:
-  int n_required_neg_eig_;    
+  int n_required_neg_eig_;
 };
 
 class hiopFactAcceptorInertiaFreeDWD : public hiopFactAcceptor
 {
 public:
-  /** 
-   * Default constructor 
+  /**
+   * Default constructor
    * Check inertia condition to determine if a factorization is acceptable or not
    */
   hiopFactAcceptorInertiaFreeDWD(hiopPDPerturbation* p, const size_type n_required_neg_eig)
-    : hiopFactAcceptor(p),
-      n_required_neg_eig_(n_required_neg_eig)
+      : hiopFactAcceptor(p),
+        n_required_neg_eig_(n_required_neg_eig)
   {}
 
-  virtual ~hiopFactAcceptorInertiaFreeDWD() 
-  {}
-   
-  virtual int requireReFactorization(const hiopNlpFormulation& nlp,
-                                     const int& n_neg_eig,
-                                     const bool force_reg=false);
- 
+  virtual ~hiopFactAcceptorInertiaFreeDWD() {}
+
+  virtual int requireReFactorization(const hiopNlpFormulation& nlp, const int& n_neg_eig, const bool force_reg = false);
+
 protected:
   int n_required_neg_eig_;
-
 };
 
-} //end of namespace
+}  // namespace hiop
 #endif

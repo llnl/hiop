@@ -10,57 +10,55 @@ namespace hiop
 class hiopPDPerturbation
 {
 public:
-
   enum DeltasUpdateType
   {
-    None  = -2,
-    Initialized  = -1,
-    DualUpdate   =  0,
-    PrimalUpdate =  1,
-    PDUpdate     =  2
+    None = -2,
+    Initialized = -1,
+    DualUpdate = 0,
+    PrimalUpdate = 1,
+    PDUpdate = 2
   };
 
-  /** Default constructor 
+  /** Default constructor
    * Provides complete initialization, but uses algorithmic parameters from the Ipopt
    * implementation paper. \ref initialize(hiopNlpFormulation*) should be used to initialize
    * this class based on HiOp option file or HiOp user-supplied runtime options.
    */
   hiopPDPerturbation()
-    : delta_wx_curr_(nullptr),
-      delta_wd_curr_(nullptr),
-      delta_cc_curr_(nullptr),
-      delta_cd_curr_(nullptr),
-      delta_wx_last_(nullptr),
-      delta_wd_last_(nullptr),
-      delta_cc_last_(nullptr),
-      delta_cd_last_(nullptr),
-      delta_wx_curr_db_{0.},
-      delta_wd_curr_db_{0.},
-      delta_cc_curr_db_{0.},
-      delta_cd_curr_db_{0.},
-      delta_wx_last_db_{0.},
-      delta_wd_last_db_{0.},
-      delta_cc_last_db_{0.},
-      delta_cd_last_db_{0.},
-      delta_w_min_bar_(1e-20),
-      delta_w_max_bar_(1e+40),
-      delta_w_0_bar_(1e-4),
-      kappa_w_minus_(1./3),
-      kappa_w_plus_bar_(100.),
-      kappa_w_plus_(8.),
-      delta_c_bar_(1e-8),
-      kappa_c_(0.25),
-      min_uniform_ratio_{0.9},
-      max_uniform_ratio_{1.0},
-      hess_degenerate_(dtNotEstablished),
-      jac_degenerate_(dtNotEstablished),
-      num_degen_iters_(0),
-      num_degen_max_iters_(3),
-      deltas_test_type_(dttNoTest),
-      mu_(1e-8),
-      nlp_(nullptr)
-  {
-  }
+      : delta_wx_curr_(nullptr),
+        delta_wd_curr_(nullptr),
+        delta_cc_curr_(nullptr),
+        delta_cd_curr_(nullptr),
+        delta_wx_last_(nullptr),
+        delta_wd_last_(nullptr),
+        delta_cc_last_(nullptr),
+        delta_cd_last_(nullptr),
+        delta_wx_curr_db_{0.},
+        delta_wd_curr_db_{0.},
+        delta_cc_curr_db_{0.},
+        delta_cd_curr_db_{0.},
+        delta_wx_last_db_{0.},
+        delta_wd_last_db_{0.},
+        delta_cc_last_db_{0.},
+        delta_cd_last_db_{0.},
+        delta_w_min_bar_(1e-20),
+        delta_w_max_bar_(1e+40),
+        delta_w_0_bar_(1e-4),
+        kappa_w_minus_(1. / 3),
+        kappa_w_plus_bar_(100.),
+        kappa_w_plus_(8.),
+        delta_c_bar_(1e-8),
+        kappa_c_(0.25),
+        min_uniform_ratio_{0.9},
+        max_uniform_ratio_{1.0},
+        hess_degenerate_(dtNotEstablished),
+        jac_degenerate_(dtNotEstablished),
+        num_degen_iters_(0),
+        num_degen_max_iters_(3),
+        deltas_test_type_(dttNoTest),
+        mu_(1e-8),
+        nlp_(nullptr)
+  {}
 
   virtual ~hiopPDPerturbation()
   {
@@ -81,24 +79,21 @@ public:
   virtual bool initialize(hiopNlpFormulation* nlp);
 
   /** Set log-barrier mu. */
-  virtual inline void set_mu(const double& mu)
-  {
-    mu_ = mu;
-  }
+  virtual inline void set_mu(const double& mu) { mu_ = mu; }
 
-  /** Called when a new linear system is attempted to be factorized 
+  /** Called when a new linear system is attempted to be factorized
    */
   virtual bool compute_initial_deltas() = 0;
 
   /** Method for correcting inertia */
   virtual bool compute_perturb_wrong_inertia() = 0;
 
-  /** Method for correcting singular Jacobian 
+  /** Method for correcting singular Jacobian
    *  (follows Ipopt closely since the paper seems to be outdated)
    */
   virtual bool compute_perturb_singularity() = 0;
 
-  inline bool copy_from_curr_perturbations(hiopVector& delta_wx, 
+  inline bool copy_from_curr_perturbations(hiopVector& delta_wx,
                                            hiopVector& delta_wd,
                                            hiopVector& delta_cc,
                                            hiopVector& delta_cd)
@@ -110,12 +105,12 @@ public:
     return true;
   }
 
-  inline hiopVector* get_curr_delta_wx() const {return delta_wx_curr_;}
-  inline hiopVector* get_curr_delta_wd() const {return delta_wd_curr_;}
-  inline hiopVector* get_curr_delta_cc() const {return delta_cc_curr_;}
-  inline hiopVector* get_curr_delta_cd() const {return delta_cd_curr_;}
+  inline hiopVector* get_curr_delta_wx() const { return delta_wx_curr_; }
+  inline hiopVector* get_curr_delta_wd() const { return delta_wd_curr_; }
+  inline hiopVector* get_curr_delta_cc() const { return delta_cc_curr_; }
+  inline hiopVector* get_curr_delta_cd() const { return delta_cd_curr_; }
 
-  inline DeltasUpdateType get_curr_delta_type() const {return deltas_curr_update_;}
+  inline DeltasUpdateType get_curr_delta_type() const { return deltas_curr_update_; }
 
   virtual bool check_consistency() = 0;
 
@@ -140,7 +135,7 @@ protected:
   double delta_wd_last_db_;
   double delta_cc_last_db_;
   double delta_cd_last_db_;
-  
+
   /** Algorithmic parameters */
 
   /** Smallest possible perturbation for Hessian (for primal 'x' and 's' variables). */
@@ -155,17 +150,17 @@ protected:
   double kappa_w_plus_bar_;
   /** Increase factor for delta_w for later perturbations. */
   double kappa_w_plus_;
-  
+
   /** Factor for regularization for potentially rank-deficient Jacobian. */
   double delta_c_bar_;
   /** Exponent of mu when computing regularization for Jacobian. */
   double kappa_c_;
-  
+
   double min_uniform_ratio_;
   double max_uniform_ratio_;
-  
+
   /** Degeneracy is handled as in Ipopt*/
-  
+
   /** Type for degeneracy flags */
   enum DegeneracyType
   {
@@ -183,7 +178,7 @@ protected:
   int num_degen_iters_;
   /* Max number of iters after which to conclude matrix is degenerate. */
   const int num_degen_max_iters_;
-  
+
   /** Status of current trial configuration */
   enum DeltasTestType
   {
@@ -197,14 +192,14 @@ protected:
   /** Current status */
   DeltasTestType deltas_test_type_;
   DeltasUpdateType deltas_curr_update_;
-  
+
   /** Log barrier mu in the outer loop. */
   double mu_;
 
   hiopNlpFormulation* nlp_;
 
-protected: //methods
-  /** Decides degeneracy @hess_degenerate_ and @jac_degenerate_ based on @deltas_test_type_ 
+protected:  // methods
+  /** Decides degeneracy @hess_degenerate_ and @jac_degenerate_ based on @deltas_test_type_
    *  when the @num_degen_iters_ > @num_degen_max_iters_
    */
   virtual void update_degeneracy_type();
@@ -216,31 +211,33 @@ protected: //methods
 class hiopPDPerturbationNull : public hiopPDPerturbation
 {
 public:
-  /** Default constructor 
+  /** Default constructor
    * Provides complete initialization, but uses algorithmic parameters from the Ipopt
    * implementation paper. \ref initialize(hiopNlpFormulation*) should be used to initialize
    * this class based on HiOp option file or HiOp user-supplied runtime options.
    */
-  hiopPDPerturbationNull() : hiopPDPerturbation() {}
+  hiopPDPerturbationNull()
+      : hiopPDPerturbation()
+  {}
   virtual ~hiopPDPerturbationNull() {}
 
-  /** Called when a new linear system is attempted to be factorized 
+  /** Called when a new linear system is attempted to be factorized
    */
-  virtual bool compute_initial_deltas() {return true;}
+  virtual bool compute_initial_deltas() { return true; }
 
   /** Method for correcting inertia */
-  virtual bool compute_perturb_wrong_inertia() {return true;}
+  virtual bool compute_perturb_wrong_inertia() { return true; }
 
-  /** Method for correcting singular Jacobian 
+  /** Method for correcting singular Jacobian
    *  (follows Ipopt closely since the paper seems to be outdated)
    */
-  virtual bool compute_perturb_singularity() {return true;}
-                  
-  virtual bool check_consistency() {return true;}
+  virtual bool compute_perturb_singularity() { return true; }
 
-protected: //methods
+  virtual bool check_consistency() { return true; }
+
+protected:  // methods
   virtual void set_delta_curr_vec(DeltasUpdateType taskid) {}
-  virtual void set_delta_last_vec(DeltasUpdateType taskid) {}              
+  virtual void set_delta_last_vec(DeltasUpdateType taskid) {}
 };
 
 /**
@@ -250,42 +247,41 @@ protected: //methods
 class hiopPDPerturbationPrimalFirstScalar : public hiopPDPerturbation
 {
 public:
-  /** Default constructor 
+  /** Default constructor
    * Provides complete initialization, but uses algorithmic parameters from the Ipopt
    * implementation paper. \ref initialize(hiopNlpFormulation*) should be used to initialize
    * this class based on HiOp option file or HiOp user-supplied runtime options.
    */
-  hiopPDPerturbationPrimalFirstScalar() : hiopPDPerturbation() {}
+  hiopPDPerturbationPrimalFirstScalar()
+      : hiopPDPerturbation()
+  {}
   virtual ~hiopPDPerturbationPrimalFirstScalar() {}
 
-  /** Called when a new linear system is attempted to be factorized 
+  /** Called when a new linear system is attempted to be factorized
    */
   virtual bool compute_initial_deltas();
 
   /** Method for correcting inertia */
   virtual bool compute_perturb_wrong_inertia();
 
-  /** Method for correcting singular Jacobian 
+  /** Method for correcting singular Jacobian
    *  (follows Ipopt closely since the paper seems to be outdated)
    */
   virtual bool compute_perturb_singularity();
-                  
+
   virtual bool check_consistency();
-                         
+
 protected:
-
-
-protected: // methods
-  virtual void set_delta_curr_vec(DeltasUpdateType taskid); 
+protected:  // methods
+  virtual void set_delta_curr_vec(DeltasUpdateType taskid);
   virtual void set_delta_last_vec(DeltasUpdateType taskid);
 
   /** Internal method implementing the computation of delta_w's to correct wrong inertia
-   * 
+   *
    */
   virtual bool guts_of_compute_perturb_wrong_inertia(double& delta_wx, double& delta_wd);
 
-  virtual double compute_delta_c(const double& mu) const;  
-
+  virtual double compute_delta_c(const double& mu) const;
 };
 
 /**
@@ -296,13 +292,15 @@ protected: // methods
 class hiopPDPerturbationPrimalFirstRand : public hiopPDPerturbationPrimalFirstScalar
 {
 public:
-  hiopPDPerturbationPrimalFirstRand() : hiopPDPerturbationPrimalFirstScalar() {}
+  hiopPDPerturbationPrimalFirstRand()
+      : hiopPDPerturbationPrimalFirstScalar()
+  {}
 
   virtual ~hiopPDPerturbationPrimalFirstRand() {}
 
-protected: // methods
-  virtual void set_delta_curr_vec(DeltasUpdateType taskid); 
-  virtual void set_delta_last_vec(DeltasUpdateType taskid);  
+protected:  // methods
+  virtual void set_delta_curr_vec(DeltasUpdateType taskid);
+  virtual void set_delta_last_vec(DeltasUpdateType taskid);
 };
 
 /**
@@ -316,38 +314,37 @@ public:
 
   virtual ~hiopPDPerturbationDualFirstScalar();
 
-  /** Called when a new linear system is attempted to be factorized 
+  /** Called when a new linear system is attempted to be factorized
    */
   virtual bool compute_initial_deltas();
 
   /** Method for correcting inertia */
   virtual bool compute_perturb_wrong_inertia();
-                            
-  /** Method for correcting singular Jacobian 
+
+  /** Method for correcting singular Jacobian
    *  (follows Ipopt closely since the paper seems to be outdated)
-   */  
+   */
   virtual bool compute_perturb_singularity();
 
   virtual bool check_consistency();
-                         
-protected: //variables
+
+protected:  // variables
   double delta_c_min_bar_;
   double kappa_c_plus_;
 
-protected: // methods
-  virtual void set_delta_curr_vec(DeltasUpdateType taskid); 
+protected:  // methods
+  virtual void set_delta_curr_vec(DeltasUpdateType taskid);
   virtual void set_delta_last_vec(DeltasUpdateType taskid);
 
-  /** 
+  /**
    * Internal method implementing the computation of delta_w's to correct wrong inertia
    */
   virtual bool compute_primal_perturb_impl();
-                                      
-  /** 
+
+  /**
    * Internal method implementing the computation of delta_c's to correct wrong inertia
    */
   virtual bool compute_dual_perturb_impl(const double& mu);
-
 };
 
 /**
@@ -358,14 +355,16 @@ protected: // methods
 class hiopPDPerturbationDualFirstRand : public hiopPDPerturbationDualFirstScalar
 {
 public:
-  hiopPDPerturbationDualFirstRand() : hiopPDPerturbationDualFirstScalar() {}
+  hiopPDPerturbationDualFirstRand()
+      : hiopPDPerturbationDualFirstScalar()
+  {}
 
   virtual ~hiopPDPerturbationDualFirstRand() {}
 
-protected: // methods
-  virtual void set_delta_curr_vec(DeltasUpdateType taskid); 
-  virtual void set_delta_last_vec(DeltasUpdateType taskid);  
+protected:  // methods
+  virtual void set_delta_curr_vec(DeltasUpdateType taskid);
+  virtual void set_delta_last_vec(DeltasUpdateType taskid);
 };
 
-} //end of namespace
+}  // namespace hiop
 #endif

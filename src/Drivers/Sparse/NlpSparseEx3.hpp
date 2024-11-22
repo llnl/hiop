@@ -1,5 +1,5 @@
 #ifndef HIOP_EXAMPLE_SPARSE_EX3
-#define  HIOP_EXAMPLE_SPARSE_EX3
+#define HIOP_EXAMPLE_SPARSE_EX3
 
 #include "hiopInterface.hpp"
 
@@ -15,26 +15,31 @@ using index_type = hiop::index_type;
  *        x_1 + x_n == 10,              , if eq_feas == true or eq_infeas == true
  *        x_1 + x_n   == 10,   i=3,...,n, if eq_feas == true
  *        x_1 + x_n   == 15,   i=3,...,n, if eq_infeas == true
- *        10-a <= x_1 + x_n  <= 10+a,           , if ineq_feas == true or ineq_infeas == true 
+ *        10-a <= x_1 + x_n  <= 10+a,           , if ineq_feas == true or ineq_infeas == true
  *        10-a <= x_1 + x_n  <= 15+a, i=3,...,n , if ineq_feas == true
  *         3-a <= x_1 + x_n  <= 5-a, i=3,...,n,   if ineq_infeas == true
  *        x_i >= 0, i=1,...,n
- * 
+ *
  *  a >= 0 , by default a = 1e-6
  *  n >= 3
  */
 class SparseEx3 : public hiop::hiopInterfaceSparse
 {
 public:
-  SparseEx3(int n, double scala_a = 1e-6, bool eq_feas = false, bool eq_infeas = false, bool ineq_feas = false, bool ineq_infeas = false);
+  SparseEx3(int n,
+            double scala_a = 1e-6,
+            bool eq_feas = false,
+            bool eq_infeas = false,
+            bool ineq_feas = false,
+            bool ineq_infeas = false);
   virtual ~SparseEx3();
 
   virtual bool get_prob_sizes(size_type& n, size_type& m);
   virtual bool get_prob_info(NonlinearityType& type);
-  virtual bool get_vars_info(const size_type& n, double *xlow, double* xupp, NonlinearityType* type);
+  virtual bool get_vars_info(const size_type& n, double* xlow, double* xupp, NonlinearityType* type);
   virtual bool get_cons_info(const size_type& m, double* clow, double* cupp, NonlinearityType* type);
-  
-  virtual bool get_sparse_blocks_info(size_type& nx, 
+
+  virtual bool get_sparse_blocks_info(size_type& nx,
                                       size_type& nnz_sparse_Jaceq,
                                       size_type& nnz_sparse_Jacineq,
                                       size_type& nnz_sparse_Hess_Lagr);
@@ -47,9 +52,7 @@ public:
                          const double* x,
                          bool new_x,
                          double* cons);
-  virtual bool eval_cons(const size_type& n, const size_type& m,
-                         const double* x, bool new_x,
-                         double* cons);
+  virtual bool eval_cons(const size_type& n, const size_type& m, const double* x, bool new_x, double* cons);
   virtual bool eval_grad_f(const size_type& n, const double* x, bool new_x, double* gradf);
   virtual bool eval_Jac_cons(const size_type& n,
                              const size_type& m,
@@ -69,7 +72,7 @@ public:
                              index_type* iJacS,
                              index_type* jJacS,
                              double* MJacS);
-  virtual bool get_starting_point(const size_type&n, double* x0);
+  virtual bool get_starting_point(const size_type& n, double* x0);
   virtual bool eval_Hess_Lagr(const size_type& n,
                               const size_type& m,
                               const double* x,

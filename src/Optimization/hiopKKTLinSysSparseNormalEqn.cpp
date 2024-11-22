@@ -60,36 +60,36 @@
 #ifdef HIOP_USE_CUDA
 #include "hiopLinSolverCholCuSparse.hpp"
 #include "hiopVectorCuda.hpp"
-#endif // HIOP_USE_CUDA
+#endif  // HIOP_USE_CUDA
 
 #include "hiopMatrixSparseCSRSeq.hpp"
 
 namespace hiop
-{  
+{
 hiopKKTLinSysSparseNormalEqn::hiopKKTLinSysSparseNormalEqn(hiopNlpFormulation* nlp)
-  : hiopKKTLinSysNormalEquation(nlp),
-    rhs_{nullptr},
-    Hess_diag_{nullptr},
-    deltawx_{nullptr},
-    deltawd_{nullptr},
-    deltacc_{nullptr},
-    deltacd_{nullptr},
-    dual_reg_copy_{nullptr},
-    Hess_diag_copy_{nullptr},
-    Hx_copy_{nullptr},
-    Hd_copy_{nullptr},
-    Hxd_inv_copy_{nullptr},
-    write_linsys_counter_(-1),
-    csr_writer_(nlp),
-    nlpSp_{nullptr},
-    HessSp_{nullptr},
-    Jac_cSp_{nullptr},
-    Jac_dSp_{nullptr},    
-    JacD_{nullptr},
-    JacDt_{nullptr},
-    JDiagJt_{nullptr},
-    Diag_dualreg_{nullptr},
-    M_normaleqn_{nullptr}
+    : hiopKKTLinSysNormalEquation(nlp),
+      rhs_{nullptr},
+      Hess_diag_{nullptr},
+      deltawx_{nullptr},
+      deltawd_{nullptr},
+      deltacc_{nullptr},
+      deltacd_{nullptr},
+      dual_reg_copy_{nullptr},
+      Hess_diag_copy_{nullptr},
+      Hx_copy_{nullptr},
+      Hd_copy_{nullptr},
+      Hxd_inv_copy_{nullptr},
+      write_linsys_counter_(-1),
+      csr_writer_(nlp),
+      nlpSp_{nullptr},
+      HessSp_{nullptr},
+      Jac_cSp_{nullptr},
+      Jac_dSp_{nullptr},
+      JacD_{nullptr},
+      JacDt_{nullptr},
+      JDiagJt_{nullptr},
+      Diag_dualreg_{nullptr},
+      M_normaleqn_{nullptr}
 {
   nlpSp_ = dynamic_cast<hiopNlpSparse*>(nlp_);
   assert(nlpSp_);
@@ -117,9 +117,8 @@ hiopKKTLinSysSparseNormalEqn::~hiopKKTLinSysSparseNormalEqn()
 
 bool hiopKKTLinSysSparseNormalEqn::build_kkt_matrix(const hiopPDPerturbation& pdreg)
 {
-
 #ifdef HIOP_DEEPCHECKS
-    assert(perturb_calc_->check_consistency() && "something went wrong with IC");
+  assert(perturb_calc_->check_consistency() && "something went wrong with IC");
 #endif
 
   delta_wx_ = perturb_calc_->get_curr_delta_wx();
@@ -128,7 +127,7 @@ bool hiopKKTLinSysSparseNormalEqn::build_kkt_matrix(const hiopPDPerturbation& pd
   delta_cd_ = perturb_calc_->get_curr_delta_cd();
 
   HessSp_ = dynamic_cast<hiopMatrixSparse*>(Hess_);
-  if(!HessSp_) { 
+  if(!HessSp_) {
     assert(false);
     return false;
   }
@@ -149,16 +148,16 @@ bool hiopKKTLinSysSparseNormalEqn::build_kkt_matrix(const hiopPDPerturbation& pd
 
   /* TODO: here we assume Hess is diagonal!*/
   assert(HessSp_->is_diagonal());
-  
+
   hiopMatrixSymSparseTriplet* Hess_triplet = dynamic_cast<hiopMatrixSymSparseTriplet*>(Hess_);
-  
+
   assert(HessSp_ && Jac_cSp_ && Jac_dSp_);
-  if(nullptr==Jac_dSp_ || nullptr==HessSp_) {
+  if(nullptr == Jac_dSp_ || nullptr == HessSp_) {
     nlp_->runStats.kkt.tmUpdateInit.stop();
-    //incorrect linear algebra objects were provided to this class
+    // incorrect linear algebra objects were provided to this class
     return false;
   }
-  
+
   size_type nx = HessSp_->n();
   size_type neq = Jac_cSp_->m();
   size_type nineq = Jac_dSp_->m();
@@ -166,42 +165,42 @@ bool hiopKKTLinSysSparseNormalEqn::build_kkt_matrix(const hiopPDPerturbation& pd
   assert(nx == Dx_->get_size());
 
   // NOTE:
-  // hybrid compute mode -> linear algebra objects used internally by the class will be allocated on the device. Most of the inputs
-  // to this class will be however on HOST under hybrid mode, so some objects are copied/replicated/transfered to device
-  // gpu compute mode -> not yet supported
-  // cpu compute mode -> all objects on HOST, however, some objects will still be copied (e.g., Hd_) to ensure code homogeneity
+  // hybrid compute mode -> linear algebra objects used internally by the class will be allocated on the device. Most of the
+  // inputs to this class will be however on HOST under hybrid mode, so some objects are copied/replicated/transfered to
+  // device gpu compute mode -> not yet supported cpu compute mode -> all objects on HOST, however, some objects will still
+  // be copied (e.g., Hd_) to ensure code homogeneity
   //
-  // REMARK: The objects that are copied/replicated are temporary and will be removed later on as the remaining sparse KKT computations
-  // will be ported to device
+  // REMARK: The objects that are copied/replicated are temporary and will be removed later on as the remaining sparse KKT
+  // computations will be ported to device
 
-  //determine the "internal" memory space, see above note
+  // determine the "internal" memory space, see above note
   std::string mem_space_internal = determine_memory_space_internal(nlp_->options->GetString("compute_mode"));
 
-  //allocate on the first call
+  // allocate on the first call
   if(nullptr == Hess_diag_) {
-    //HOST
+    // HOST
     Hess_diag_ = LinearAlgebraFactory::create_vector(nlp_->options->GetString("mem_space"), nx);
     Hx_ = LinearAlgebraFactory::create_vector(nlp_->options->GetString("mem_space"), nx);
     Hd_ = LinearAlgebraFactory::create_vector(nlp_->options->GetString("mem_space"), nineq);
 
     Hess_triplet->extract_diagonal(*Hess_diag_);
 
-    assert(nullptr == Hd_copy_);  //should be also not allocated
-    //temporary: make a copy of Hd on the "internal" mem_space
+    assert(nullptr == Hd_copy_);  // should be also not allocated
+    // temporary: make a copy of Hd on the "internal" mem_space
     Hess_diag_copy_ = LinearAlgebraFactory::create_vector(mem_space_internal, nx);
     Hx_copy_ = LinearAlgebraFactory::create_vector(mem_space_internal, nx);
     Hd_copy_ = LinearAlgebraFactory::create_vector(mem_space_internal, nineq);
     Hxd_inv_copy_ = LinearAlgebraFactory::create_vector(mem_space_internal, nx + nineq);
-  
-    assert(nullptr == deltawx_); //should be also not allocated
-    //allocate this internal vector on the device if hybrid compute mode
+
+    assert(nullptr == deltawx_);  // should be also not allocated
+    // allocate this internal vector on the device if hybrid compute mode
     deltawx_ = LinearAlgebraFactory::create_vector(mem_space_internal, nx);
     deltawd_ = LinearAlgebraFactory::create_vector(mem_space_internal, nineq);
     deltacc_ = LinearAlgebraFactory::create_vector(mem_space_internal, neq);
     deltacd_ = LinearAlgebraFactory::create_vector(mem_space_internal, nineq);
     dual_reg_copy_ = LinearAlgebraFactory::create_vector(mem_space_internal, neq + nineq);
   }
-  //build the diagonal Hx = Dx + delta_wx + diag(Hess)
+  // build the diagonal Hx = Dx + delta_wx + diag(Hess)
   Hx_->copyFrom(*Dx_);
   Hx_->axpy(1., *delta_wx_);
   Hx_->axpy(1., *Hess_diag_);
@@ -210,18 +209,18 @@ bool hiopKKTLinSysSparseNormalEqn::build_kkt_matrix(const hiopPDPerturbation& pd
   Hd_->copyFrom(*Dd_);
   Hd_->axpy(1., *delta_wd_);
 
-  //temporary code, see above note
+  // temporary code, see above note
   {
     if(mem_space_internal == "CUDA") {
 #ifdef HIOP_USE_CUDA
       auto Hess_diag_cuda = dynamic_cast<hiopVectorCuda*>(Hess_diag_copy_);
       auto Hess_diag_par = dynamic_cast<hiopVectorPar*>(Hess_diag_);
       auto Hx_cuda = dynamic_cast<hiopVectorCuda*>(Hx_copy_);
-      auto Hx_par =  dynamic_cast<hiopVectorPar*>(Hx_);
+      auto Hx_par = dynamic_cast<hiopVectorPar*>(Hx_);
       auto Hd_cuda = dynamic_cast<hiopVectorCuda*>(Hd_copy_);
-      auto Hd_par =  dynamic_cast<hiopVectorPar*>(Hd_);
+      auto Hd_par = dynamic_cast<hiopVectorPar*>(Hd_);
       assert(Hx_cuda && "incorrect type for vector class");
-      assert(Hx_par && "incorrect type for vector class");      
+      assert(Hx_par && "incorrect type for vector class");
       Hess_diag_cuda->copy_from_vectorpar(*Hess_diag_par);
       Hx_cuda->copy_from_vectorpar(*Hx_par);
       Hd_cuda->copy_from_vectorpar(*Hd_par);
@@ -241,7 +240,7 @@ bool hiopKKTLinSysSparseNormalEqn::build_kkt_matrix(const hiopPDPerturbation& pd
       deltacd_cuda->copy_from_vectorpar(deltacd_host);
 #else
       assert(false && "compute mode not available under current build: enable CUDA.");
-#endif 
+#endif
     } else {
       assert(dynamic_cast<hiopVectorPar*>(Hd_) && "incorrect type for vector class");
       Hess_diag_copy_->copyFrom(*Hess_diag_);
@@ -256,29 +255,31 @@ bool hiopKKTLinSysSparseNormalEqn::build_kkt_matrix(const hiopPDPerturbation& pd
 
   nlp_->runStats.kkt.tmUpdateInit.stop();
   nlp_->runStats.kkt.tmUpdateLinsys.start();
-  
-  /*
-  *  compute condensed linear system
-  * ( [ Jc  0 ] [ H+Dx+delta_wx     0       ]^{-1} [ Jc^T  Jd^T ] + [ delta_cc     0     ] ) 
-  * ( [ Jd -I ] [   0           Dd+delta_wd ]      [  0     -I  ]   [    0      delta_cd ] ) 
-  */
 
-  // TODO: jump to the steps where we add dual regularization, if delta_wx is not changed and this function is called due to refactorization
+  /*
+   *  compute condensed linear system
+   * ( [ Jc  0 ] [ H+Dx+delta_wx     0       ]^{-1} [ Jc^T  Jd^T ] + [ delta_cc     0     ] )
+   * ( [ Jd -I ] [   0           Dd+delta_wd ]      [  0     -I  ]   [    0      delta_cd ] )
+   */
+
+  // TODO: jump to the steps where we add dual regularization, if delta_wx is not changed and this function is called due to
+  // refactorization
   hiopTimer t;
 
   if(nullptr == JDiagJt_) {
-    t.reset(); t.start();
+    t.reset();
+    t.start();
     // first time this is called
     // form sparse matrix in triplet form on HOST
-    size_type nnz_jac_con = Jac_cSp_->numberOfNonzeros()+Jac_dSp_->numberOfNonzeros()+nineq;
-    auto* Jac_triplet_tmp = new hiopMatrixSparseTriplet(neq+nineq, nx+nineq, nnz_jac_con);
+    size_type nnz_jac_con = Jac_cSp_->numberOfNonzeros() + Jac_dSp_->numberOfNonzeros() + nineq;
+    auto* Jac_triplet_tmp = new hiopMatrixSparseTriplet(neq + nineq, nx + nineq, nnz_jac_con);
     Jac_triplet_tmp->setToZero();
 
     // build  [ Jc  0 ]
     //        [ Jd -I ]
     // copy Jac to the full iterate matrix
     size_type dest_nnz_st{0};
-    Jac_triplet_tmp->copyRowsBlockFrom(*Jac_cSp_, 0,   neq,   0, dest_nnz_st);
+    Jac_triplet_tmp->copyRowsBlockFrom(*Jac_cSp_, 0, neq, 0, dest_nnz_st);
     dest_nnz_st += Jac_cSp_->numberOfNonzeros();
     Jac_triplet_tmp->copyRowsBlockFrom(*Jac_dSp_, 0, nineq, neq, dest_nnz_st);
     dest_nnz_st += Jac_dSp_->numberOfNonzeros();
@@ -290,7 +291,7 @@ bool hiopKKTLinSysSparseNormalEqn::build_kkt_matrix(const hiopPDPerturbation& pd
     /// TODO: now we assume Jc and Jd won't change, i.e., LP or QP. hence we build JacD_ and JacDt_ once and save them
     Jac_triplet_tmp->sort();
 
-    assert(   nullptr == JacD_    && nullptr == JacDt_ && nullptr == JDiagJt_ );
+    assert(nullptr == JacD_ && nullptr == JacDt_ && nullptr == JDiagJt_);
 
     JacD_ = LinearAlgebraFactory::create_matrix_sparse_csr(mem_space_internal);
     JacD_->form_from_symbolic(*Jac_triplet_tmp);
@@ -298,17 +299,18 @@ bool hiopKKTLinSysSparseNormalEqn::build_kkt_matrix(const hiopPDPerturbation& pd
 
     JacDt_ = LinearAlgebraFactory::create_matrix_sparse_csr(mem_space_internal);
     JacDt_->form_transpose_from_symbolic(*JacD_);
-    JacDt_->form_transpose_from_numeric(*JacD_); // need this line before calling JacD_->times_mat_alloc(*JacDt_) 
+    JacDt_->form_transpose_from_numeric(*JacD_);  // need this line before calling JacD_->times_mat_alloc(*JacDt_)
 
-    //symbolic multiplication for JacD*Diag*JacDt
-    // J * (D*Jt)  (D is not used since it does not change the sparsity pattern)
+    // symbolic multiplication for JacD*Diag*JacDt
+    //  J * (D*Jt)  (D is not used since it does not change the sparsity pattern)
     JDiagJt_ = JacD_->times_mat_alloc(*JacDt_);
     JacD_->times_mat_symbolic(*JDiagJt_, *JacDt_);
 
     delete Jac_triplet_tmp;
   }
 
-  t.reset(); t.start();
+  t.reset();
+  t.start();
 
   if(pdreg.get_curr_delta_type() != hiopPDPerturbation::DeltasUpdateType::DualUpdate) {
     // build the diagonal Hxd_inv_copy_ = [H+Dx+delta_wx, Dd+delta_wd ]^{-1}
@@ -326,18 +328,20 @@ bool hiopKKTLinSysSparseNormalEqn::build_kkt_matrix(const hiopPDPerturbation& pd
   }
 
   if(nullptr == M_normaleqn_) {
-    t.reset(); t.start();
+    t.reset();
+    t.start();
     Diag_dualreg_ = LinearAlgebraFactory::create_matrix_sparse_csr(mem_space_internal);
     Diag_dualreg_->form_diag_from_symbolic(*dual_reg_copy_);
 
-    //form sparsity pattern of M_normaleqn_ = JacD*Diag*JacDt + delta_dual*I
+    // form sparsity pattern of M_normaleqn_ = JacD*Diag*JacDt + delta_dual*I
     M_normaleqn_ = Diag_dualreg_->add_matrix_alloc(*JDiagJt_);
     Diag_dualreg_->add_matrix_symbolic(*M_normaleqn_, *JDiagJt_);
   }
 
-  t.reset(); t.start();
+  t.reset();
+  t.start();
   Diag_dualreg_->set_diagonal(0.0);
-  //if(!delta_cc_in.is_zero() || !delta_cd_in.is_zero()) // TODO: for efficiency?
+  // if(!delta_cc_in.is_zero() || !delta_cd_in.is_zero()) // TODO: for efficiency?
   {
     deltacc_->copyToStarting(*dual_reg_copy_, 0);
     deltacd_->copyToStarting(*dual_reg_copy_, neq);
@@ -352,7 +356,7 @@ bool hiopKKTLinSysSparseNormalEqn::build_kkt_matrix(const hiopPDPerturbation& pd
   linSys_ = determine_and_create_linsys();
 
   nlp_->runStats.kkt.tmUpdateLinsys.stop();
-  
+
   if(perf_report_) {
     nlp_->log->printf(hovSummary,
                       "KKT_SPARSE_NormalEqn linsys: Low-level linear system size %d nnz %d\n",
@@ -360,74 +364,68 @@ bool hiopKKTLinSysSparseNormalEqn::build_kkt_matrix(const hiopPDPerturbation& pd
                       M_normaleqn_->numberOfNonzeros());
   }
 
-  //write matrix to file if requested
+  // write matrix to file if requested
   if(nlp_->options->GetString("write_kkt") == "yes") {
     write_linsys_counter_++;
   }
-  if(write_linsys_counter_>=0) {
+  if(write_linsys_counter_ >= 0) {
     // TODO csr_writer_.writeMatToFile(Msys, write_linsys_counter_, nx, 0, nineq);
   }
 
-  return true; 
+  return true;
 }
 
 hiopLinSolverSymSparse* hiopKKTLinSysSparseNormalEqn::determine_and_create_linsys()
 {
   if(linSys_) {
-    return dynamic_cast<hiopLinSolverSymSparse*> (linSys_);
+    return dynamic_cast<hiopLinSolverSymSparse*>(linSys_);
   }
 
   size_type n = M_normaleqn_->m();
   auto linsolv = nlp_->options->GetString("linear_solver_sparse");
   if(nlp_->options->GetString("compute_mode") == "cpu") {
-
-    //TODO:
-    //add support for linear_solver == "cholmod"
-    // maybe add pardiso as an option in the future
+    // TODO:
+    // add support for linear_solver == "cholmod"
+    //  maybe add pardiso as an option in the future
     //
-    assert((linsolv=="ma57" || linsolv=="auto") && "Only MA57 or auto is supported on cpu.");
+    assert((linsolv == "ma57" || linsolv == "auto") && "Only MA57 or auto is supported on cpu.");
 
 #ifdef HIOP_USE_COINHSL
-    nlp_->log->printf(hovWarning,
-                      "KKT_SPARSE_NormalEqn linsys: alloc MA57 for matrix of size %d (0 cons)\n", n);
+    nlp_->log->printf(hovWarning, "KKT_SPARSE_NormalEqn linsys: alloc MA57 for matrix of size %d (0 cons)\n", n);
 
-    //we need to get CPU CSR matrix
+    // we need to get CPU CSR matrix
     auto* M_csr = dynamic_cast<hiopMatrixSparseCSRSeq*>(M_normaleqn_);
     assert(M_csr);
     linSys_ = new hiopLinSolverSparseCsrMa57(M_csr, nlp_);
 #else
     assert(false && "HiOp was built without a sparse linear solver needed by the condensed KKT approach");
-#endif // HIOP_USE_COINHSL
+#endif  // HIOP_USE_COINHSL
 
   } else {
     //
     // on device: compute_mode is hybrid, auto, or gpu
     //
-    assert(nullptr==linSys_);
+    assert(nullptr == linSys_);
 
-    assert((linsolv=="cusolver-chol" || linsolv=="auto") && "Only cusolver-chol or auto is supported on gpu.");
+    assert((linsolv == "cusolver-chol" || linsolv == "auto") && "Only cusolver-chol or auto is supported on gpu.");
 
 #ifdef HIOP_USE_CUDA
-    nlp_->log->printf(hovWarning,
-                      "KKT_SPARSE_NormalEqn linsys: alloc cuSOLVER-chol matrix size %d\n", n);
+    nlp_->log->printf(hovWarning, "KKT_SPARSE_NormalEqn linsys: alloc cuSOLVER-chol matrix size %d\n", n);
     assert(M_normaleqn_);
     linSys_ = new hiopLinSolverCholCuSparse(M_normaleqn_, nlp_);
 #endif
 
-    //Return NULL (and assert) if a GPU sparse linear solver is not present
-    assert(linSys_!=nullptr &&
+    // Return NULL (and assert) if a GPU sparse linear solver is not present
+    assert(linSys_ != nullptr &&
            "HiOp was built without a sparse linear solver for GPU/device and cannot run on the "
            "device as instructed by the 'compute_mode' option. Change the 'compute_mode' to 'cpu'");
   }
-  assert(linSys_&& "KKT_SPARSE_NormalEqn linsys: cannot instantiate backend linear solver");
+  assert(linSys_ && "KKT_SPARSE_NormalEqn linsys: cannot instantiate backend linear solver");
 
-  return dynamic_cast<hiopLinSolverSymSparse*> (linSys_);
+  return dynamic_cast<hiopLinSolverSymSparse*>(linSys_);
 }
 
-bool hiopKKTLinSysSparseNormalEqn::solveCompressed(hiopVector& ryc,
-                                                   hiopVector& ryd,
-                                                   hiopVector& dyc,
-                                                   hiopVector& dyd)
+bool hiopKKTLinSysSparseNormalEqn::solveCompressed(hiopVector& ryc, hiopVector& ryd, hiopVector& dyc, hiopVector& dyd)
 {
   bool bret{false};
 
@@ -438,7 +436,7 @@ bool hiopKKTLinSysSparseNormalEqn::solveCompressed(hiopVector& ryc,
 
   // this is rhs used by the direct "condensed" solve
   if(rhs_ == NULL) {
-    rhs_ = LinearAlgebraFactory::create_vector(nlp_->options->GetString("mem_space"), nyc+nyd);
+    rhs_ = LinearAlgebraFactory::create_vector(nlp_->options->GetString("mem_space"), nyc + nyd);
   }
 
   nlp_->log->write("RHS KKT_SPARSE_NormalEqn ryc:", ryc, hovIteration);
@@ -450,7 +448,7 @@ bool hiopKKTLinSysSparseNormalEqn::solveCompressed(hiopVector& ryc,
   ryc.copyToStarting(*rhs_, 0);
   ryd.copyToStarting(*rhs_, nyc);
 
-  if(write_linsys_counter_>=0) {
+  if(write_linsys_counter_ >= 0) {
     csr_writer_.writeRhsToFile(*rhs_, write_linsys_counter_);
   }
   nlp_->runStats.kkt.tmSolveRhsManip.stop();
@@ -467,7 +465,7 @@ bool hiopKKTLinSysSparseNormalEqn::solveCompressed(hiopVector& ryc,
                       "(summary for linear solver from KKT_SPARSE_NormalEqn(direct))\n%s",
                       nlp_->runStats.linsolv.get_summary_last_solve().c_str());
   }
-  if(write_linsys_counter_>=0) {
+  if(write_linsys_counter_ >= 0) {
     csr_writer_.writeSolToFile(*rhs_, write_linsys_counter_);
   }
 
@@ -476,31 +474,31 @@ bool hiopKKTLinSysSparseNormalEqn::solveCompressed(hiopVector& ryc,
   //
   // unpack
   //
-  rhs_->startingAtCopyToStartingAt(0,   dyc, 0);
+  rhs_->startingAtCopyToStartingAt(0, dyc, 0);
   rhs_->startingAtCopyToStartingAt(nyc, dyd, 0);
   nlp_->log->write("SOL KKT_SPARSE_NormalEqn dyc:", dyc, hovMatrices);
   nlp_->log->write("SOL KKT_SPARSE_NormalEqn dyd:", dyd, hovMatrices);
 
   nlp_->runStats.kkt.tmSolveRhsManip.stop();
-    
+
   return bret;
 }
 
 int hiopKKTLinSysSparseNormalEqn::factorizeWithCurvCheck()
 {
-  //factorization
+  // factorization
   size_type n_neg_eig = hiopKKTLinSysCurvCheck::factorizeWithCurvCheck();
 
   if(n_neg_eig == -1) {
-    nlp_->log->printf(hovScalars,
-                "KKT_SPARSE_NormalEqn linsys: Detected null eigenvalues.\n");
+    nlp_->log->printf(hovScalars, "KKT_SPARSE_NormalEqn linsys: Detected null eigenvalues.\n");
     n_neg_eig = -1;
   } else {
     // Cholesky factorization succeeds. Matrix is PD and hence the corresponding Augmented system has correct inertia
-    n_neg_eig = Jac_c_->m() + Jac_d_->m();;    
+    n_neg_eig = Jac_c_->m() + Jac_d_->m();
+    ;
   }
 
   return n_neg_eig;
 }
 
-} // end of namespace
+}  // namespace hiop

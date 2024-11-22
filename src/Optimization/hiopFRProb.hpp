@@ -93,12 +93,9 @@ public:
 
   virtual bool get_prob_sizes(size_type& n, size_type& m);
   virtual bool get_prob_info(NonlinearityType& type);
-  virtual bool get_vars_info(const size_type& n, double *xlow, double* xupp, NonlinearityType* type);
+  virtual bool get_vars_info(const size_type& n, double* xlow, double* xupp, NonlinearityType* type);
   virtual bool get_cons_info(const size_type& m, double* clow, double* cupp, NonlinearityType* type);
-  virtual bool get_sparse_blocks_info(int& nx,
-                                      int& nnz_sparse_Jaceq,
-                                      int& nnz_sparse_Jacineq,
-                                      int& nnz_sparse_Hess_Lagr);
+  virtual bool get_sparse_blocks_info(int& nx, int& nnz_sparse_Jaceq, int& nnz_sparse_Jacineq, int& nnz_sparse_Hess_Lagr);
 
   virtual bool eval_f(const size_type& n, const double* x, bool new_x, double& obj_value);
   virtual bool eval_cons(const size_type& n,
@@ -108,13 +105,10 @@ public:
                          const double* x,
                          bool new_x,
                          double* cons);
-  virtual bool eval_cons(const size_type& n,
-                         const size_type& m,
-                         const double* x,
-                         bool new_x,
-                         double* cons);
+  virtual bool eval_cons(const size_type& n, const size_type& m, const double* x, bool new_x, double* cons);
   virtual bool eval_grad_f(const size_type& n, const double* x, bool new_x, double* gradf);
-  virtual bool eval_Jac_cons(const size_type& n, const size_type& m,
+  virtual bool eval_Jac_cons(const size_type& n,
+                             const size_type& m,
                              const size_type& num_cons,
                              const index_type* idx_cons,
                              const double* x,
@@ -135,7 +129,7 @@ public:
   virtual bool get_warmstart_point(const size_type& n,
                                    const size_type& m,
                                    double* x0,
-                                   double* z_bndL0, 
+                                   double* z_bndL0,
                                    double* z_bndU0,
                                    double* lambda0,
                                    double* ineq_slack,
@@ -176,8 +170,8 @@ public:
 
   virtual bool force_update_x(const int n, double* x);
 
-  virtual const hiopVector& get_fr_sol_x ()  const { return *last_x_; }
-  virtual const hiopVector& get_fr_sol_d ()  const { return *last_d_; }
+  virtual const hiopVector& get_fr_sol_x() const { return *last_x_; }
+  virtual const hiopVector& get_fr_sol_d() const { return *last_d_; }
 
 private:
   size_type n_;
@@ -204,7 +198,7 @@ private:
   hiopVector* wrk_cbody_;
   hiopVector* wrk_dbody_;
   hiopVector* wrk_primal_;  // [x pe ne pi ni]
-  hiopVector* wrk_dual_;  // [c d]
+  hiopVector* wrk_dual_;    // [c d]
 
   hiopMatrixSparse* Jac_cd_;
   hiopMatrixSparse* Hess_cd_;
@@ -219,10 +213,10 @@ private:
   double rho_;
   double obj_base_;
 
-  int pe_st_; // the 1st index of pe in the full primal space
-  int ne_st_; // the 1st index of ne in the full primal space
-  int pi_st_; // the 1st index of pi in the full primal space
-  int ni_st_; // the 1st index of ni in the full primal space
+  int pe_st_;  // the 1st index of pe in the full primal space
+  int ne_st_;  // the 1st index of ne in the full primal space
+  int pi_st_;  // the 1st index of pi in the full primal space
+  int ni_st_;  // the 1st index of ni in the full primal space
 };
 
 /** Specialized interface for feasibility restoration problem with MDS blocks in the Jacobian and Hessian.
@@ -242,7 +236,7 @@ public:
   virtual ~hiopFRProbMDS();
   virtual bool get_MPI_comm(MPI_Comm& comm_out);
 
-  virtual bool get_sparse_dense_blocks_info(int& nx_sparse, 
+  virtual bool get_sparse_dense_blocks_info(int& nx_sparse,
                                             int& nx_dense,
                                             int& nnz_sparse_Jaceq,
                                             int& nnz_sparse_Jacineq,
@@ -274,7 +268,7 @@ public:
                              index_type* jJacS,
                              double* MJacS,
                              double* JacD);
-  
+
   virtual bool eval_Hess_Lagr(const size_type& n,
                               const size_type& m,
                               const double* x,
@@ -296,7 +290,7 @@ public:
 
   virtual bool get_prob_sizes(size_type& n, size_type& m);
   virtual bool get_prob_info(NonlinearityType& type);
-  virtual bool get_vars_info(const size_type& n, double *xlow, double* xupp, NonlinearityType* type);
+  virtual bool get_vars_info(const size_type& n, double* xlow, double* xupp, NonlinearityType* type);
   virtual bool get_cons_info(const size_type& m, double* clow, double* cupp, NonlinearityType* type);
 
   virtual bool eval_f(const size_type& n, const double* x, bool new_x, double& obj_value);
@@ -307,17 +301,13 @@ public:
                          const double* x,
                          bool new_x,
                          double* cons);
-  virtual bool eval_cons(const size_type& n,
-                         const size_type& m,
-                         const double* x,
-                         bool new_x,
-                         double* cons);
+  virtual bool eval_cons(const size_type& n, const size_type& m, const double* x, bool new_x, double* cons);
   virtual bool eval_grad_f(const size_type& n, const double* x, bool new_x, double* gradf);
 
   virtual bool get_warmstart_point(const size_type& n,
                                    const size_type& m,
                                    double* x0,
-                                   double* z_bndL0, 
+                                   double* z_bndL0,
                                    double* z_bndU0,
                                    double* lambda0,
                                    double* ineq_slack,
@@ -346,8 +336,8 @@ public:
 
   virtual bool force_update_x(const int n, double* x);
 
-  virtual const hiopVector& get_fr_sol_x ()  const { return *last_x_; }
-  virtual const hiopVector& get_fr_sol_d ()  const { return *last_d_; }
+  virtual const hiopVector& get_fr_sol_x() const { return *last_x_; }
+  virtual const hiopVector& get_fr_sol_d() const { return *last_d_; }
 
 private:
   size_type n_;
@@ -381,9 +371,9 @@ private:
   hiopVector* wrk_primal_;  // [xsp pe ne pi ni xde]
   hiopVector* wrk_dual_;    // [c d]
 
-  hiopVector* wrk_x_sp_;    // the sparse part of x, xsp
-  hiopVector* wrk_x_de_;    // the dense part of x, xde
-  
+  hiopVector* wrk_x_sp_;  // the sparse part of x, xsp
+  hiopVector* wrk_x_de_;  // the dense part of x, xde
+
   hiopMatrixMDS* Jac_cd_;
   hiopMatrixSymBlockDiagMDS* Hess_cd_;
 
@@ -397,12 +387,12 @@ private:
   double rho_;
   double obj_base_;
 
-  int x_sp_st_; // the 1st index of x_sp in the full primal space
-  int pe_st_; // the 1st index of pe in the full primal space
-  int ne_st_; // the 1st index of ne in the full primal space
-  int pi_st_; // the 1st index of pi in the full primal space
-  int ni_st_; // the 1st index of ni in the full primal space
-  int x_de_st_; // the 1st index of x_de in the full primal space
+  int x_sp_st_;  // the 1st index of x_sp in the full primal space
+  int pe_st_;    // the 1st index of pe in the full primal space
+  int ne_st_;    // the 1st index of ne in the full primal space
+  int pi_st_;    // the 1st index of pi in the full primal space
+  int ni_st_;    // the 1st index of ni in the full primal space
+  int x_de_st_;  // the 1st index of x_de in the full primal space
 };
 
 /** Specialized interface for feasibility restoration problem with dense blocks in the Jacobian and Hessian.
@@ -418,7 +408,7 @@ private:
  * distributed across MPI ranks ('get_vecdistrib_info' should return 'false').
  * Acceleration can be however obtained using OpenMP and CUDA via Raja
  * abstraction layer that HiOp uses and via linear solver.
- * 
+ *
  */
 class hiopFRProbDense : public hiopInterfaceDenseConstraints
 {
@@ -434,17 +424,16 @@ public:
                              const index_type* idx_cons,
                              const double* x,
                              bool new_x,
-                             double* Jac) { return false; }
+                             double* Jac)
+  {
+    return false;
+  }
 
-  virtual bool eval_Jac_cons(const size_type& n,
-                             const size_type& m,
-                             const double* x,
-                             bool new_x,
-                             double* Jac);
+  virtual bool eval_Jac_cons(const size_type& n, const size_type& m, const double* x, bool new_x, double* Jac);
 
   virtual bool get_prob_sizes(size_type& n, size_type& m);
   virtual bool get_prob_info(NonlinearityType& type);
-  virtual bool get_vars_info(const size_type& n, double *xlow, double* xupp, NonlinearityType* type);
+  virtual bool get_vars_info(const size_type& n, double* xlow, double* xupp, NonlinearityType* type);
   virtual bool get_cons_info(const size_type& m, double* clow, double* cupp, NonlinearityType* type);
 
   virtual bool eval_f(const size_type& n, const double* x, bool new_x, double& obj_value);
@@ -455,16 +444,15 @@ public:
                          const index_type* idx_cons,
                          const double* x,
                          bool new_x,
-                         double* cons) { return false; }
-  virtual bool eval_cons(const size_type& n,
-                         const size_type& m,
-                         const double* x,
-                         bool new_x,
-                         double* cons);
+                         double* cons)
+  {
+    return false;
+  }
+  virtual bool eval_cons(const size_type& n, const size_type& m, const double* x, bool new_x, double* cons);
   virtual bool get_warmstart_point(const size_type& n,
                                    const size_type& m,
                                    double* x0,
-                                   double* z_bndL0, 
+                                   double* z_bndL0,
                                    double* z_bndU0,
                                    double* lambda0,
                                    double* ineq_slack,
@@ -493,8 +481,8 @@ public:
 
   virtual bool force_update_x(const int n, double* x);
 
-  virtual const hiopVector& get_fr_sol_x ()  const { return *last_x_; }
-  virtual const hiopVector& get_fr_sol_d ()  const { return *last_d_; }
+  virtual const hiopVector& get_fr_sol_x() const { return *last_x_; }
+  virtual const hiopVector& get_fr_sol_d() const { return *last_d_; }
 
 private:
   size_type n_;
@@ -518,7 +506,7 @@ private:
   hiopVector* wrk_dbody_;
   hiopVector* wrk_primal_;  // [xde pe ne pi ni]
   hiopVector* wrk_dual_;    // [c d]
-  
+
   hiopMatrixDense* Jac_cd_;
 
   hiopVector* last_x_;
@@ -539,15 +527,11 @@ private:
   index_type* vec_distrib_base_;
 #endif
 
-  int pe_st_; // the 1st index of pe in the full primal space
-  int ne_st_; // the 1st index of ne in the full primal space
-  int pi_st_; // the 1st index of pi in the full primal space
-  int ni_st_; // the 1st index of ni in the full primal space
+  int pe_st_;  // the 1st index of pe in the full primal space
+  int ne_st_;  // the 1st index of ne in the full primal space
+  int pi_st_;  // the 1st index of pi in the full primal space
+  int ni_st_;  // the 1st index of ni in the full primal space
 };
 
-
-
-
-
-} //end of namespace
+}  // namespace hiop
 #endif

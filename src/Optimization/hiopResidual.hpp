@@ -65,20 +65,24 @@ public:
   virtual ~hiopResidual();
 
   virtual int update(const hiopIterate& it,
-		     const double& f, const hiopVector& c, const hiopVector& d,
-		     const hiopVector& gradf, const hiopMatrix& jac_c, const hiopMatrix& jac_d,
-		     const hiopLogBarProblem& logbar);
+                     const double& f,
+                     const hiopVector& c,
+                     const hiopVector& d,
+                     const hiopVector& gradf,
+                     const hiopMatrix& jac_c,
+                     const hiopMatrix& jac_d,
+                     const hiopLogBarProblem& logbar);
 
-  /// 
+  ///
   /// @pre
   /**
    * @brief Evaluate the infeasibilities at the new second-order-correction iterate.
-   * 
-   * Evaluate the the infeasibilities at the new second-order-correction iterate. Save 
-   * The method modifies 'this', in particular ryd,ryc, rxl,rxu, rdl, rdu in an attempt
-   * to reuse storage/buffers, and it updates the cached `nrmXXX` members. 
    *
-   * @pre unlike method `update`, here vector `c_soc` and `d_soc` is the constraint 
+   * Evaluate the the infeasibilities at the new second-order-correction iterate. Save
+   * The method modifies 'this', in particular ryd,ryc, rxl,rxu, rdl, rdu in an attempt
+   * to reuse storage/buffers, and it updates the cached `nrmXXX` members.
+   *
+   * @pre unlike method `update`, here vector `c_soc` and `d_soc` is the constraint
    *      violation including the constraint right-hand-side/slack, i.e.,
    *      c_soc = c_rhs - c_body and d_soc = d - d_body
    *
@@ -95,78 +99,72 @@ public:
 
   /* Return the Nlp and Log-bar errors computed at the previous update call. */
   inline void getNlpErrors(double& optim, double& feas, double& comple, double& cons_violation) const
-  { 
+  {
     optim = nrmInf_nlp_optim;
     feas = nrmInf_nlp_feasib;
     comple = nrmInf_nlp_complem;
     cons_violation = nrmInf_cons_violation;
   };
   inline void getBarrierErrors(double& optim, double& feas, double& comple) const
-  { 
+  {
     optim = nrmInf_bar_optim;
     feas = nrmInf_bar_feasib;
     comple = nrmInf_bar_complem;
   };
   /* get the previously computed Infeasibility */
-  inline double getInfeasInfNorm() const {
-    return nrmInf_nlp_feasib;
-  }
+  inline double getInfeasInfNorm() const { return nrmInf_nlp_feasib; }
   /* get the previously computed Infeasibility */
-  inline double get_theta() const {
-    return nrmOne_nlp_feasib;
-  } 
+  inline double get_theta() const { return nrmOne_nlp_feasib; }
   /* evaluate the Infeasibility at the new iterate, which has eq and ineq functions
    * computed in c_eval and d_eval, respectively.
    * The method modifies 'this', in particular ryd,ryc, rxl,rxu, rdl, rdu in an attempt
-   * to reuse storage/buffers, but does not update the cached nrmInf_XXX members. 
+   * to reuse storage/buffers, but does not update the cached nrmInf_XXX members.
    * It computes and returns the one norm of [ryc ryd] */
-  double compute_nlp_infeasib_onenorm (const hiopIterate& iter,
-                                       const hiopVector& c_eval,
-                                       const hiopVector& d_eval);
+  double compute_nlp_infeasib_onenorm(const hiopIterate& iter, const hiopVector& c_eval, const hiopVector& d_eval);
 
   /* residual printing function - calls hiopVector::print
    * prints up to max_elems (by default all), on rank 'rank' (by default on all) */
-  virtual void print(FILE*, const char* msg=NULL, int max_elems=-1, int rank=-1) const;
-  
+  virtual void print(FILE*, const char* msg = NULL, int max_elems = -1, int rank = -1) const;
+
   /* accessors */
-  inline hiopVector* get_rx()   const {return rx;}
-  inline hiopVector* get_rd()   const {return rd;}
-  inline hiopVector* get_rxl()  const {return rxl;}
-  inline hiopVector* get_rxu()  const {return rxu;}
-  inline hiopVector* get_rdl()  const {return rdl;}
-  inline hiopVector* get_rdu()  const {return rdu;}
-  inline hiopVector* get_ryc()  const {return ryc;}
-  inline hiopVector* get_ryd()  const {return ryd;}
-  inline hiopVector* get_rszl() const {return rszl;}
-  inline hiopVector* get_rszu() const {return rszu;}
-  inline hiopVector* get_rsvl() const {return rsvl;}
-  inline hiopVector* get_rsvu() const {return rsvu;}
-  
-  inline double get_nrmInf_nlp_optim() const {return nrmInf_nlp_optim;}
-  inline double get_nrmInf_nlp_feasib() const {return nrmInf_nlp_feasib;}
-  inline double get_nrmInf_nlp_complem() const {return nrmInf_nlp_complem;}
-  inline double get_nrmInf_bar_optim() const {return nrmInf_bar_optim;}
-  inline double get_nrmInf_bar_feasib() const {return nrmInf_bar_feasib;}
-  inline double get_nrmInf_bar_complem() const {return nrmInf_bar_complem;}
-  inline double get_nrmOne_nlp_feasib() const {return nrmOne_nlp_feasib;}
-  inline double get_nrmOne_bar_feasib() const {return nrmOne_bar_feasib;}
-  inline double get_nrmOne_nlp_optim() const {return nrmOne_nlp_optim;}
-  inline double get_nrmOne_bar_optim() const {return nrmOne_bar_optim;}
-  inline hiopNlpFormulation * get_nlp() const {return nlp;}
-  
+  inline hiopVector* get_rx() const { return rx; }
+  inline hiopVector* get_rd() const { return rd; }
+  inline hiopVector* get_rxl() const { return rxl; }
+  inline hiopVector* get_rxu() const { return rxu; }
+  inline hiopVector* get_rdl() const { return rdl; }
+  inline hiopVector* get_rdu() const { return rdu; }
+  inline hiopVector* get_ryc() const { return ryc; }
+  inline hiopVector* get_ryd() const { return ryd; }
+  inline hiopVector* get_rszl() const { return rszl; }
+  inline hiopVector* get_rszu() const { return rszu; }
+  inline hiopVector* get_rsvl() const { return rsvl; }
+  inline hiopVector* get_rsvu() const { return rsvu; }
+
+  inline double get_nrmInf_nlp_optim() const { return nrmInf_nlp_optim; }
+  inline double get_nrmInf_nlp_feasib() const { return nrmInf_nlp_feasib; }
+  inline double get_nrmInf_nlp_complem() const { return nrmInf_nlp_complem; }
+  inline double get_nrmInf_bar_optim() const { return nrmInf_bar_optim; }
+  inline double get_nrmInf_bar_feasib() const { return nrmInf_bar_feasib; }
+  inline double get_nrmInf_bar_complem() const { return nrmInf_bar_complem; }
+  inline double get_nrmOne_nlp_feasib() const { return nrmOne_nlp_feasib; }
+  inline double get_nrmOne_bar_feasib() const { return nrmOne_bar_feasib; }
+  inline double get_nrmOne_nlp_optim() const { return nrmOne_nlp_optim; }
+  inline double get_nrmOne_bar_optim() const { return nrmOne_bar_optim; }
+  inline hiopNlpFormulation* get_nlp() const { return nlp; }
+
   void copyFrom(const hiopResidual& resid_src);
 
 private:
-  hiopVector*rx;           // -\grad f - J_c^t y_c - J_d^t y_d + z_l - z_u
-  hiopVector*rd;           //  y_d + v_l - v_u
-  hiopVector*rxl,*rxu;     //  x - sxl-xl, -x-sxu+xu
-  hiopVector*rdl,*rdu;     //  as above but for d
+  hiopVector* rx;         // -\grad f - J_c^t y_c - J_d^t y_d + z_l - z_u
+  hiopVector* rd;         //  y_d + v_l - v_u
+  hiopVector *rxl, *rxu;  //  x - sxl-xl, -x-sxu+xu
+  hiopVector *rdl, *rdu;  //  as above but for d
 
-  hiopVector*ryc;          // -c(x)   (c(x)=0!//!)
-  hiopVector*ryd;          //for d- d(x)
+  hiopVector* ryc;  // -c(x)   (c(x)=0!//!)
+  hiopVector* ryd;  // for d- d(x)
 
-  hiopVector*rszl,*rszu;   // \mu e-sxl zl, \mu e - sxu zu
-  hiopVector*rsvl,*rsvu;   // \mu e-sdl vl, \mu e - sdu vu
+  hiopVector *rszl, *rszu;  // \mu e-sxl zl, \mu e - sxu zu
+  hiopVector *rsvl, *rsvu;  // \mu e-sdl vl, \mu e - sdu vu
 
   /** storage for the norm of [rx,rd], [rxl,...,rdu,ryc,ryd], and [rszl,...,rsvu]
    *  for the nlp (\mu=0)
@@ -178,21 +176,22 @@ private:
   double nrmInf_bar_optim, nrmInf_bar_feasib, nrmInf_bar_complem;
 
   /** storage for the one norm of [ryc,ryd]. This is the one norm of constraint violations.
-  */ 
+   */
   double nrmOne_nlp_feasib;
   double nrmOne_bar_feasib;
   double nrmOne_nlp_optim;
   double nrmOne_bar_optim;
-  
+
   /** inf norm of constraint violation */
   double nrmInf_cons_violation;
 
   // and associated info from problem formulation
-  hiopNlpFormulation * nlp;
+  hiopNlpFormulation* nlp;
+
 private:
   hiopResidual() {};
   hiopResidual(const hiopResidual&) {};
-  hiopResidual& operator=(const hiopResidual& o) {return *this;};
+  hiopResidual& operator=(const hiopResidual& o) { return *this; };
   friend class hiopKKTLinSysFull;
   friend class hiopKKTLinSysCompressed;
   friend class hiopKKTLinSysCompressedXYcYd;
@@ -203,5 +202,5 @@ private:
   friend class hiopVectorCompoundPD;
 };
 
-}
+}  // namespace hiop
 #endif

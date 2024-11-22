@@ -50,13 +50,16 @@
  * @file vectorTestsHip.hpp
  *
  * @author Nai-Yuan Chiang <chiang7@llnl.gov>, LLNL
- * 
+ *
  */
 #pragma once
 
 #include "vectorTests.hpp"
 
-namespace hiop { namespace tests {
+namespace hiop
+{
+namespace tests
+{
 
 /**
  * @brief Utilities for testing hiopVectorHip class
@@ -67,8 +70,8 @@ namespace hiop { namespace tests {
 class VectorTestsHip : public VectorTests
 {
 public:
-  VectorTestsHip(){}
-  virtual ~VectorTestsHip(){}
+  VectorTestsHip() {}
+  virtual ~VectorTestsHip() {}
 
 private:
   virtual const real_type* getLocalDataConst(hiop::hiopVector* x);
@@ -80,4 +83,5 @@ private:
   MPI_Comm getMPIComm(hiop::hiopVector* x);
 };
 
-}} // namespace hiop::tests
+}  // namespace tests
+}  // namespace hiop

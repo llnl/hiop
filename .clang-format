@@ -1,0 +1,72 @@
+# Use defaults from Google style
+BasedOnStyle: Google
+
+# General formatting settings
+IndentWidth: 2                                    # Use 2 spaces per indentation level (default in Google style)
+ColumnLimit: 125                                  # Maximum number of characters per line
+AccessModifierOffset: -2                          # Indent access modifiers (e.g., `public`, `private`) by -2 spaces
+
+# Alignment settings
+AlignAfterOpenBracket: Align                      # Align after open bracket (for function parameters, etc.)
+AlignConsecutiveAssignments: None                 # Do not align consecutive assignments
+AlignConsecutiveDeclarations: None                # Do not align consecutive declarations
+AlignConsecutiveMacros: None                      # Do not align consecutive macros
+
+# Space formatting settings
+SpaceBeforeParens: Never                          # No space before parentheses (e.g., function calls)
+SpaceBeforeAssignmentOperators: true              # Add a space before assignment operators (e.g., `a = b`)
+SpaceBeforeCaseColon: false                       # No space before case colons in switch statements
+SpaceBeforeCpp11BracedList: false                 # No space before opening brace in C++11 list initialization
+SpaceBeforeRangeBasedForLoopColon: false          # No space before colon in range-based for loops
+SpaceInEmptyBlock: false                          # Do not add space inside empty blocks
+SpaceAfterLogicalNot: false                       # No space after logical negation (`!`)
+SpaceAfterTemplateKeyword: false                  # No space after the `template` keyword in template definitions
+SpacesInContainerLiterals: false                  # No space inside container literals (e.g., `std::vector{1,2,3}`)
+
+# Pointer alignment settings
+PointerAlignment: Left                            # Align pointers to the left (e.g., `int* ptr` instead of `int *ptr`)
+DerivePointerAlignment: true                      # Derive pointer alignment from surrounding code
+
+# Bracing and block formatting settings
+BreakBeforeBraces: Custom                         # Use custom brace wrapping settings (defined below)
+BraceWrapping:
+  AfterCaseLabel: false                           # No new line after case labels
+  AfterClass: true                                # Place braces on a new line after class declarations
+  AfterControlStatement: false                    # No new line after control statements (e.g., if, while)
+  AfterEnum: true                                 # Place braces on a new line after enum declarations
+  AfterFunction: true                             # Place braces on a new line after function declarations
+  AfterNamespace: true                            # Place braces on a new line after namespace declarations
+  AfterStruct: true                               # Place braces on a new line after struct declarations
+  AfterUnion: true                                # Place braces on a new line after union declarations
+  AfterExternBlock: false                         # No new line after extern blocks
+  BeforeCatch: false                              # No new line before `catch` statements
+  BeforeElse: false                               # No new line before `else` statements
+  BeforeLambdaBody: false                         # No new line before lambda body
+  BeforeWhile: false                              # No new line before `while` statements
+  IndentBraces: false                             # Keep braces aligned with surrounding code (do not indent them)
+  SplitEmptyFunction: false                       # Do not split empty functions onto separate lines
+  SplitEmptyRecord: false                         # Do not split empty structs/classes onto separate lines
+  SplitEmptyNamespace: false                      # Do not split empty namespaces onto separate lines
+BreakTemplateDeclarations: Yes                    # Break template declarations onto separate lines if needed
+
+# Constructor and initializer formatting
+BreakConstructorInitializers: BeforeColon         # Place a break before the colon in constructor initializers
+PackConstructorInitializers: Never                # Do not pack constructor initializers onto a single line
+
+# Function and parameter formatting
+AllowAllArgumentsOnNextLine: false                # Do not allow function arguments to go to the next line
+AllowAllParametersOfDeclarationOnNextLine: false  # Do not allow parameters of function declarations to go to the next line
+BinPackArguments: false                           # Do not pack function arguments onto a single line
+BinPackParameters: false                          # Do not pack function parameters onto a single line
+
+# Sorting and other settings
+SortIncludes: Never                               # Do not sort `#include` statements
+
+# Allowing short forms (this section is currently commented out)
+#AllowShortBlocksOnASingleLine: Never             # Never allow short blocks to be on a single line
+#AllowShortCaseExpressionOnASingleLine: false     # Do not allow case expressions on a single line
+#AllowShortCaseLabelsOnASingleLine: false         # Do not allow case labels on a single line
+#AllowShortEnumsOnASingleLine: false              # Do not allow enums on a single line
+#AllowShortFunctionsOnASingleLine: Empty          # Allow short functions to be on a single line, if empty
+#AllowShortIfStatementsOnASingleLine: Never       # Never allow if statements to be on a single line
+

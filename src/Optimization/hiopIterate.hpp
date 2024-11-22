@@ -74,7 +74,7 @@ public:
   virtual void setEqualityDualsToConstant(const double& v);
   /**
    * Computes the slacks given the primals: sxl=x-xl, sxu=xu-x, and similar
-   * for sdl and sdu. This function will adjust the variable bounds 
+   * for sdl and sdu. This function will adjust the variable bounds
    * if the corresponding slack is too small.
    * return the number of adjusted variables on exit
    */
@@ -88,14 +88,17 @@ public:
   virtual void determineDualsBounds_d(const double& mu);
 
   /* max{a\in(0,1]| x+ad >=(1-tau)x} */
-  bool fractionToTheBdry(const hiopIterate& dir, const double& tau,
-			 double& alphaprimal, double& alphadual) const;
+  bool fractionToTheBdry(const hiopIterate& dir, const double& tau, double& alphaprimal, double& alphadual) const;
 
   /* take the step: this = iter+alpha*dir */
-  virtual bool takeStep_primals(const hiopIterate& iter, const hiopIterate& dir,
-				const double& alphaprimal, const double& alphadual);
-  virtual bool takeStep_duals(const hiopIterate& iter, const hiopIterate& dir,
-			      const double& alphaprimal, const double& alphadual);
+  virtual bool takeStep_primals(const hiopIterate& iter,
+                                const hiopIterate& dir,
+                                const double& alphaprimal,
+                                const double& alphadual);
+  virtual bool takeStep_duals(const hiopIterate& iter,
+                              const hiopIterate& dir,
+                              const double& alphaprimal,
+                              const double& alphadual);
 
   /// @brief adjust slack variables if they are negative, or if they are positive but too small
   virtual int adjust_small_slacks(const hiopIterate& iter_curr, const double& mu);
@@ -121,25 +124,25 @@ public:
    * negative) to each elements of the gradient that corresponds to a variable x bounded only
    * from below (above). The parameter `beta` is 1.0 or -1.0 indicating whether one should
    * add or substract kappa_d*mu; this is to accomodate also residuals computations. */
-  virtual void addLinearDampingTermToGrad_x(const double& mu, 
-                                            const double& kappa_d, 
+  virtual void addLinearDampingTermToGrad_x(const double& mu,
+                                            const double& kappa_d,
                                             const double& beta,
-					    hiopVector& grad_x) const;
+                                            hiopVector& grad_x) const;
 
   /* @brief Adds the d-damping term to the gradient, essentially adds mu*kappa_d*beta (or its
    * negative) to each elements of the gradient that corresponds to a variable d bounded only
    * from below (above). The parameter `beta` is 1.0 or -1.0 indicating whether one should
    * add or substract kappa_d*mu; this is to accomodate also residuals computation. */
-  virtual void addLinearDampingTermToGrad_d(const double& mu, 
-                                            const double& kappa_d, 
+  virtual void addLinearDampingTermToGrad_d(const double& mu,
+                                            const double& kappa_d,
                                             const double& beta,
-					    hiopVector& grad_d) const;
+                                            hiopVector& grad_d) const;
 
   /** norms for individual parts of the iterate (on demand computation) */
   virtual double normOneOfBoundDuals() const;
   virtual double normOneOfEqualityDuals() const;
   /* same as above but computed in one shot to save on communication and computation */
-  virtual void   normOneOfDuals(double& nrm1Eq, double& nrm1Bnd) const;
+  virtual void normOneOfDuals(double& nrm1Eq, double& nrm1Bnd) const;
 
   /// @brief Entries corresponding to zeros in ix are set to zero
   virtual void selectPattern();
@@ -150,20 +153,20 @@ public:
   void copyFrom(const hiopIterate& src);
 
   /* accessors */
-  inline hiopVector* get_x()   const {return x;}
-  inline hiopVector* get_d()   const {return d;}
-  inline hiopVector* get_sxl() const {return sxl;}
-  inline hiopVector* get_sxu() const {return sxu;}
-  inline hiopVector* get_sdl() const {return sdl;}
-  inline hiopVector* get_sdu() const {return sdu;}
-  inline hiopVector* get_yc()  const {return yc;}
-  inline hiopVector* get_yd()  const {return yd;}
-  inline hiopVector* get_zl()  const {return zl;}
-  inline hiopVector* get_zu()  const {return zu;}
-  inline hiopVector* get_vl()  const {return vl;}
-  inline hiopVector* get_vu()  const {return vu;}
+  inline hiopVector* get_x() const { return x; }
+  inline hiopVector* get_d() const { return d; }
+  inline hiopVector* get_sxl() const { return sxl; }
+  inline hiopVector* get_sxu() const { return sxu; }
+  inline hiopVector* get_sdl() const { return sdl; }
+  inline hiopVector* get_sdu() const { return sdu; }
+  inline hiopVector* get_yc() const { return yc; }
+  inline hiopVector* get_yd() const { return yd; }
+  inline hiopVector* get_zl() const { return zl; }
+  inline hiopVector* get_zu() const { return zu; }
+  inline hiopVector* get_vl() const { return vl; }
+  inline hiopVector* get_vu() const { return vu; }
 
-  void print(FILE* f, const char* msg=NULL) const;
+  void print(FILE* f, const char* msg = NULL) const;
 
   friend class hiopResidual;
   friend class hiopKKTLinSys;
@@ -185,38 +188,39 @@ public:
 
 private:
   /** Primal variables */
-  hiopVector* x;        //the original decision x
-  hiopVector* d;        //the adtl decisions d, d=d(x)
-  hiopVector* sxl;      //slacks for x. in x: x-sxl=xl
-  hiopVector* sxu;      //slacks for x. in x: x+sxu=xu
-  hiopVector* sdl;      //slacks for d. in d: d-sdl=dl
-  hiopVector* sdu;      //slacks for d. in d: d+sdu=du
-  hiopVector* sx_arg1_; //workspace for slacks for x
-  hiopVector* sx_arg2_; //workspace for slacks for x
-  hiopVector* sx_arg3_; //workspace for slacks for x
-  hiopVector* sd_arg1_; //workspace for slacks for d
-  hiopVector* sd_arg2_; //workspace for slacks for d
-  hiopVector* sd_arg3_; //workspace for slacks for d
+  hiopVector* x;         // the original decision x
+  hiopVector* d;         // the adtl decisions d, d=d(x)
+  hiopVector* sxl;       // slacks for x. in x: x-sxl=xl
+  hiopVector* sxu;       // slacks for x. in x: x+sxu=xu
+  hiopVector* sdl;       // slacks for d. in d: d-sdl=dl
+  hiopVector* sdu;       // slacks for d. in d: d+sdu=du
+  hiopVector* sx_arg1_;  // workspace for slacks for x
+  hiopVector* sx_arg2_;  // workspace for slacks for x
+  hiopVector* sx_arg3_;  // workspace for slacks for x
+  hiopVector* sd_arg1_;  // workspace for slacks for d
+  hiopVector* sd_arg2_;  // workspace for slacks for d
+  hiopVector* sd_arg3_;  // workspace for slacks for d
 
   /** Dual variables */
-  hiopVector* yc;   //for c(x)=crhs
-  hiopVector* yd;   //for d(x)-d=0
-  hiopVector* zl;   //for slacks eq. in x: x-sxl=xl
-  hiopVector* zu;   //for slacks eq. in x: x+sxu=xu
-  hiopVector* vl;   //for slacks eq. in d: d-sdl=dl
-  hiopVector* vu;   //for slacks eq. in d: d+sdu=du
+  hiopVector* yc;  // for c(x)=crhs
+  hiopVector* yd;  // for d(x)-d=0
+  hiopVector* zl;  // for slacks eq. in x: x-sxl=xl
+  hiopVector* zu;  // for slacks eq. in x: x+sxu=xu
+  hiopVector* vl;  // for slacks eq. in d: d-sdl=dl
+  hiopVector* vu;  // for slacks eq. in d: d+sdu=du
 private:
-  //associated info from problem formulation
-  const hiopNlpFormulation * nlp;
+  // associated info from problem formulation
+  const hiopNlpFormulation* nlp;
+
 private:
   /**
    * @brief adjust slack variables if they are negative, or if they are positive but too small
    * if slack < small_val, compute new_slack as
    *   new_slack = last_slack + min( max(mu/slack_dual,small_val), scale_fact * max(1.0,|bound|) )
    */
-  virtual int adjust_small_slacks(hiopVector& slack, 
-                                  const hiopVector& bound, 
-                                  const hiopVector& slack_dual, 
+  virtual int adjust_small_slacks(hiopVector& slack,
+                                  const hiopVector& bound,
+                                  const hiopVector& slack_dual,
                                   const hiopVector& select,
                                   const double& mu,
                                   hiopVector& arg1,
@@ -225,8 +229,8 @@ private:
 
   hiopIterate() {};
   hiopIterate(const hiopIterate&) {};
-  hiopIterate& operator=(const hiopIterate& o) {return *this;}
+  hiopIterate& operator=(const hiopIterate& o) { return *this; }
 };
 
-}
+}  // namespace hiop
 #endif

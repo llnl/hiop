@@ -51,9 +51,7 @@
 #include "hiopLinSolver.hpp"
 #include "hiopMatrixSparseTriplet.hpp"
 
-
 #include <ginkgo/ginkgo.hpp>
-
 
 #include <unordered_map>
 
@@ -61,9 +59,10 @@
  *
  * @ingroup LinearSolvers
  */
-namespace hiop {
+namespace hiop
+{
 
-class hiopLinSolverSymSparseGinkgo: public hiopLinSolverSymSparse
+class hiopLinSolverSymSparseGinkgo : public hiopLinSolverSymSparse
 {
 public:
   hiopLinSolverSymSparseGinkgo(const int& n, const int& nnz, hiopNlpFormulation* nlp);
@@ -76,13 +75,12 @@ public:
   /** solves a linear system.
    * param 'x' is on entry the right hand side(s) of the system to be solved. On
    * exit is contains the solution(s).  */
-  bool solve ( hiopVector& x_ );
+  bool solve(hiopVector& x_);
 
 private:
-
-  int      m_;                         // number of rows of the whole matrix
-  int      n_;                         // number of cols of the whole matrix
-  int      nnz_;                       // number of nonzeros in the matrix
+  int m_;    // number of rows of the whole matrix
+  int n_;    // number of cols of the whole matrix
+  int nnz_;  // number of nonzeros in the matrix
 
   int* index_covert_CSR2Triplet_;
   int* index_covert_extra_Diag2CSR_;
@@ -97,12 +95,10 @@ private:
   static const std::map<std::string, gko::solver::trisolve_algorithm> alg_map_;
 
 public:
-
   /** called the very first time a matrix is factored. Allocates space
    * for the factorization and performs ordering */
   virtual void firstCall();
-
 };
 
-} // end namespace
+}  // namespace hiop
 #endif

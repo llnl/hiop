@@ -69,7 +69,7 @@
 #include "LinAlg/matrixTestsRajaDense.hpp"
 #endif
 
-template <typename T>
+template<typename T>
 static int runTests(const char* mem_space, MPI_Comm comm);
 
 int main(int argc, char** argv)
@@ -82,55 +82,47 @@ int main(int argc, char** argv)
 
 #ifdef HIOP_USE_MPI
   int err;
-  err = MPI_Init(&argc, &argv);        assert(MPI_SUCCESS==err);
+  err = MPI_Init(&argc, &argv);
+  assert(MPI_SUCCESS == err);
   comm = MPI_COMM_WORLD;
-  err = MPI_Comm_rank(comm,&rank);     assert(MPI_SUCCESS==err);
-  if(0 == rank && MPI_SUCCESS == err)
-    std::cout << "\nRunning MPI enabled tests ...\n";
+  err = MPI_Comm_rank(comm, &rank);
+  assert(MPI_SUCCESS == err);
+  if(0 == rank && MPI_SUCCESS == err) std::cout << "\nRunning MPI enabled tests ...\n";
 #endif
-  if(rank == 0 && argc > 1)
-    std::cout << "Executable " << argv[0] << " doesn't take any input.";
+  if(rank == 0 && argc > 1) std::cout << "Executable " << argv[0] << " doesn't take any input.";
 
   int fail = 0;
 
   //
   // Test HiOp Dense Matrices
   //
-  if (rank == 0)
-    std::cout << "\nTesting HiOp default dense matrix implementation:\n";
+  if(rank == 0) std::cout << "\nTesting HiOp default dense matrix implementation:\n";
   fail += runTests<MatrixTestsDenseRowMajor>("default", comm);
 #ifdef HIOP_USE_RAJA
 #ifdef HIOP_USE_GPU
-  if (rank == 0)
-  {
+  if(rank == 0) {
     std::cout << "\nTesting HiOp RAJA dense matrix implementation ...\n";
     std::cout << "  ... using device memory space:\n";
   }
   fail += runTests<MatrixTestsRajaDense>("device", comm);
-  if (rank == 0)
-  {
+  if(rank == 0) {
     std::cout << "\nTesting HiOp RAJA dense matrix implementation ...\n";
     std::cout << "  ... using unified virtual memory space:\n";
   }
   fail += runTests<MatrixTestsRajaDense>("um", comm);
 #else
-  if (rank == 0)
-  {
+  if(rank == 0) {
     std::cout << "\nTesting HiOp RAJA dense matrix implementation ...\n";
     std::cout << "  ... using unified host memory space:\n";
   }
   fail += runTests<MatrixTestsRajaDense>("host", comm);
-#endif // GPU
-#endif // RAJA
+#endif  // GPU
+#endif  // RAJA
 
-  if (rank == 0)
-  {
-    if(fail)
-    {
+  if(rank == 0) {
+    if(fail) {
       std::cout << "\n" << fail << " dense matrix tests failed\n\n";
-    }
-    else
-    {
+    } else {
       std::cout << "\nAll dense matrix tests passed\n\n";
     }
   }
@@ -143,14 +135,14 @@ int main(int argc, char** argv)
 }
 
 /// Driver for all dense matrix tests
-template <typename T>
+template<typename T>
 static int runTests(const char* mem_space, MPI_Comm comm)
 {
   using namespace hiop;
   using hiop::tests::global_ordinal_type;
 
-  int rank=0;
-  int numRanks=1;
+  int rank = 0;
+  int numRanks = 1;
 
 #ifdef HIOP_USE_MPI
   MPI_Comm_rank(comm, &rank);
@@ -159,9 +151,9 @@ static int runTests(const char* mem_space, MPI_Comm comm)
 
   T test;
   test.set_mem_space(mem_space);
-  //hiopOptions options;
-  //options.SetStringValue("mem_space", mem_space);
-  //LinearAlgebraFactory::set_mem_space(mem_space);
+  // hiopOptions options;
+  // options.SetStringValue("mem_space", mem_space);
+  // LinearAlgebraFactory::set_mem_space(mem_space);
 
   int fail = 0;
 
@@ -176,35 +168,28 @@ static int runTests(const char* mem_space, MPI_Comm comm)
   global_ordinal_type K_global = K_local * numRanks;
   global_ordinal_type N_global = N_local * numRanks;
 
-  auto n_partition = new global_ordinal_type[numRanks+1];
-  auto k_partition = new global_ordinal_type[numRanks+1];
-  auto m_partition = new global_ordinal_type[numRanks+1];
+  auto n_partition = new global_ordinal_type[numRanks + 1];
+  auto k_partition = new global_ordinal_type[numRanks + 1];
+  auto m_partition = new global_ordinal_type[numRanks + 1];
   n_partition[0] = 0;
   k_partition[0] = 0;
   m_partition[0] = 0;
 
-  for(int i = 1; i < numRanks + 1; ++i)
-  {
-    n_partition[i] = i*N_local;
-    k_partition[i] = i*K_local;
-    m_partition[i] = i*M_local;
+  for(int i = 1; i < numRanks + 1; ++i) {
+    n_partition[i] = i * N_local;
+    k_partition[i] = i * K_local;
+    m_partition[i] = i * M_local;
   }
 
   // Distributed matrices:
-  hiopMatrixDense* A_kxm =
-    LinearAlgebraFactory::create_matrix_dense(mem_space, K_local, M_global, m_partition, comm);
-  hiopMatrixDense* A_kxn =
-    LinearAlgebraFactory::create_matrix_dense(mem_space, K_local, N_global, n_partition, comm);
-  hiopMatrixDense* A_mxk =
-    LinearAlgebraFactory::create_matrix_dense(mem_space, M_local, K_global, k_partition, comm);
-  hiopMatrixDense* A_mxn =
-    LinearAlgebraFactory::create_matrix_dense(mem_space, M_local, N_global, n_partition, comm);
-  hiopMatrixDense* A_nxm =
-    LinearAlgebraFactory::create_matrix_dense(mem_space, N_local, M_global, m_partition, comm);
-  hiopMatrixDense* B_mxn =
-    LinearAlgebraFactory::create_matrix_dense(mem_space, M_local, N_global, n_partition, comm);
+  hiopMatrixDense* A_kxm = LinearAlgebraFactory::create_matrix_dense(mem_space, K_local, M_global, m_partition, comm);
+  hiopMatrixDense* A_kxn = LinearAlgebraFactory::create_matrix_dense(mem_space, K_local, N_global, n_partition, comm);
+  hiopMatrixDense* A_mxk = LinearAlgebraFactory::create_matrix_dense(mem_space, M_local, K_global, k_partition, comm);
+  hiopMatrixDense* A_mxn = LinearAlgebraFactory::create_matrix_dense(mem_space, M_local, N_global, n_partition, comm);
+  hiopMatrixDense* A_nxm = LinearAlgebraFactory::create_matrix_dense(mem_space, N_local, M_global, m_partition, comm);
+  hiopMatrixDense* B_mxn = LinearAlgebraFactory::create_matrix_dense(mem_space, M_local, N_global, n_partition, comm);
   hiopMatrixDense* A_mxn_extra_row =
-    LinearAlgebraFactory::create_matrix_dense(mem_space, M_local, N_global, n_partition, comm, M_local+1);
+      LinearAlgebraFactory::create_matrix_dense(mem_space, M_local, N_global, n_partition, comm, M_local + 1);
 
   // Non-distributed matrices:
   hiopMatrixDense* A_mxk_nodist = LinearAlgebraFactory::create_matrix_dense(mem_space, M_local, K_local);
@@ -224,8 +209,8 @@ static int runTests(const char* mem_space, MPI_Comm comm)
   // Non-distributed vectors
   hiopVector* x_n_nodist = LinearAlgebraFactory::create_vector(mem_space, N_local);
   hiopVector* x_m_nodist = LinearAlgebraFactory::create_vector(mem_space, M_local);
- 
-  //indexes vectors
+
+  // indexes vectors
   hiopVectorInt* rows_idxs = LinearAlgebraFactory::create_vector_int(mem_space, M_local);
 
   fail += test.matrixSetToZero(*A_mxn, rank);
@@ -233,8 +218,7 @@ static int runTests(const char* mem_space, MPI_Comm comm)
   fail += test.matrixTimesVec(*A_mxn, *x_m_nodist, *x_n, rank);
   fail += test.matrixTransTimesVec(*A_mxn, *x_m_nodist, *x_n, rank);
 
-  if(rank == 0)
-  {
+  if(rank == 0) {
     // These methods are local
     fail += test.matrixTimesMat(*A_mxk_nodist, *A_kxn_nodist, *A_mxn_nodist);
     fail += test.matrixAddDiagonal(*A_nxn_nodist, *x_n_nodist);
@@ -250,7 +234,7 @@ static int runTests(const char* mem_space, MPI_Comm comm)
     // Not part of hiopMatrix interface, specific to matrixTestsDenseRowMajor
     fail += test.matrixCopyBlockFromMatrix(*A_mxm_nodist, *A_kxn_nodist);
     fail += test.matrixCopyFromMatrixBlock(*A_kxn_nodist, *A_mxm_nodist);
-    
+
     fail += test.matrix_set_Hess_FR(*A_nxn_nodist, *B_nxn_nodist, *x_n_nodist);
   }
 
@@ -261,7 +245,7 @@ static int runTests(const char* mem_space, MPI_Comm comm)
   fail += test.matrix_row_max_abs_value(*A_mxn, *x_m_nodist, rank);
   fail += test.matrix_scale_row(*A_mxn, *x_m_nodist, rank);
   fail += test.matrixIsFinite(*A_mxn, rank);
-  fail += test.matrixNumRows(*A_mxn, M_local, rank); //<- no row partitioning
+  fail += test.matrixNumRows(*A_mxn, M_local, rank);  //<- no row partitioning
   fail += test.matrixNumCols(*A_mxn, N_global, rank);
 
   // specific to matrixTestsDenseRowMajor

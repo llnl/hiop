@@ -61,11 +61,14 @@
 #include <cmath>
 #include <iostream>
 
-namespace hiop { namespace tests {
+namespace hiop
+{
+namespace tests
+{
 
-using real_type             = double;
-using local_ordinal_type    = int;
-using global_ordinal_type   = int;
+using real_type = double;
+using local_ordinal_type = int;
+using global_ordinal_type = int;
 
 static const real_type zero = 0.0;
 static const real_type quarter = 0.25;
@@ -73,65 +76,52 @@ static const real_type half = 0.5;
 static const real_type one = 1.0;
 static const real_type two = 2.0;
 static const real_type three = 3.0;
-static const real_type eps =
-  10*std::numeric_limits<real_type>::epsilon();
+static const real_type eps = 10 * std::numeric_limits<real_type>::epsilon();
 static const int SKIP_TEST = -1;
 
 // must be const pointer and const dest for
 // const string declarations to pass
 // -Wwrite-strings
-static const char * const  RED       = "\033[1;31m";
-static const char * const  GREEN     = "\033[1;32m";
-static const char * const  YELLOW    = "\033[1;33m";
-static const char * const  CLEAR     = "\033[0m";
+static const char* const RED = "\033[1;31m";
+static const char* const GREEN = "\033[1;32m";
+static const char* const YELLOW = "\033[1;33m";
+static const char* const CLEAR = "\033[0m";
 
 class TestBase
 {
 public:
   TestBase()
-    : mem_space_("DEFAULT")
-  {
-  }
-  inline void set_mem_space(const std::string& mem_space)
-  {
-    mem_space_ = mem_space;
-  }
-  inline std::string get_mem_space() const
-  {
-    return mem_space_;
-  }
+      : mem_space_("DEFAULT")
+  {}
+  inline void set_mem_space(const std::string& mem_space) { mem_space_ = mem_space; }
+  inline std::string get_mem_space() const { return mem_space_; }
+
 protected:
   /// Returns true if two real numbers are equal within tolerance
-  [[nodiscard]] static
-  bool isEqual(const real_type a, const real_type b)
+  [[nodiscard]] static bool isEqual(const real_type a, const real_type b)
   {
-    return (std::abs(a - b)/(1.0 + std::abs(b)) < eps);
+    return (std::abs(a - b) / (1.0 + std::abs(b)) < eps);
   }
 
   /// Prints error output for each rank
-  static void printMessage(const int fail, const char* funcname, const int rank=0)
+  static void printMessage(const int fail, const char* funcname, const int rank = 0)
   {
-    if(fail > 0)
-    {
+    if(fail > 0) {
       std::cout << RED << "--- FAIL: Test " << funcname << " on rank " << rank << CLEAR << "\n";
-    }
-    else if (fail == SKIP_TEST)
-    {
-      if(rank == 0)
-      {
+    } else if(fail == SKIP_TEST) {
+      if(rank == 0) {
         std::cout << YELLOW << "--- SKIP: Test " << funcname << CLEAR << "\n";
       }
-    }
-    else
-    {
-      if(rank == 0)
-      {
+    } else {
+      if(rank == 0) {
         std::cout << GREEN << "--- PASS: Test " << funcname << CLEAR << "\n";
       }
     }
   }
+
 protected:
   std::string mem_space_;
 };
 
-}} // namespace hiop::tests
+}  // namespace tests
+}  // namespace hiop

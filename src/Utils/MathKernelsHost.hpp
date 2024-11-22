@@ -60,13 +60,13 @@ namespace hiop
 {
 namespace host
 {
-  // Generates uniformly distributed double-precision floating-point values, from minv to maxv
-  int array_random_uniform_kernel(int n, double* d_array, double minv, double maxv);
+// Generates uniformly distributed double-precision floating-point values, from minv to maxv
+int array_random_uniform_kernel(int n, double* d_array, double minv, double maxv);
 
-  // Generates uniformly distributed double-precision floating-point values, from 0.0 to 1.0
-  int array_random_uniform_kernel(int n, double* d_array);
+// Generates uniformly distributed double-precision floating-point values, from 0.0 to 1.0
+int array_random_uniform_kernel(int n, double* d_array);
 
-} //end of namespace host
-} //end of namespace hiop
+}  // end of namespace host
+}  // end of namespace hiop
 
 #endif

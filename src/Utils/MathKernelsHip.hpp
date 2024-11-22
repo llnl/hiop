@@ -60,22 +60,22 @@ namespace hiop
 {
 namespace hip
 {
-  // Generates uniformly distributed double-precision floating-point values, from minv to maxv
-  int array_random_uniform_kernel(int n, double* d_array, double minv, double maxv);
+// Generates uniformly distributed double-precision floating-point values, from minv to maxv
+int array_random_uniform_kernel(int n, double* d_array, double minv, double maxv);
 
-  // Generates uniformly distributed double-precision floating-point values, from 0.0 to 1.0
-  int array_random_uniform_kernel(int n, double* d_array);
+// Generates uniformly distributed double-precision floating-point values, from 0.0 to 1.0
+int array_random_uniform_kernel(int n, double* d_array);
 
-  // set all elements to `val'
-  void set_to_val_kernel(int n, double* values, double val); 
+// set all elements to `val'
+void set_to_val_kernel(int n, double* values, double val);
 
-  /// set dest[mapping[i]] = src[i];
-  void copy_src_to_mapped_dest_kernel(int n, const double* src, double* dest, const int* mapping);
+/// set dest[mapping[i]] = src[i];
+void copy_src_to_mapped_dest_kernel(int n, const double* src, double* dest, const int* mapping);
 
-  /// set dest[i] = src[mapping[i]];
-  void copy_mapped_src_to_dest_kernel(int n, const double* src, double* dest, const int* mapping);
+/// set dest[i] = src[mapping[i]];
+void copy_mapped_src_to_dest_kernel(int n, const double* src, double* dest, const int* mapping);
 
-} //end of namespace device
-} //end of namespace hiop
+}  // namespace hip
+}  // end of namespace hiop
 
 #endif

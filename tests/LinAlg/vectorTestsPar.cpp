@@ -57,17 +57,17 @@
 #include <hiopVectorPar.hpp>
 #include "vectorTestsPar.hpp"
 
-namespace hiop { namespace tests {
+namespace hiop
+{
+namespace tests
+{
 
 /// Returns const pointer to local vector data
 const real_type* VectorTestsPar::getLocalDataConst(hiop::hiopVector* x)
 {
-  if(auto* xvec = dynamic_cast<const hiop::hiopVectorPar*>(x))
-  {
+  if(auto* xvec = dynamic_cast<const hiop::hiopVectorPar*>(x)) {
     return xvec->local_data_const();
-  }
-  else
-  {
+  } else {
     assert(false && "Wrong type of vector passed into `VectorTestsPar::getLocalDataConst`!");
     THROW_NULL_DEREF;
   }
@@ -76,13 +76,10 @@ const real_type* VectorTestsPar::getLocalDataConst(hiop::hiopVector* x)
 /// Method to set vector _x_ element _i_ to _value_.
 void VectorTestsPar::setLocalElement(hiop::hiopVector* x, local_ordinal_type i, real_type val)
 {
-  if(auto* xvec = dynamic_cast<hiop::hiopVectorPar*>(x))
-  {
-    real_type *xdat = xvec->local_data();
+  if(auto* xvec = dynamic_cast<hiop::hiopVectorPar*>(x)) {
+    real_type* xdat = xvec->local_data();
     xdat[i] = val;
-  }
-  else
-  {
+  } else {
     assert(false && "Wrong type of vector passed into `VectorTestsPar::setLocalElement`!");
     THROW_NULL_DEREF;
   }
@@ -91,12 +88,9 @@ void VectorTestsPar::setLocalElement(hiop::hiopVector* x, local_ordinal_type i, 
 /// Get communicator
 MPI_Comm VectorTestsPar::getMPIComm(hiop::hiopVector* x)
 {
-  if(auto* xvec = dynamic_cast<const hiop::hiopVectorPar*>(x))
-  {
+  if(auto* xvec = dynamic_cast<const hiop::hiopVectorPar*>(x)) {
     return xvec->get_mpi_comm();
-  }
-  else
-  {
+  } else {
     assert(false && "Wrong type of vector passed into `VectorTestsPar::getMPIComm`!");
     THROW_NULL_DEREF;
   }
@@ -106,25 +100,20 @@ MPI_Comm VectorTestsPar::getMPIComm(hiop::hiopVector* x)
 real_type* VectorTestsPar::createLocalBuffer(local_ordinal_type N, real_type val)
 {
   real_type* buffer = new real_type[N];
-  for(local_ordinal_type i = 0; i < N; ++i)
-    buffer[i] = val;
+  for(local_ordinal_type i = 0; i < N; ++i) buffer[i] = val;
   return buffer;
 }
 
 local_ordinal_type* VectorTestsPar::createIdxBuffer(local_ordinal_type N, local_ordinal_type val)
 {
   local_ordinal_type* buffer = new local_ordinal_type[N];
-  for(local_ordinal_type i = 0; i < N; ++i)
-    buffer[i] = val;
-  buffer[N-1] = 0;
+  for(local_ordinal_type i = 0; i < N; ++i) buffer[i] = val;
+  buffer[N - 1] = 0;
   return buffer;
 }
 
 /// Wrap delete command
-void VectorTestsPar::deleteLocalBuffer(real_type* buffer)
-{
-  delete [] buffer;
-}
+void VectorTestsPar::deleteLocalBuffer(real_type* buffer) { delete[] buffer; }
 
 /// If test fails on any rank set fail flag on all ranks
 bool VectorTestsPar::reduceReturn(int failures, hiop::hiopVector* x)
@@ -140,5 +129,5 @@ bool VectorTestsPar::reduceReturn(int failures, hiop::hiopVector* x)
   return (fail != 0);
 }
 
-
-}} // namespace hiop::tests
+}  // namespace tests
+}  // namespace hiop

@@ -57,7 +57,10 @@
 #include <hiopVectorInt.hpp>
 #include "testBase.hpp"
 
-namespace hiop { namespace tests {
+namespace hiop
+{
+namespace tests
+{
 
 /**
  * @brief Collection of tests for abstract hiopVectorInt implementations.
@@ -70,14 +73,13 @@ namespace hiop { namespace tests {
 class VectorTestsInt : public TestBase
 {
 public:
-  VectorTestsInt(){}
-  virtual ~VectorTestsInt(){}
+  VectorTestsInt() {}
+  virtual ~VectorTestsInt() {}
 
   virtual bool vectorSize(hiop::hiopVectorInt& x, const int size) const
   {
     int fail = 0;
-    if (x.get_local_size() != size)
-      fail++;
+    if(x.get_local_size() != size) fail++;
     printMessage(fail, __func__);
     return fail;
   }
@@ -89,9 +91,9 @@ public:
   virtual bool vectorSetElement(hiop::hiopVectorInt& x) const
   {
     int fail = 0;
-    const int idx = x.get_local_size()/2;
+    const int idx = x.get_local_size() / 2;
     const int x_val = 1;
-    for(int i=0; i<x.get_local_size(); i++) {
+    for(int i = 0; i < x.get_local_size(); i++) {
       setLocalElement(&x, i, 0);
     }
     setLocalElement(&x, idx, x_val);
@@ -110,14 +112,12 @@ public:
   virtual bool vectorGetElement(hiop::hiopVectorInt& x) const
   {
     int fail = 0;
-    const int idx = x.get_local_size()/2;
+    const int idx = x.get_local_size() / 2;
     const int x_val = 1;
-    for(int i=0; i<x.get_local_size(); i++)
-      setLocalElement(&x, i, 0);
+    for(int i = 0; i < x.get_local_size(); i++) setLocalElement(&x, i, 0);
     setLocalElement(&x, idx, x_val);
 
-    if (x.local_data_host_const()[idx] != x_val)
-      fail++;
+    if(x.local_data_host_const()[idx] != x_val) fail++;
 
     printMessage(fail, __func__);
     return fail;
@@ -130,15 +130,15 @@ public:
     x.set_to_constant(1);
     x.linspace(0, 2);
 
-    for(int i=0; i<x.get_local_size(); i++) {
-      if(getLocalElement(&x, i) != 2*i) {
+    for(int i = 0; i < x.get_local_size(); i++) {
+      if(getLocalElement(&x, i) != 2 * i) {
         ++fail;
       }
     }
     printMessage(fail, __func__);
     return fail;
   }
-  
+
   virtual bool vector_copy_from(hiop::hiopVectorInt& x, hiop::hiopVectorInt& y) const
   {
     int fail = 0;
@@ -147,11 +147,11 @@ public:
 
     setLocalElement(&x, x_val);
     setLocalElement(&y, y_val);
-    
+
     x.copy_from(y.local_data_const());
 
-    for(int i=0; i<x.get_local_size(); i++) {
-      if (x.local_data_host_const()[i] != y_val) {
+    for(int i = 0; i < x.get_local_size(); i++) {
+      if(x.local_data_host_const()[i] != y_val) {
         fail++;
       }
     }
@@ -166,4 +166,5 @@ private:
   virtual void setLocalElement(hiop::hiopVectorInt*, int) const = 0;
 };
 
-}} // namespace hiop::tests
+}  // namespace tests
+}  // namespace hiop

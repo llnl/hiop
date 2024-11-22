@@ -63,7 +63,7 @@
 namespace hiop
 {
 
-/** 
+/**
  * @brief Provides the functionality for reducing the KKT linear system to the
  * normal equation system below in dyc and dyd variables and then to perform
  * the basic ops needed to compute the remaining directions
@@ -73,9 +73,9 @@ namespace hiop
  * ( [ Jc  0 ] [ H+Dx+delta_wx     0       ]^{-1} [ Jc^T  Jd^T ] + [ delta_cc     0     ] ) [dyc] = [ ryc_tilde ]
  * ( [ Jd -I ] [   0           Dd+delta_wd ]      [  0     -I  ]   [    0      delta_cd ] ) [dyd]   [ ryd_tilde ]
  *
- * [ ryc_tilde ] = [ Jc  0 ] [ H+Dx+delta_wx     0       ]^{-1}  [ rx_tilde ] - [ ryc ] 
+ * [ ryc_tilde ] = [ Jc  0 ] [ H+Dx+delta_wx     0       ]^{-1}  [ rx_tilde ] - [ ryc ]
  * [ ryd_tilde ]   [ Jd -I ] [   0           Dd+delta_wd ]       [ rd_tilde ]   [ ryd ]
- * 
+ *
  * where
  *  - Jc and Jd present the sparse Jacobians for equalities and inequalities
  *  - H is a sparse Hessian matrix
@@ -83,7 +83,7 @@ namespace hiop
  *
  * REMARK: This linear system fits LP/QP best, where H is empty and hence only diagonal matrices are inversed.
  * If H is diagonal, the normal equation matrix becomes:
- *   [ Jc(H+Dx+delta_wx)^{-1}Jc^T    Jc(H+Dx+delta_wx)^{-1}Jd^T ]                        + [ delta_cc     0     ] 
+ *   [ Jc(H+Dx+delta_wx)^{-1}Jc^T    Jc(H+Dx+delta_wx)^{-1}Jd^T ]                        + [ delta_cc     0     ]
  *   [ Jd(H+Dx+delta_wx)^{-1}Jc^T    Jd(H+Dx+delta_wx)^{-1}Jd^T + ( Dd+delta_wd)^{-1} ]    [    0      delta_cd ]
  *
  */
@@ -95,14 +95,11 @@ public:
 
   virtual bool build_kkt_matrix(const hiopPDPerturbation& pdreg);
 
-  virtual bool solveCompressed(hiopVector& ryc_tilde,
-                               hiopVector& ryd_tilde,
-                               hiopVector& dyc,
-                               hiopVector& dyd);
+  virtual bool solveCompressed(hiopVector& ryc_tilde, hiopVector& ryd_tilde, hiopVector& dyc, hiopVector& dyd);
 
   /**
    * @brief factorize the matrix and check curvature
-   */ 
+   */
   virtual int factorizeWithCurvCheck();
 
 protected:
@@ -129,22 +126,22 @@ protected:
   int write_linsys_counter_;
   hiopCSR_IO csr_writer_;
 
-  //just dynamic_cast-ed pointers
+  // just dynamic_cast-ed pointers
   hiopNlpSparse* nlpSp_;
   hiopMatrixSparse* HessSp_;
   const hiopMatrixSparse* Jac_cSp_;
   const hiopMatrixSparse* Jac_dSp_;
 
   /**
-  * Member for ( [ Jc  0 ] [ H+Dx+delta_wx     0       ]^{-1} [ Jc^T  Jd^T ] + [ delta_cc     0     ] )
-  *            ( [ Jd -I ] [   0           Dd+delta_wd ]      [  0     -I  ]   [    0      delta_cd ] )
-  * let JacD_ = [Jc 0; Jd -I]
-  * @pre: now we assume Jc and Jd won't change, i.e., LP or QP. hence we build JacD_ and JacDt_ once and save them
-  */ 
+   * Member for ( [ Jc  0 ] [ H+Dx+delta_wx     0       ]^{-1} [ Jc^T  Jd^T ] + [ delta_cc     0     ] )
+   *            ( [ Jd -I ] [   0           Dd+delta_wd ]      [  0     -I  ]   [    0      delta_cd ] )
+   * let JacD_ = [Jc 0; Jd -I]
+   * @pre: now we assume Jc and Jd won't change, i.e., LP or QP. hence we build JacD_ and JacDt_ once and save them
+   */
 
   /// Member for JacD in CSR format
   hiopMatrixSparseCSR* JacD_;
-  
+
   /// Member for JacD' in CSR format
   hiopMatrixSparseCSR* JacDt_;
 
@@ -158,7 +155,7 @@ protected:
   hiopMatrixSparseCSR* M_normaleqn_;
 
 private:
-  //placeholder for the code that decides which linear solver to used based on safe_mode_
+  // placeholder for the code that decides which linear solver to used based on safe_mode_
   hiopLinSolverSymSparse* determine_and_create_linsys();
 
   /// Determines memory space used internally based on the "mem_space" and "compute_mode" options. This is temporary
@@ -175,11 +172,11 @@ private:
 #else
       assert(false && "compute mode not supported without HIOP_USE_CUDA build");
       return "DEFAULT";
-#endif // HIOP_USE_CUDA
+#endif  // HIOP_USE_CUDA
     }
   }
 };
 
-} // end of namespace
+}  // namespace hiop
 
 #endif

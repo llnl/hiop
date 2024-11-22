@@ -62,7 +62,7 @@
 #include <cuda_runtime.h>
 #include <cusparse.h>
 #include <cusolverSp.h>
-#include <cusolverSp_LOWLEVEL_PREVIEW.h> 
+#include <cusolverSp_LOWLEVEL_PREVIEW.h>
 
 #include "hiopMatrixSparseCsrCuda.hpp"
 #include "hiopKKTLinSysSparseCondensed.hpp"
@@ -73,23 +73,23 @@ namespace hiop
  * Wrapper class for cusolverSpXcsrchol Cholesky solver.
  */
 
-class hiopLinSolverCholCuSparse: public hiopLinSolverSymSparse
+class hiopLinSolverCholCuSparse : public hiopLinSolverSymSparse
 {
 public:
   hiopLinSolverCholCuSparse(hiopMatrixSparseCSR* M, hiopNlpFormulation* nlp);
   virtual ~hiopLinSolverCholCuSparse();
 
   /**
-   * Triggers a refactorization of the matrix, if necessary.   
-   * Returns -1 if zero or negative pivots are encountered 
+   * Triggers a refactorization of the matrix, if necessary.
+   * Returns -1 if zero or negative pivots are encountered
    */
   int matrixChanged();
 
   using hiopLinSolverSymSparse::solve;
-  
+
   /** Solves a linear system.
    * param 'x' is on entry the right hand side(s) of the system to be solved. On
-   * exit is contains the solution(s).  
+   * exit is contains the solution(s).
    */
   bool solve(hiopVector& x_in);
 
@@ -104,8 +104,8 @@ protected:
                         const index_type* colind,
                         const double* value,
                         index_type* perm);
-  
-  /** 
+
+  /**
    * Permutes an array accordingly to given permutation. All pointers are on device and
    * the method executes on device.
    */
@@ -113,6 +113,7 @@ protected:
                    /*const*/ double* vec_in,
                    /*const*/ index_type* permutation,
                    double* vec_out);
+
 protected:
   /// Internal handle required by cuSPARSE functions
   cusparseHandle_t h_cusparse_;
@@ -149,18 +150,15 @@ protected:
   /// internal buffers in the size of the linear system (on device)
   double* rhs_buf1_;
   double* rhs_buf2_;
-  
+
 protected:
-  inline hiopMatrixSparseCSRCUDA* sys_mat_csr()
-  {
-    return dynamic_cast<hiopMatrixSparseCSRCUDA*>(M_);
-  }
+  inline hiopMatrixSparseCSRCUDA* sys_mat_csr() { return dynamic_cast<hiopMatrixSparseCSRCUDA*>(M_); }
+
 private:
-  hiopLinSolverCholCuSparse() = delete; 
+  hiopLinSolverCholCuSparse() = delete;
 };
 
+}  // namespace hiop
 
-} // end of namespace
-
-#endif //HIOP_USE_CUDA
-#endif //HIOP_LINSOLVER_CHOL_CUSP
+#endif  // HIOP_USE_CUDA
+#endif  // HIOP_LINSOLVER_CHOL_CUSP

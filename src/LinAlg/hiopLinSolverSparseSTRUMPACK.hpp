@@ -61,13 +61,14 @@
 
 using namespace strumpack;
 
-namespace hiop {
+namespace hiop
+{
 
 /** Wrapper for STRUMPACK */
-class hiopLinSolverSymSparseSTRUMPACK: public hiopLinSolverSymSparse
+class hiopLinSolverSymSparseSTRUMPACK : public hiopLinSolverSymSparse
 {
 public:
-  hiopLinSolverSymSparseSTRUMPACK(const int& n, const int& nnz, hiopNlpFormulation* nlp);
+  hiopLinSolverSymSparseSTRUMPACK(const int &n, const int &nnz, hiopNlpFormulation *nlp);
   virtual ~hiopLinSolverSymSparseSTRUMPACK();
 
   /** Triggers a refactorization of the matrix, if necessary.
@@ -77,44 +78,40 @@ public:
   /** solves a linear system.
    * param 'x' is on entry the right hand side(s) of the system to be solved. On
    * exit is contains the solution(s).  */
-  bool solve ( hiopVector& x_ );
+  bool solve(hiopVector &x_);
 
-//protected:
-//  int* ipiv;
-//  hiopVector* dwork;
+  // protected:
+  //   int* ipiv;
+  //   hiopVector* dwork;
 
 private:
+  int m_;    // number of rows of the whole matrix
+  int n_;    // number of cols of the whole matrix
+  int nnz_;  // number of nonzeros in the matrix
 
-  int      m_;                         // number of rows of the whole matrix
-  int      n_;                         // number of cols of the whole matrix
-  int      nnz_;                       // number of nonzeros in the matrix
-
-  int     *kRowPtr_;                   // row pointer for nonzeros
-  int     *jCol_;                      // column indexes for nonzeros
-  double  *kVal_;                      // storage for sparse matrix
+  int *kRowPtr_;  // row pointer for nonzeros
+  int *jCol_;     // column indexes for nonzeros
+  double *kVal_;  // storage for sparse matrix
 
   int *index_covert_CSR2Triplet_;
   int *index_covert_extra_Diag2CSR_;
 
   // strumpack object
-   StrumpackSparseSolver<double,int> spss;
-
+  StrumpackSparseSolver<double, int> spss;
 
 public:
-
   /** called the very first time a matrix is factored. Allocates space
    * for the factorization and performs ordering */
   virtual void firstCall();
-//  virtual void diagonalChanged( int idiag, int extent );
+  //  virtual void diagonalChanged( int idiag, int extent );
 
-friend class hiopLinSolverNonSymSparseSTRUMPACK;
-
+  friend class hiopLinSolverNonSymSparseSTRUMPACK;
 };
 
-class hiopLinSolverNonSymSparseSTRUMPACK: public hiopLinSolverNonSymSparse
+class hiopLinSolverNonSymSparseSTRUMPACK : public hiopLinSolverNonSymSparse
 {
 public:
-  hiopLinSolverNonSymSparseSTRUMPACK(const int& n, const int& nnz, hiopNlpFormulation* nlp);
+  hiopLinSolverNonSymSparseSTRUMPACK(const int &n, const int &nnz, hiopNlpFormulation *nlp);
 
   virtual ~hiopLinSolverNonSymSparseSTRUMPACK();
 
@@ -125,40 +122,36 @@ public:
   /** solves a linear system.
    * param 'x' is on entry the right hand side(s) of the system to be solved. On
    * exit is contains the solution(s).  */
-  bool solve ( hiopVector& x_ );
+  bool solve(hiopVector &x_);
 
-//protected:
-//  int* ipiv;
-//  hiopVector* dwork;
+  // protected:
+  //   int* ipiv;
+  //   hiopVector* dwork;
 
 private:
+  int m_;    // number of rows of the whole matrix
+  int n_;    // number of cols of the whole matrix
+  int nnz_;  // number of nonzeros in the matrix
 
-  int      m_;                         // number of rows of the whole matrix
-  int      n_;                         // number of cols of the whole matrix
-  int      nnz_;                       // number of nonzeros in the matrix
-
-  int     *kRowPtr_;                   // row pointer for nonzeros
-  int     *jCol_;                      // column indexes for nonzeros
-  double  *kVal_;                      // storage for sparse matrix
+  int *kRowPtr_;  // row pointer for nonzeros
+  int *jCol_;     // column indexes for nonzeros
+  double *kVal_;  // storage for sparse matrix
 
   int *index_covert_CSR2Triplet_;
   int *index_covert_extra_Diag2CSR_;
-  std::unordered_map<int,int> extra_diag_nnz_map;
+  std::unordered_map<int, int> extra_diag_nnz_map;
 
   // strumpack object
-   StrumpackSparseSolver<double,int> spss;
+  StrumpackSparseSolver<double, int> spss;
 
 public:
-
   /** called the very first time a matrix is factored. Allocates space
    * for the factorization and performs ordering */
   void firstCall();
-//  virtual void diagonalChanged( int idiag, int extent );
+  //  virtual void diagonalChanged( int idiag, int extent );
 
-friend class hiopLinSolverSymSparseSTRUMPACK;
-
+  friend class hiopLinSolverSymSparseSTRUMPACK;
 };
 
-
-} // end namespace
+}  // namespace hiop
 #endif

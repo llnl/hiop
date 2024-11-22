@@ -65,85 +65,79 @@
 
 #define checkCudaErrors(val) resolveCheckCudaError((val), __FILE__, __LINE__)
 
-namespace ReSolve {
+namespace ReSolve
+{
 
+MatrixCsr::MatrixCsr() {}
 
+MatrixCsr::~MatrixCsr()
+{
+  if(n_ == 0) return;
 
-  MatrixCsr::MatrixCsr()
-  {
+  clear_data();
+}
+
+void MatrixCsr::allocate_size(int n)
+{
+  n_ = n;
+  checkCudaErrors(cudaMalloc(&irows_, (n_ + 1) * sizeof(int)));
+  irows_host_ = new int[n_ + 1]{0};
+}
+
+void MatrixCsr::allocate_nnz(int nnz)
+{
+  nnz_ = nnz;
+  checkCudaErrors(cudaMalloc(&jcols_, nnz_ * sizeof(int)));
+  checkCudaErrors(cudaMalloc(&vals_, nnz_ * sizeof(double)));
+  jcols_host_ = new int[nnz_]{0};
+  vals_host_ = new double[nnz_]{0};
+}
+
+void MatrixCsr::clear_data()
+{
+  checkCudaErrors(cudaFree(irows_));
+  checkCudaErrors(cudaFree(jcols_));
+  checkCudaErrors(cudaFree(vals_));
+
+  irows_ = nullptr;
+  jcols_ = nullptr;
+  vals_ = nullptr;
+
+  delete[] irows_host_;
+  delete[] jcols_host_;
+  delete[] vals_host_;
+
+  irows_host_ = nullptr;
+  jcols_host_ = nullptr;
+  vals_host_ = nullptr;
+
+  n_ = 0;
+  nnz_ = 0;
+}
+
+void MatrixCsr::update_from_host_mirror()
+{
+  checkCudaErrors(cudaMemcpy(irows_, irows_host_, sizeof(int) * (n_ + 1), cudaMemcpyHostToDevice));
+  checkCudaErrors(cudaMemcpy(jcols_, jcols_host_, sizeof(int) * nnz_, cudaMemcpyHostToDevice));
+  checkCudaErrors(cudaMemcpy(vals_, vals_host_, sizeof(double) * nnz_, cudaMemcpyHostToDevice));
+}
+
+void MatrixCsr::copy_to_host_mirror()
+{
+  checkCudaErrors(cudaMemcpy(irows_host_, irows_, sizeof(int) * (n_ + 1), cudaMemcpyDeviceToHost));
+  checkCudaErrors(cudaMemcpy(jcols_host_, jcols_, sizeof(int) * nnz_, cudaMemcpyDeviceToHost));
+  checkCudaErrors(cudaMemcpy(vals_host_, vals_, sizeof(double) * nnz_, cudaMemcpyDeviceToHost));
+}
+
+// Error checking utility for CUDA
+// KS: might later become part of src/Utils, putting it here for now
+template<typename T>
+void MatrixCsr::resolveCheckCudaError(T result, const char* const file, int const line)
+{
+  if(result) {
+    std::cout << "CUDA error at " << file << ":" << line << " error# " << result << "\n";
+    assert(false);
   }
+}
 
-  MatrixCsr::~MatrixCsr()
-  {
-    if(n_ == 0)
-      return;
-
-    clear_data();
-  }
-
-  void MatrixCsr::allocate_size(int n)
-  {
-    n_ = n;
-    checkCudaErrors(cudaMalloc(&irows_, (n_+1) * sizeof(int)));
-    irows_host_ = new int[n_+1]{0};
-  }
-
-  void MatrixCsr::allocate_nnz(int nnz)
-  {
-    nnz_ = nnz;
-    checkCudaErrors(cudaMalloc(&jcols_, nnz_ * sizeof(int)));
-    checkCudaErrors(cudaMalloc(&vals_,  nnz_ * sizeof(double)));
-    jcols_host_ = new int[nnz_]{0};
-    vals_host_  = new double[nnz_]{0};
-  }
-
-  void MatrixCsr::clear_data()
-  {
-    checkCudaErrors(cudaFree(irows_));
-    checkCudaErrors(cudaFree(jcols_));
-    checkCudaErrors(cudaFree(vals_));
-
-    irows_ = nullptr;
-    jcols_ = nullptr;
-    vals_  = nullptr;
-
-    delete [] irows_host_;
-    delete [] jcols_host_;
-    delete [] vals_host_ ;
-
-    irows_host_ = nullptr;
-    jcols_host_ = nullptr;
-    vals_host_  = nullptr;
-
-    n_ = 0;
-    nnz_ = 0;
-  }
-
-  void MatrixCsr::update_from_host_mirror()
-  {
-    checkCudaErrors(cudaMemcpy(irows_, irows_host_, sizeof(int)    * (n_+1), cudaMemcpyHostToDevice));
-    checkCudaErrors(cudaMemcpy(jcols_, jcols_host_, sizeof(int)    * nnz_,   cudaMemcpyHostToDevice));
-    checkCudaErrors(cudaMemcpy(vals_,  vals_host_,  sizeof(double) * nnz_,   cudaMemcpyHostToDevice));
-  }
-
-  void MatrixCsr::copy_to_host_mirror()
-  {
-    checkCudaErrors(cudaMemcpy(irows_host_, irows_, sizeof(int)    * (n_+1), cudaMemcpyDeviceToHost));
-    checkCudaErrors(cudaMemcpy(jcols_host_, jcols_, sizeof(int)    * nnz_,   cudaMemcpyDeviceToHost));
-    checkCudaErrors(cudaMemcpy(vals_host_,  vals_,  sizeof(double) * nnz_,   cudaMemcpyDeviceToHost));
-  }
-
-  // Error checking utility for CUDA
-  // KS: might later become part of src/Utils, putting it here for now
-  template <typename T>
-  void MatrixCsr::resolveCheckCudaError(T result,
-                                        const char* const file,
-                                        int const line)
-  {
-    if(result) {
-      std::cout << "CUDA error at " << file << ":" << line << " error# " << result << "\n";
-      assert(false);
-    }
-  }
-
-} // namespace ReSolve
+}  // namespace ReSolve

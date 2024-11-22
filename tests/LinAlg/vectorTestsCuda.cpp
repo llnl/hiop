@@ -52,24 +52,24 @@
  * @author Asher Mancinelli <asher.mancinelli@pnnl.gov>, PNNL
  * @author Slaven Peles <slaven.peles@pnnl.gov>, PNNL
  * @author Cameron Rutherford <robert.rutherford@pnnl.gov>, PNNL
- * @author Nai-Yuan Chiang <chiang7@llnl.gov>, LLNL  
+ * @author Nai-Yuan Chiang <chiang7@llnl.gov>, LLNL
  *
  */
 #include <hiopVectorCuda.hpp>
 #include "vectorTestsCuda.hpp"
 
-namespace hiop { namespace tests {
+namespace hiop
+{
+namespace tests
+{
 
 /// Returns const pointer to local vector data
 const real_type* VectorTestsCuda::getLocalDataConst(hiop::hiopVector* x_in)
 {
-  if(auto* x = dynamic_cast<hiop::hiopVectorCuda*>(x_in))
-  {
+  if(auto* x = dynamic_cast<hiop::hiopVectorCuda*>(x_in)) {
     x->copyFromDev();
     return x->local_data_host_const();
-  }
-  else
-  {
+  } else {
     assert(false && "Wrong type of vector passed into `VectorTestsRajaPar::getLocalDataConst`!");
     THROW_NULL_DEREF;
   }
@@ -78,15 +78,12 @@ const real_type* VectorTestsCuda::getLocalDataConst(hiop::hiopVector* x_in)
 /// Method to set vector _x_ element _i_ to _value_.
 void VectorTestsCuda::setLocalElement(hiop::hiopVector* x_in, local_ordinal_type i, real_type val)
 {
-  if(auto* x = dynamic_cast<hiop::hiopVectorCuda*>(x_in))
-  {
+  if(auto* x = dynamic_cast<hiop::hiopVectorCuda*>(x_in)) {
     x->copyFromDev();
-    real_type *xdat = x->local_data_host();
+    real_type* xdat = x->local_data_host();
     xdat[i] = val;
     x->copyToDev();
-  }
-  else
-  {
+  } else {
     assert(false && "Wrong type of vector passed into `vectorTestsCuda::setLocalElement`!");
     THROW_NULL_DEREF;
   }
@@ -95,12 +92,9 @@ void VectorTestsCuda::setLocalElement(hiop::hiopVector* x_in, local_ordinal_type
 /// Get communicator
 MPI_Comm VectorTestsCuda::getMPIComm(hiop::hiopVector* x)
 {
-  if(auto* xvec = dynamic_cast<const hiop::hiopVectorCuda*>(x))
-  {
+  if(auto* xvec = dynamic_cast<const hiop::hiopVectorCuda*>(x)) {
     return xvec->get_mpi_comm();
-  }
-  else
-  {
+  } else {
     assert(false && "Wrong type of vector passed into `vectorTestsCuda::getMPIComm`!");
     THROW_NULL_DEREF;
   }
@@ -113,17 +107,16 @@ real_type* VectorTestsCuda::createLocalBuffer(local_ordinal_type N, real_type va
   real_type* dev_buffer = nullptr;
 
   // Set buffer elements to the initial value
-  for(local_ordinal_type i = 0; i < N; ++i)
-    buffer[i] = val;
+  for(local_ordinal_type i = 0; i < N; ++i) buffer[i] = val;
 
 #ifdef HIOP_USE_GPU
   // Allocate memory on GPU
-  cudaError_t cuerr = cudaMalloc((void**)&dev_buffer, N*sizeof(real_type));
+  cudaError_t cuerr = cudaMalloc((void**)&dev_buffer, N * sizeof(real_type));
   assert(cudaSuccess == cuerr);
-  cuerr = cudaMemcpy(dev_buffer, buffer, N*sizeof(real_type), cudaMemcpyHostToDevice);
+  cuerr = cudaMemcpy(dev_buffer, buffer, N * sizeof(real_type), cudaMemcpyHostToDevice);
   assert(cuerr == cudaSuccess);
 
-  delete [] buffer;
+  delete[] buffer;
   return dev_buffer;
 #endif
 
@@ -134,19 +127,18 @@ local_ordinal_type* VectorTestsCuda::createIdxBuffer(local_ordinal_type N, local
 {
   local_ordinal_type* buffer = new local_ordinal_type[N];
   // Set buffer elements to the initial value
-  for(local_ordinal_type i = 0; i < N; ++i)
-    buffer[i] = val;
-  buffer[N-1] = 0;
+  for(local_ordinal_type i = 0; i < N; ++i) buffer[i] = val;
+  buffer[N - 1] = 0;
 
 #ifdef HIOP_USE_GPU
   // Allocate memory on GPU
   local_ordinal_type* dev_buffer = nullptr;
-  cudaError_t cuerr = cudaMalloc((void**)&dev_buffer, N*sizeof(local_ordinal_type));
+  cudaError_t cuerr = cudaMalloc((void**)&dev_buffer, N * sizeof(local_ordinal_type));
   assert(cudaSuccess == cuerr);
-  cuerr = cudaMemcpy(dev_buffer, buffer, N*sizeof(local_ordinal_type), cudaMemcpyHostToDevice);
+  cuerr = cudaMemcpy(dev_buffer, buffer, N * sizeof(local_ordinal_type), cudaMemcpyHostToDevice);
   assert(cuerr == cudaSuccess);
 
-  delete [] buffer;
+  delete[] buffer;
   return dev_buffer;
 #endif
 
@@ -156,11 +148,11 @@ local_ordinal_type* VectorTestsCuda::createIdxBuffer(local_ordinal_type N, local
 /// Wrap delete command
 void VectorTestsCuda::deleteLocalBuffer(real_type* buffer)
 {
-  #ifdef HIOP_USE_GPU
+#ifdef HIOP_USE_GPU
   cudaFree(buffer);
-  return ;
-  #endif
-  delete [] buffer;
+  return;
+#endif
+  delete[] buffer;
 }
 
 /// If test fails on any rank set fail flag on all ranks
@@ -177,5 +169,5 @@ bool VectorTestsCuda::reduceReturn(int failures, hiop::hiopVector* x)
   return (fail != 0);
 }
 
-
-}} // namespace hiop::tests
+}  // namespace tests
+}  // namespace hiop

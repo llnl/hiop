@@ -63,8 +63,8 @@ namespace hiop
 {
 
 /**
- * Solves a sparse KKT linear system by exploiting the sparse structure, namely reduces 
- * the so-called XDYcYd KKT system 
+ * Solves a sparse KKT linear system by exploiting the sparse structure, namely reduces
+ * the so-called XDYcYd KKT system
  * [  H  +  Dx    0    Jd^T ] [ dx]   [ rx_tilde ]
  * [    0         Dd   -I   ] [ dd] = [ rd_tilde ]
  * [    Jd       -I     0   ] [dyd]   [   ryd    ]
@@ -73,14 +73,14 @@ namespace hiop
  * dd = Jd*dx - ryd
  * dyd = Dd*dd - rd_tilde = Dd*Jd*dx - Dd*ryd - rd_tilde
 
- * Here Jd is sparse Jacobians for inequalities, H is a sparse Hessian matrix, Dx is 
- * log-barrier diagonal corresponding to x variables, Dd is the log-barrier diagonal 
- * corresponding to the inequality slacks, and I is the identity matrix. 
+ * Here Jd is sparse Jacobians for inequalities, H is a sparse Hessian matrix, Dx is
+ * log-barrier diagonal corresponding to x variables, Dd is the log-barrier diagonal
+ * corresponding to the inequality slacks, and I is the identity matrix.
  *
- * @note: the NLP is assumed to have no equality constraints (or have been relaxed to 
+ * @note: the NLP is assumed to have no equality constraints (or have been relaxed to
  * two-sided inequality constraints).
  *
- * Dual regularization may be not enforced as it requires repeated divisions that are 
+ * Dual regularization may be not enforced as it requires repeated divisions that are
  * prone to round-off error accumulation. When/If the class is going to be updated to
  * use dual regularization, the regularized XDYcYd KKT system reads:
  * [  H+Dx+delta_wx*I         0         Jd^T     ] [ dx]   [ rx_tilde ]
@@ -94,14 +94,14 @@ namespace hiop
  *
  * From (Dd+delta_wd*I)*dd - dyd = rd_tilde one can write
  *   ->   (Dd+delta_wd*I)*(Jd*dx - delta_cd*dyd - ryd) - dyd = rd_tilde
- *   ->   [I+delta_cd*(Dd+delta_wd*I)] dyd = (Dd+delta_wd*I)*(Jd*dx - ryd) - rd_tilde 
+ *   ->   [I+delta_cd*(Dd+delta_wd*I)] dyd = (Dd+delta_wd*I)*(Jd*dx - ryd) - rd_tilde
  * dyd = (I+delta_cd*(Dd+delta_wd*I))^{-1} [ (Dd+delta_wd*I)*(Jd*dx - ryd) - rd_tilde ]
  * dyd =               Dd2                 [ (Dd+delta_wd*I)*(Jd*dx - ryd) - rd_tilde ]
- * dyd = Dd3*Jd*dx - Dd3*ryd - Dd2 rd_tilde 
+ * dyd = Dd3*Jd*dx - Dd3*ryd - Dd2 rd_tilde
  *
  * (H+Dx+delta_wx*I + Jd^T * Dd3 * Jd) dx = rx_tilde + Jd^T*Dd3*ryd +  Jd^T*Dd2*rd_tilde
  */
-  
+
 class hiopKKTLinSysCondensedSparse : public hiopKKTLinSysCompressedSparseXDYcYd
 {
 public:
@@ -119,11 +119,12 @@ public:
                                hiopVector& dd,
                                hiopVector& dyc,
                                hiopVector& dyd);
+
 protected:
   /**
-   * Solves the compressed XDYcYd system by using direct solves with Cholesky factors of the 
+   * Solves the compressed XDYcYd system by using direct solves with Cholesky factors of the
    * condensed linear system and appropriately manipulate the XDYcYD rhs/sol to condensed rhs/sol.
-   * 
+   *
    * The method is used as a preconditioner solve in the Krylov-based iterative refinement from
    * solve_compressed method.
    */
@@ -135,25 +136,24 @@ protected:
                                        hiopVector& dd,
                                        hiopVector& dyc,
                                        hiopVector& dyd);
-  
+
 protected:
   ////
   ////from the parent class and its parents we also use
   ////
-  //right-hand side [rx_tilde, rd_tilde, ((ryc->empty)), ryd]
-  //  hiopVector *rhs_; 
+  // right-hand side [rx_tilde, rd_tilde, ((ryc->empty)), ryd]
+  //   hiopVector *rhs_;
 
-  
   //  hiopVectorPar *Dd;
   //  hiopVectorPar *ryd_tilde;
 
-  //from the parent's parent class (hiopKKTLinSysCompressed) we also use
-  //  hiopVectorPar *Dx;
-  //  hiopVectorPar *rx_tilde;
+  // from the parent's parent class (hiopKKTLinSysCompressed) we also use
+  //   hiopVectorPar *Dx;
+  //   hiopVectorPar *rx_tilde;
 
-  //keep Hx = Dx (Dx=log-barrier diagonal for x) + regularization
-  //keep Hd = Dd (Dd=log-barrier diagonal for slack variable) + regularization
-  //  hiopVector *Hx_, *Hd_;
+  // keep Hx = Dx (Dx=log-barrier diagonal for x) + regularization
+  // keep Hd = Dd (Dd=log-barrier diagonal for slack variable) + regularization
+  //   hiopVector *Hx_, *Hd_;
 
   //
   //  hiopNlpSparse* nlpSp_;
@@ -166,7 +166,7 @@ protected:
 
   /// Member for JacD in CSR format
   hiopMatrixSparseCSR* JacD_;
-  
+
   /// Member for JacD' in CSR format
   hiopMatrixSparseCSR* JacDt_;
 
@@ -175,10 +175,10 @@ protected:
 
   /// Member for upper triangular part of Hess
   hiopMatrixSparseCSR* Hess_upper_csr_;
-  
+
   /// Member for Hess
   hiopMatrixSparseCSR* Hess_csr_;
-  
+
   /// Member for JacD'*Dd*JacD
   hiopMatrixSparseCSR* JtDiagJ_;
 
@@ -190,13 +190,14 @@ protected:
 
   /// Member for storing the auxiliary sum of Dx + delta_wx*I
   hiopMatrixSparseCSR* Diag_Dx_deltawx_;
-  
+
   /// Stores Dx plus delta_wx for more efficient updates of the condensed system matrix
   hiopVector* Dx_plus_deltawx_;
   hiopVector* deltawx_;
 
   /// Stores a copy of Hd_ on the device (to be later removed)
   hiopVector* Hd_copy_;
+
 private:
   /// Decides which linear solver to be used. Call only after `M_condended_` has been computed.
   hiopLinSolverSymSparse* determine_and_create_linsys();
@@ -214,11 +215,11 @@ private:
 #else
       assert(false && "compute mode not supported without HIOP_USE_CUDA build");
       return "DEFAULT";
-#endif // HIOP_USE_CUDA
+#endif  // HIOP_USE_CUDA
     }
   }
 };
-  
-} // end of namespace
+
+}  // namespace hiop
 
 #endif

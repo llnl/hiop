@@ -64,44 +64,32 @@ namespace cuda
 /**
  * Set diagonal of the CSR matrix to `val` by performing a binary search on the column indexes
  * for each row. Assumes pointers are on the device and parallelizes over rows.
- * 
+ *
  * @pre CSR matrix must be square.
  * @pre Diagonal entries must appear explicitly among the nonzeros.
  * @pre Column indexes must be sorted for any given row.
- */   
-void csr_set_diag_kernel(int n,
-                         int nnz,
-                         int* irowptr,
-                         int* jcoldind,
-                         double* values,
-                         double val,
-                         int block_size);
+ */
+void csr_set_diag_kernel(int n, int nnz, int* irowptr, int* jcoldind, double* values, double val, int block_size);
 
 /**
  * Add the constant `val` to the diagonal of the CSR matrix. Performs a binary search on the column indexes
  * for each row. Assumes pointers are on the device and parallelizes over rows.
- * 
+ *
  * @pre CSR matrix must be square.
  * @pre Diagonal entries must appear explicitly among the nonzeros.
  * @pre Column indexes must be sorted for any given row.
- */   
-void csr_add_diag_kernel(int n,
-                         int nnz,
-                         int* irowptr,
-                         int* jcoldind,
-                         double* values,
-                         double Dval,
-                         int block_size);
+ */
+void csr_add_diag_kernel(int n, int nnz, int* irowptr, int* jcoldind, double* values, double Dval, int block_size);
 
 /**
  * Add entries of the array `values` to the diagonal of the CSR matrix. Performs a binary search on the column indexes
  * for each row. Assumes pointers are on the device and parallelizes over rows.
- * 
+ *
  * @pre CSR matrix must be square.
  * @pre Diagonal entries must appear explicitly among the nonzeros.
  * @pre Column indexes must be sorted for any given row.
- * @pre 
- */   
+ * @pre
+ */
 void csr_add_diag_kernel(int n,
                          int nnz,
                          int* irowptr,
@@ -114,7 +102,7 @@ void csr_add_diag_kernel(int n,
 /**
  * Copies the diagonal of a CSR matrix into the array `diag_out`. All pointers are on the device. The
  * output array should be allocated to hold `n` doubles.
- * 
+ *
  * @pre CSR matrix must be square.
  * @pre Column indexes must be sorted for any given row.
  */
@@ -133,8 +121,8 @@ void csr_form_diag_symbolic_kernel(int n, int* irowptr, int* jcolind, int block_
 
 /**
  * Scales rows of the sparse CSR matrix with the diagonal matrix given by array `D`
- * 
- * @pre All pointers should be on the device. 
+ *
+ * @pre All pointers should be on the device.
  * @pre Column indexes must be sorted for any given row.
  */
 void csr_scalerows_kernel(int nrows,
@@ -145,7 +133,7 @@ void csr_scalerows_kernel(int nrows,
                           double* values,
                           const double* D,
                           int block_size);
-} //end of namespace cuda
-} //end of namespace hiop
+}  // end of namespace cuda
+}  // end of namespace hiop
 
 #endif

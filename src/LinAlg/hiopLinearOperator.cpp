@@ -47,11 +47,11 @@
 // product endorsement purposes.
 
 /* implements the linear solver class using the PARDISO solver
-* @file hiopLinearOperator.cpp
-* @ingroup LinearSolvers
-* @author Nai-Yuan Chiang <chiang7@lnnl.gov>, LLNL
-* @author Cosmin G. Petra <petra1@lnnl.gov>, LLNL
-*/
+ * @file hiopLinearOperator.cpp
+ * @ingroup LinearSolvers
+ * @author Nai-Yuan Chiang <chiang7@lnnl.gov>, LLNL
+ * @author Cosmin G. Petra <petra1@lnnl.gov>, LLNL
+ */
 
 #include "hiopVector.hpp"
 #include "hiopMatrix.hpp"
@@ -64,36 +64,34 @@ namespace hiop
 {
 
 /**********************************************************************
-  * hiopMatVecOpr implementation
-  **********************************************************************/
-  hiopMatVecOpr::hiopMatVecOpr(hiopMatrix* mat)
+ * hiopMatVecOpr implementation
+ **********************************************************************/
+hiopMatVecOpr::hiopMatVecOpr(hiopMatrix* mat)
     : mMat_(mat)
-  {
+{}
+
+bool hiopMatVecOpr::times_vec(hiopVector& y, const hiopVector& x)
+{
+  if(mMat_) {
+    assert(x.get_local_size() == mMat_->n());
+    assert(y.get_local_size() == mMat_->m());
+    mMat_->timesVec(0.0, y, 1.0, x);
+  } else {
+    y.copyFrom(x);
   }
+  return true;
+}
 
-  bool hiopMatVecOpr::times_vec(hiopVector& y, const hiopVector& x)
-  {
-    if(mMat_) {
-      assert(x.get_local_size() == mMat_->n());
-      assert(y.get_local_size() == mMat_->m());
-      mMat_->timesVec(0.0, y, 1.0, x);
-    } else {
-      y.copyFrom(x);
-    }
-    return true;
+bool hiopMatVecOpr::trans_times_vec(hiopVector& y, const hiopVector& x)
+{
+  if(mMat_) {
+    assert(x.get_local_size() == mMat_->m());
+    assert(y.get_local_size() == mMat_->n());
+    mMat_->transTimesVec(0.0, y, 1.0, x);
+  } else {
+    y.copyFrom(x);
   }
+  return true;
+}
 
-  bool hiopMatVecOpr::trans_times_vec(hiopVector& y, const hiopVector& x)
-  {
-    if(mMat_) {
-      assert(x.get_local_size() == mMat_->m());
-      assert(y.get_local_size() == mMat_->n());
-      mMat_->transTimesVec(0.0, y, 1.0, x);
-    } else {
-      y.copyFrom(x);
-    }
-    return true;
-  }
-
-};
-
+};  // namespace hiop

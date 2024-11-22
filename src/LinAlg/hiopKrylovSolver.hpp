@@ -47,11 +47,11 @@
 // product endorsement purposes.
 
 /* implements the Krylov iterative solver
-* @file hiopKrylovSolver.hpp
-* @ingroup LinearSolvers
-* @author Nai-Yuan Chiang <chiang7@lnnl.gov>, LLNL
-* @author Cosmin G. Petra <petra1@lnnl.gov>, LLNL
-*/
+ * @file hiopKrylovSolver.hpp
+ * @ingroup LinearSolvers
+ * @author Nai-Yuan Chiang <chiang7@lnnl.gov>, LLNL
+ * @author Cosmin G. Petra <petra1@lnnl.gov>, LLNL
+ */
 
 #ifndef HIOP_KrylovSolver
 #define HIOP_KrylovSolver
@@ -97,57 +97,53 @@ public:
   virtual void set_x0(double xval);
 
   /// Set the maximun number of iteration
-  inline virtual void set_max_num_iter(int num_iter) {maxit_ = num_iter;}
+  inline virtual void set_max_num_iter(int num_iter) { maxit_ = num_iter; }
 
   /**
-   * Set Krylov solver tolerance relative to norm of the right-hand side, meaning 
+   * Set Krylov solver tolerance relative to norm of the right-hand side, meaning
    * that the solver will stop when two-norm of the residual is less than the tolerance
    * times two-norm of the right-hand side.
    */
-  inline virtual void set_tol(double tol)
-  {
-    tol_ = tol;
-  }
-  
+  inline virtual void set_tol(double tol) { tol_ = tol; }
+
   /// Return the absolute residual at the end of Krylov solver
-  inline virtual double get_sol_abs_resid() {return abs_resid_;}
+  inline virtual double get_sol_abs_resid() { return abs_resid_; }
 
   /// Return the relative residual at the end of Krylov solver
-  inline virtual double get_sol_rel_resid() {return rel_resid_;}
+  inline virtual double get_sol_rel_resid() { return rel_resid_; }
 
   /// Return the number of iterations at the end of Krylov solver
-  inline virtual double get_sol_num_iter() {return iter_;}
+  inline virtual double get_sol_num_iter() { return iter_; }
 
   /// Return the message about the convergence
-  inline virtual std::string get_convergence_info() {return ss_info_.str();}
+  inline virtual std::string get_convergence_info() { return ss_info_.str(); }
 
   /**
    * Convergence flag: 0 for success, the other codes depending on the Krylov method
-   * used. Concrete message about the convergence can be obtained from 
+   * used. Concrete message about the convergence can be obtained from
    * get_convergence_info.
    */
-  inline virtual int get_convergence_flag() {return flag_;}
+  inline virtual int get_convergence_flag() { return flag_; }
 
 protected:
+  double tol_;                 // convergence tolerence
+  size_type maxit_;            // maximun number of iteratiions
+  double iter_;                // number of iterations at convergence
+  int flag_;                   // convergence flag
+  double abs_resid_;           // absolute residual
+  double rel_resid_;           // relative residual
+  const size_type n_;          // size of the rhs
+  std::stringstream ss_info_;  // message about the convergence
 
-  double tol_;                // convergence tolerence
-  size_type maxit_;           // maximun number of iteratiions
-  double iter_;               // number of iterations at convergence
-  int flag_;                  // convergence flag
-  double abs_resid_;          // absolute residual
-  double rel_resid_;          // relative residual
-  const size_type n_;         // size of the rhs
-  std::stringstream ss_info_; // message about the convergence 
-  
   /// Memory space
   std::string mem_space_;
-  
+
   /// Linear operator to apply the linear system matrix to a residual/vector
   hiopLinearOperator* A_opr_;
 
   /// Left preconditioner
   hiopLinearOperator* ML_opr_;
-  
+
   /// Right preconditioners
   hiopLinearOperator* MR_opr_;
 
@@ -156,7 +152,7 @@ protected:
   hiopVectorCompoundPD* b_;
 };
 
-/** 
+/**
  * a Krylov solver class implementing the PCG framework
  */
 class hiopPCGSolver : public hiopKrylovSolver
@@ -186,7 +182,7 @@ protected:
   hiopVector* qk_;
 };
 
-/** 
+/**
  * a Krylov solver class implementing the BiCGStab framework
  */
 class hiopBiCGStabSolver : public hiopKrylovSolver
@@ -218,6 +214,6 @@ protected:
   hiopVector* rt_;
 };
 
-} //end namespace
+}  // namespace hiop
 
 #endif

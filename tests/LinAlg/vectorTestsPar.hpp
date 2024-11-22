@@ -58,7 +58,10 @@
 
 #include "vectorTests.hpp"
 
-namespace hiop { namespace tests {
+namespace hiop
+{
+namespace tests
+{
 
 /**
  * @brief Utilities for testing hiopVectorPar class
@@ -69,8 +72,8 @@ namespace hiop { namespace tests {
 class VectorTestsPar : public VectorTests
 {
 public:
-  VectorTestsPar(){}
-  virtual ~VectorTestsPar(){}
+  VectorTestsPar() {}
+  virtual ~VectorTestsPar() {}
 
 private:
   virtual const real_type* getLocalDataConst(hiop::hiopVector* x);
@@ -82,4 +85,5 @@ private:
   MPI_Comm getMPIComm(hiop::hiopVector* x);
 };
 
-}} // namespace hiop::tests
+}  // namespace tests
+}  // namespace hiop

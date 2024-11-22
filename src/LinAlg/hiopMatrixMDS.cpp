@@ -21,8 +21,8 @@ void hiopMatrixMDS::set_Jac_FR(const hiopMatrixMDS& Jac_c,
   assert(J_c_de.n() == mDe->n() && J_d_de.n() == mDe->n());
   mDe->copyRowsFrom(J_c_de, J_c_de.m(), 0);
   mDe->copyRowsFrom(J_d_de, J_d_de.m(), J_c_de.m());
-  
-  mDe->copy_to(JacD);  
+
+  mDe->copy_to(JacD);
 }
 
 void hiopMatrixSymBlockDiagMDS::set_Hess_FR(const hiopMatrixSymBlockDiagMDS& Hess,
@@ -41,7 +41,4 @@ void hiopMatrixSymBlockDiagMDS::set_Hess_FR(const hiopMatrixSymBlockDiagMDS& Hes
   mDe->copy_to(MHDD);
 }
 
-
-} //end of namespace
-
-
+}  // namespace hiop

@@ -62,7 +62,7 @@
 
 namespace hiop
 {
-  
+
 class hiopMatVecKKTFullOpr;
 class hiopPrecondKKTOpr;
 
@@ -75,15 +75,17 @@ public:
   /**
    * Updates the parts in KKT system that are dependent on the iterate.
    * It may trigger a refactorization for direct linear systems, or it may not do
-   * anything, for example, LowRank KKT linear system 
+   * anything, for example, LowRank KKT linear system
    */
   virtual bool update(const hiopIterate* iter,
-		      const hiopVector* grad_f,
-		      const hiopMatrix* Jac_c, const hiopMatrix* Jac_d, hiopMatrix* Hess) = 0;
-  
+                      const hiopVector* grad_f,
+                      const hiopMatrix* Jac_c,
+                      const hiopMatrix* Jac_d,
+                      hiopMatrix* Hess) = 0;
+
   /**
    * Forms the residual of the underlying linear system. It uses the factorization
-   * computed by `update` to compute the "reduced-space" (i.e., compressed, condensed, etc.) 
+   * computed by `update` to compute the "reduced-space" (i.e., compressed, condensed, etc.)
    * search directions by solving with the factors, then computes the "full-space" directions */
   virtual bool computeDirections(const hiopResidual* resid, hiopIterate* direction) = 0;
   virtual bool compute_directions_w_IR(const hiopResidual* resid, hiopIterate* direction);
@@ -92,80 +94,62 @@ public:
 
   virtual bool factorize_inertia_free() = 0;
 
-  /* curvature test for inertia-free approach */  
+  /* curvature test for inertia-free approach */
   virtual bool test_direction(const hiopIterate* dir, hiopMatrix* Hess) = 0;
 
-  virtual void set_PD_perturb_calc(hiopPDPerturbation* p)
-  {
-    perturb_calc_ = p;
-  }
+  virtual void set_PD_perturb_calc(hiopPDPerturbation* p) { perturb_calc_ = p; }
 
-  virtual void set_fact_acceptor(hiopFactAcceptor* p_fact_acceptor)
-  {
-    fact_acceptor_ = p_fact_acceptor;
-  }  
-  
-  inline void set_safe_mode(bool val)
-  {
-    safe_mode_ = val;
-  }
+  virtual void set_fact_acceptor(hiopFactAcceptor* p_fact_acceptor) { fact_acceptor_ = p_fact_acceptor; }
+
+  inline void set_safe_mode(bool val) { safe_mode_ = val; }
 
   /// @brief Sets the log barrier parameter `mu`
-  inline void set_logbar_mu(double mu)
-  {
-    mu_ = mu;
-  }
+  inline void set_logbar_mu(double mu) { mu_ = mu; }
 
   /**
    * Returns the absolute residual norm at the last KKT solve.
    *
-   * The returned norm can be an only hint/approximation of the true residual norm in cases the last 
+   * The returned norm can be an only hint/approximation of the true residual norm in cases the last
    * solve is successful. If the KKT solve fails (i.e., one of the `compute_directions` methods fails)
    * the KKT class should return a good approximation of the norm of residual; if this is not feasible,
-   * it is better to return an optimistic underestimate (lower than the true residual norm) so that the 
+   * it is better to return an optimistic underestimate (lower than the true residual norm) so that the
    * IPM does not activate agressive regularization strategies unnecessarily.
    */
-  virtual double get_resid_norm_abs() const
-  {
-    return 0.0;
-  }
-  
+  virtual double get_resid_norm_abs() const { return 0.0; }
+
   /**
    * Returns the relative residual norm at the last KKT solve.
    *
-   * The returned norm can be an only hint/approximation of the true residual norm in cases the last 
+   * The returned norm can be an only hint/approximation of the true residual norm in cases the last
    * solve is successful. If the KKT solve fails (i.e., one of the `compute_directions` methods fails)
    * the KKT class should return a good approximation of the norm of residual; if this is not feasible,
-   * it is better to return an optimistic underestimate (lower than the true residual norm) so that the 
+   * it is better to return an optimistic underestimate (lower than the true residual norm) so that the
    * IPM does not activate agressive regularization strategies unnecessarily.
    */
-  virtual double get_resid_norm_rel() const
-  {
-    return 0.0;
-  }
+  virtual double get_resid_norm_rel() const { return 0.0; }
 
   /**
-   * Compute the inf norm of residual for the KKT linear system. 
+   * Compute the inf norm of residual for the KKT linear system.
    *
-   * This is not currently used by the IPM algorithm since small-enough residual error 
+   * This is not currently used by the IPM algorithm since small-enough residual error
    * for the inner linear system, as reported by the linear solver, is indicative of
-   * small KKT error. The method is called under HIOP_DEEPCHECKS to report residuals of 
+   * small KKT error. The method is called under HIOP_DEEPCHECKS to report residuals of
    * large inf-norm.
    */
   virtual double errorKKT(const hiopResidual* resid, const hiopIterate* sol);
-  
-  inline hiopPDPerturbation* get_perturb_calc() const {return perturb_calc_;}
+
+  inline hiopPDPerturbation* get_perturb_calc() const { return perturb_calc_; }
+
 protected:
-  /** 
+  /**
    * @brief y=beta*y+alpha*H*x
-   * 
+   *
    * @pre Should not include log barrier diagonal terms
    * @pre Should not include IC perturbations
    *
    * A default implementation is below
    */
-  virtual void HessianTimesVec_noLogBarrierTerm(double beta, hiopVector& y,
-						double alpha, const hiopVector&x)
+  virtual void HessianTimesVec_noLogBarrierTerm(double beta, hiopVector& y, double alpha, const hiopVector& x)
   {
     Hess_->timesVec(beta, y, alpha, x);
   }
@@ -177,20 +161,20 @@ protected:
   const hiopMatrix *Jac_c_, *Jac_d_;
   hiopMatrix* Hess_;
   hiopPDPerturbation* perturb_calc_;
-  hiopFactAcceptor* fact_acceptor_;  
+  hiopFactAcceptor* fact_acceptor_;
   bool perf_report_;
   bool safe_mode_;
   double mu_;
 
   /// Matrix operator performing mat-vec with given kkt linear system
-  hiopMatVecKKTFullOpr *kkt_opr_;
+  hiopMatVecKKTFullOpr* kkt_opr_;
 
   /// Preconditioner operator that solves with the given (usually compressed) KKT system
-  hiopPrecondKKTOpr *prec_opr_;
+  hiopPrecondKKTOpr* prec_opr_;
 
   /// iterative refinement from BiCGStab solver
   hiopBiCGStabSolver* bicgIR_;
-  
+
   friend class hiopMatVecKKTFullOpr;
   friend class hiopPrecondKKTOpr;
 
@@ -205,14 +189,11 @@ class hiopKKTLinSysCurvCheck : public hiopKKTLinSys
 {
 public:
   hiopKKTLinSysCurvCheck(hiopNlpFormulation* nlp)
-    : hiopKKTLinSys(nlp), linSys_{nullptr}
-  {
-  }
+      : hiopKKTLinSys(nlp),
+        linSys_{nullptr}
+  {}
 
-  virtual ~hiopKKTLinSysCurvCheck()
-  {
-    delete linSys_;
-  }
+  virtual ~hiopKKTLinSysCurvCheck() { delete linSys_; }
 
   virtual bool update(const hiopIterate* iter,
                       const hiopVector* grad_f,
@@ -223,42 +204,40 @@ public:
   virtual bool computeDirections(const hiopResidual* resid, hiopIterate* direction) = 0;
 
   virtual bool factorize();
-  
+
   virtual bool factorize_inertia_free();
 
-  /* curvature test for inertia-free approach */  
+  /* curvature test for inertia-free approach */
   virtual bool test_direction(const hiopIterate* dir, hiopMatrix* Hess) = 0;
-  
+
   /**
    * @brief factorize the matrix and check curvature
-   */ 
+   */
   virtual int factorizeWithCurvCheck();
 
-  /** 
+  /**
    * @brief updates the iterate matrix, given regularizations 'delta_wx', 'delta_wd', 'delta_cc' and 'delta_cd'.
    */
   virtual bool build_kkt_matrix(const hiopPDPerturbation& pdreg) = 0;
 
   hiopLinSolver* linSys_;
-
 };
-
 
 class hiopKKTLinSysCompressed : public hiopKKTLinSysCurvCheck
 {
 public:
   hiopKKTLinSysCompressed(hiopNlpFormulation* nlp)
-    : hiopKKTLinSysCurvCheck(nlp),
-      Dx_(nullptr),
-      Dd_(nullptr),
-      rx_tilde_(nullptr),
-      x_wrk_(nullptr),
-      d_wrk_(nullptr)
+      : hiopKKTLinSysCurvCheck(nlp),
+        Dx_(nullptr),
+        Dd_(nullptr),
+        rx_tilde_(nullptr),
+        x_wrk_(nullptr),
+        d_wrk_(nullptr)
   {
     Dx_ = nlp->alloc_primal_vec();
     assert(Dx_ != nullptr);
-    rx_tilde_  = Dx_->alloc_clone();
-    Dd_ = nlp->alloc_dual_ineq_vec();  
+    rx_tilde_ = Dx_->alloc_clone();
+    Dd_ = nlp->alloc_dual_ineq_vec();
   }
   virtual ~hiopKKTLinSysCompressed()
   {
@@ -273,14 +252,17 @@ public:
     }
   }
   virtual bool update(const hiopIterate* iter,
-		      const hiopVector* grad_f,
-		      const hiopMatrix* Jac_c, const hiopMatrix* Jac_d, hiopMatrix* Hess) = 0;
+                      const hiopVector* grad_f,
+                      const hiopMatrix* Jac_c,
+                      const hiopMatrix* Jac_d,
+                      hiopMatrix* Hess) = 0;
 
   virtual bool test_direction(const hiopIterate* dir, hiopMatrix* Hess);
 
   virtual bool computeDirections(const hiopResidual* resid, hiopIterate* direction) = 0;
 
   virtual bool build_kkt_matrix(const hiopPDPerturbation& pdreg) = 0;
+
 protected:
   hiopVector* Dx_;
   hiopVector* Dd_;
@@ -304,31 +286,35 @@ public:
   hiopKKTLinSysCompressedXYcYd(hiopNlpFormulation* nlp);
   virtual ~hiopKKTLinSysCompressedXYcYd();
 
-  virtual bool update(const hiopIterate* iter, 
-                      const hiopVector* grad_f, 
-                      const hiopMatrix* Jac_c, const hiopMatrix* Jac_d, 
+  virtual bool update(const hiopIterate* iter,
+                      const hiopVector* grad_f,
+                      const hiopMatrix* Jac_c,
+                      const hiopMatrix* Jac_d,
                       hiopMatrix* Hess);
-
 
   virtual bool computeDirections(const hiopResidual* resid, hiopIterate* direction);
 
   virtual bool build_kkt_matrix(const hiopPDPerturbation& pdreg) = 0;
 
-  virtual bool solveCompressed(hiopVector& rx, hiopVector& ryc, hiopVector& ryd,
-                               hiopVector& dx, hiopVector& dyc, hiopVector& dyd) = 0;
+  virtual bool solveCompressed(hiopVector& rx,
+                               hiopVector& ryc,
+                               hiopVector& ryd,
+                               hiopVector& dx,
+                               hiopVector& dyc,
+                               hiopVector& dyd) = 0;
 
 #ifdef HIOP_DEEPCHECKS
   virtual double errorCompressedLinsys(const hiopVector& rx,
-				       const hiopVector& ryc,
-				       const hiopVector& ryd,
-				       const hiopVector& dx,
-				       const hiopVector& dyc,
-				       const hiopVector& dyd);
+                                       const hiopVector& ryc,
+                                       const hiopVector& ryd,
+                                       const hiopVector& dx,
+                                       const hiopVector& dyc,
+                                       const hiopVector& dyd);
 #endif
 
 protected:
-  hiopVector *Dd_inv_;
-  hiopVector *ryd_tilde_;
+  hiopVector* Dd_inv_;
+  hiopVector* ryd_tilde_;
 };
 
 /* Provides the functionality for reducing the KKT linear system to the
@@ -349,41 +335,47 @@ public:
   hiopKKTLinSysCompressedXDYcYd(hiopNlpFormulation* nlp);
   virtual ~hiopKKTLinSysCompressedXDYcYd();
 
-  virtual bool update(const hiopIterate* iter, 
-                      const hiopVector* grad_f, 
-                      const hiopMatrix* Jac_c, const hiopMatrix* Jac_d, hiopMatrix* Hess);
+  virtual bool update(const hiopIterate* iter,
+                      const hiopVector* grad_f,
+                      const hiopMatrix* Jac_c,
+                      const hiopMatrix* Jac_d,
+                      hiopMatrix* Hess);
 
   virtual bool computeDirections(const hiopResidual* resid, hiopIterate* direction);
 
   virtual bool build_kkt_matrix(const hiopPDPerturbation& pdreg) = 0;
 
-  virtual bool solveCompressed(hiopVector& rx, hiopVector& rd, 
-                               hiopVector& ryc, hiopVector& ryd,
-                               hiopVector& dx, hiopVector& dd,
-                               hiopVector& dyc, hiopVector& dyd) = 0;
+  virtual bool solveCompressed(hiopVector& rx,
+                               hiopVector& rd,
+                               hiopVector& ryc,
+                               hiopVector& ryd,
+                               hiopVector& dx,
+                               hiopVector& dd,
+                               hiopVector& dyc,
+                               hiopVector& dyd) = 0;
 
 #ifdef HIOP_DEEPCHECKS
-  virtual double errorCompressedLinsys(const hiopVector& rx,  const hiopVector& rd,
-                                       const hiopVector& ryc, const hiopVector& ryd,
-                                       const hiopVector& dx,  const hiopVector& dd,
-                                       const hiopVector& dyc, const hiopVector& dyd);
+  virtual double errorCompressedLinsys(const hiopVector& rx,
+                                       const hiopVector& rd,
+                                       const hiopVector& ryc,
+                                       const hiopVector& ryd,
+                                       const hiopVector& dx,
+                                       const hiopVector& dd,
+                                       const hiopVector& dyc,
+                                       const hiopVector& dyd);
 #endif
 
 protected:
   hiopVector* rd_tilde_;
 
 #ifdef HIOP_DEEPCHECKS
-  //y=beta*y+alpha*H*x
-  virtual void HessianTimesVec_noLogBarrierTerm(double beta, hiopVector& y,
-						double alpha, const hiopVector&x)
+  // y=beta*y+alpha*H*x
+  virtual void HessianTimesVec_noLogBarrierTerm(double beta, hiopVector& y, double alpha, const hiopVector& x)
   {
     Hess_->timesVec(beta, y, alpha, x);
   }
 #endif
 };
-
-
-
 
 /*
  * Solves hiopKKTLinSysFull by exploiting the sparse structure
@@ -424,43 +416,64 @@ protected:
  * [  0     0     0     0  |  0   0  Sl^d 0   |  0   0  Vl   0  ] [dsdl]   [  rsvl    ]
  * [  0     0     0     0  |  0   0   0  Su^d |  0   0   0  Vu  ] [dsdu]   [  rsvu    ]
  */
-class hiopKKTLinSysFull: public hiopKKTLinSysCurvCheck
+class hiopKKTLinSysFull : public hiopKKTLinSysCurvCheck
 {
 public:
   hiopKKTLinSysFull(hiopNlpFormulation* nlp)
-    : hiopKKTLinSysCurvCheck(nlp),
-      x_wrk_{nullptr},
-      d_wrk_{nullptr}  
+      : hiopKKTLinSysCurvCheck(nlp),
+        x_wrk_{nullptr},
+        d_wrk_{nullptr}
   {}
 
   virtual ~hiopKKTLinSysFull()
   {
     delete x_wrk_;
-    delete d_wrk_; 
+    delete d_wrk_;
   }
 
   virtual bool update(const hiopIterate* iter,
                       const hiopVector* grad_f,
-                      const hiopMatrix* Jac_c, const hiopMatrix* Jac_d, hiopMatrix* Hess);
+                      const hiopMatrix* Jac_c,
+                      const hiopMatrix* Jac_d,
+                      hiopMatrix* Hess);
 
   virtual bool test_direction(const hiopIterate* dir, hiopMatrix* Hess);
 
   virtual bool computeDirections(const hiopResidual* resid, hiopIterate* direction);
 
   virtual bool build_kkt_matrix(const hiopPDPerturbation& pdreg) = 0;
-  
-  virtual bool solve( hiopVector& rx, hiopVector& ryc, hiopVector& ryd, hiopVector& rd,
-                      hiopVector& rdl, hiopVector& rdu, hiopVector& rxl, hiopVector& rxu,
-                      hiopVector& rsvl, hiopVector& rsvu, hiopVector& rszl, hiopVector& rszu,
-                      hiopVector& dx, hiopVector& dyc, hiopVector& dyd, hiopVector& dd,
-                      hiopVector& dvl, hiopVector& dvu, hiopVector& dzl, hiopVector& dzu,
-                      hiopVector& dsdl, hiopVector& dsdu, hiopVector& dsxl, hiopVector& dsxu)=0;
+
+  virtual bool solve(hiopVector& rx,
+                     hiopVector& ryc,
+                     hiopVector& ryd,
+                     hiopVector& rd,
+                     hiopVector& rdl,
+                     hiopVector& rdu,
+                     hiopVector& rxl,
+                     hiopVector& rxu,
+                     hiopVector& rsvl,
+                     hiopVector& rsvu,
+                     hiopVector& rszl,
+                     hiopVector& rszu,
+                     hiopVector& dx,
+                     hiopVector& dyc,
+                     hiopVector& dyd,
+                     hiopVector& dd,
+                     hiopVector& dvl,
+                     hiopVector& dvu,
+                     hiopVector& dzl,
+                     hiopVector& dzu,
+                     hiopVector& dsdl,
+                     hiopVector& dsdu,
+                     hiopVector& dsxl,
+                     hiopVector& dsxu) = 0;
+
 protected:
   hiopVector* x_wrk_;
   hiopVector* d_wrk_;
 };
 
-/** 
+/**
  * @brief Provides the functionality for reducing the KKT linear system to the
  * normal equation system below in dyc and dyd variables and then to perform
  * the basic ops needed to compute the remaining directions
@@ -470,13 +483,13 @@ protected:
  * [ Jc  0 ] [ H + Dx   0 ]^{-1} [ Jc^T  Jd^T]  [dyc] = [   ryc_tilde    ]
  * [ Jd -I ] [   0     Dd ]      [  0     -I ]  [dyd]   [   ryd_tilde    ]
  *
- * [ ryc_tilde ] = [ Jc  0 ] [ H+Dx+delta_wx     0       ]^{-1}  [ rx_tilde ] - [ ryc ] 
+ * [ ryc_tilde ] = [ Jc  0 ] [ H+Dx+delta_wx     0       ]^{-1}  [ rx_tilde ] - [ ryc ]
  * [ ryd_tilde ]   [ Jd -I ] [   0           Dd+delta_wd ]       [ rd_tilde ]   [ ryd ]
- * 
+ *
  * and then to compute the rest of the search directions from
  * [ H+Dx+delta_wx     0       ] [dx] = [ rx_tilde ] - [ Jc^T  Jd^T] [dyc]
  * [   0           Dd+delta_wd ] [dd]   [ rd_tilde ]   [  0     -I ] [dyd]
- * 
+ *
  */
 class hiopKKTLinSysNormalEquation : public hiopKKTLinSysCompressed
 {
@@ -484,8 +497,8 @@ public:
   hiopKKTLinSysNormalEquation(hiopNlpFormulation* nlp);
   virtual ~hiopKKTLinSysNormalEquation();
 
-  virtual bool update(const hiopIterate* iter, 
-                      const hiopVector* grad_f, 
+  virtual bool update(const hiopIterate* iter,
+                      const hiopVector* grad_f,
                       const hiopMatrix* Jac_c,
                       const hiopMatrix* Jac_d,
                       hiopMatrix* Hess);
@@ -494,14 +507,11 @@ public:
 
   virtual bool build_kkt_matrix(const hiopPDPerturbation& pdreg) = 0;
 
-  virtual bool solveCompressed(hiopVector& ryc_tilde,
-                               hiopVector& ryd_tilde,
-                               hiopVector& dyc,
-                               hiopVector& dyd) = 0;
+  virtual bool solveCompressed(hiopVector& ryc_tilde, hiopVector& ryd_tilde, hiopVector& dyc, hiopVector& dyd) = 0;
 
   /**
    * @brief factorize the matrix and check curvature
-   */ 
+   */
   virtual int factorizeWithCurvCheck() = 0;
 
 protected:
@@ -512,14 +522,13 @@ protected:
   hiopVector* Hx_;  // [diag(H)+Dx+delta_wx]
   hiopVector* Hd_;  // [Dd+delta_wd ]
 
-  hiopVector *x_wrk_;
-  hiopVector *d_wrk_;
+  hiopVector* x_wrk_;
+  hiopVector* d_wrk_;
 };
 
-
-/** 
+/**
  * operators for KKT mat-vec operations
- * 
+ *
  * Full KKT matrix is
  * [   H    0   Jc^T  Jd^T |  -I  I   0   0   |  0   0   0   0  ] [  dx]   [    rx    ]
  * [  0     0     0    -I  |  0   0  -I   I   |  0   0   0   0  ] [  dd]   [    rd    ]
@@ -544,7 +553,7 @@ public:
 
   virtual ~hiopMatVecKKTFullOpr()
   {
-    delete resid_;  
+    delete resid_;
     delete dir_;
     delete dir_cv_;
     delete res_cv_;
@@ -557,7 +566,7 @@ public:
   virtual bool trans_times_vec(hiopVector& y, const hiopVector& x);
 
   /* need to reset the pointer to the current iter, since the outer loop keeps swtiching between curr_iter and trial_iter */
-  inline void reset_curr_iter(const hiopIterate* iter) {iter_ = iter;}
+  inline void reset_curr_iter(const hiopIterate* iter) { iter_ = iter; }
 
 private:
   hiopKKTLinSys* kkt_;
@@ -566,30 +575,30 @@ private:
   hiopIterate* dir_;
 
   hiopMatVecKKTFullOpr()
-    : kkt_(nullptr),
-      resid_(nullptr),
-      dir_(nullptr)
+      : kkt_(nullptr),
+        resid_(nullptr),
+        dir_(nullptr)
   {
     assert(false && "this constructor should not be used");
   }
 
-  /** @brief split a large vector to build a hiopIterate object. 
+  /** @brief split a large vector to build a hiopIterate object.
    *  Note that the size of vector is equal to the size of full KKT.
    *  TODO: revisit this function after we implement compound vector
    */
   bool split_vec_to_build_it(const hiopVector& vec);
 
-  /** @brief combine vectors from a hiopResidual object into a large vector. 
+  /** @brief combine vectors from a hiopResidual object into a large vector.
    *  Note that the size of vector is equal to the size of full KKT.
    *  TODO: revisit this function after we implement compound vector
    */
   bool combine_res_to_build_vec(hiopVector& vec);
- 
+
   hiopVectorCompoundPD* dir_cv_;
   hiopVectorCompoundPD* res_cv_;
 };
 
-/** 
+/**
  * operators for KKT preconditioner
  */
 class hiopPrecondKKTOpr : public hiopLinearOperator
@@ -599,7 +608,7 @@ public:
 
   virtual ~hiopPrecondKKTOpr()
   {
-    delete resid_;  
+    delete resid_;
     delete dir_;
     delete dir_cv_;
     delete res_cv_;
@@ -618,20 +627,20 @@ protected:
   hiopIterate* dir_;
 
   hiopPrecondKKTOpr()
-    : kkt_(nullptr),
-      resid_(nullptr),
-      dir_(nullptr)
+      : kkt_(nullptr),
+        resid_(nullptr),
+        dir_(nullptr)
   {
     assert(false && "this constructor should not be used");
   }
-  
-  /** @brief split a large vector to build a hiopResidual object. 
+
+  /** @brief split a large vector to build a hiopResidual object.
    *  Note that the size of vector is equal to the size of full KKT.
    *  TODO: revisit this function after we implement compound vector
    */
   virtual bool split_vec_to_build_res(const hiopVector& vec);
 
-  /** @brief combine vectors from a hiopIterate object into a large vector. 
+  /** @brief combine vectors from a hiopIterate object into a large vector.
    *  Note that the size of vector is equal to the size of full KKT.
    *  TODO: revisit this function after we implement compound vector
    */
@@ -641,6 +650,6 @@ protected:
   hiopVectorCompoundPD* res_cv_;
 };
 
-};
+};  // namespace hiop
 
 #endif

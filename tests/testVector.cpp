@@ -82,12 +82,11 @@
 #include <hiopVectorHip.hpp>
 #endif
 
-template <typename T>
+template<typename T>
 static int runTests(const char* mem_space, MPI_Comm comm);
 
-template <typename T>
+template<typename T>
 static int runIntTests(const char* mem_space);
-
 
 /**
  * @brief Main body of vector implementation testing code.
@@ -101,15 +100,15 @@ int main(int argc, char** argv)
 {
   using namespace hiop::tests;
 
-  int rank=0;
+  int rank = 0;
   MPI_Comm comm = MPI_COMM_SELF;
 
 #ifdef HIOP_USE_MPI
   int err;
-  err  = MPI_Init(&argc, &argv);
+  err = MPI_Init(&argc, &argv);
   assert(MPI_SUCCESS == err);
   comm = MPI_COMM_WORLD;
-  err  = MPI_Comm_rank(comm, &rank);
+  err = MPI_Comm_rank(comm, &rank);
   assert(MPI_SUCCESS == err);
   if(0 == rank && MPI_SUCCESS == err) {
     std::cout << "\nRunning MPI enabled tests ...\n";
@@ -121,20 +120,17 @@ int main(int argc, char** argv)
   //
   // Test HiOp vectors
   //
-  if (rank == 0)
-    std::cout << "\nTesting HiOp default vector implementation:\n";
+  if(rank == 0) std::cout << "\nTesting HiOp default vector implementation:\n";
   fail += runTests<VectorTestsPar>("default", comm);
 #ifdef HIOP_USE_CUDA
-  if (rank == 0)
-  {
+  if(rank == 0) {
     std::cout << "\nTesting HiOp CUDA vector\n";
     std::cout << "  ... using CUDA memory space:\n";
   }
   fail += runTests<VectorTestsCuda>("cuda", comm);
 #endif
 #ifdef HIOP_USE_HIP
-  if (rank == 0)
-  {
+  if(rank == 0) {
     std::cout << "\nTesting HiOp HIP vector\n";
     std::cout << "  ... using HIP memory space:\n";
   }
@@ -142,65 +138,57 @@ int main(int argc, char** argv)
 #endif
 #ifdef HIOP_USE_RAJA
 #ifdef HIOP_USE_GPU
-  if (rank == 0)
-  {
+  if(rank == 0) {
     std::cout << "\nTesting HiOp RAJA vector\n";
     std::cout << "  ... using device memory space:\n";
   }
   fail += runTests<VectorTestsRajaPar>("device", comm);
-  if (rank == 0)
-  {
+  if(rank == 0) {
     std::cout << "\nTesting HiOp RAJA vector\n";
     std::cout << "  ... using unified virtual memory space:\n";
   }
   fail += runTests<VectorTestsRajaPar>("um", comm);
 #else
-  if (rank == 0)
-  {
+  if(rank == 0) {
     std::cout << "\nTesting HiOp RAJA vector\n";
     std::cout << "  ... using host memory space:\n";
   }
   fail += runTests<VectorTestsRajaPar>("host", comm);
-#endif // GPU
-#endif // RAJA
+#endif  // GPU
+#endif  // RAJA
 
   //
   // Test HiOp integer vectors
-  // 
-  if (rank == 0)
-  {
+  //
+  if(rank == 0) {
     std::cout << "\nTesting HiOp sequential int vector:\n";
     fail += runIntTests<VectorTestsIntSeq>("default");
 #ifdef HIOP_USE_RAJA
 #ifdef HIOP_USE_GPU
-    if (rank == 0)
-    {
+    if(rank == 0) {
       std::cout << "\nTesting HiOp RAJA int vector\n";
       std::cout << "  ... using device memory space:\n";
     }
     fail += runIntTests<VectorTestsIntRaja>("device");
-    if (rank == 0)
-    {
+    if(rank == 0) {
       std::cout << "\nTesting HiOp RAJA int vector\n";
       std::cout << "  ... using unified virtual memory space:\n";
     }
     fail += runIntTests<VectorTestsIntRaja>("um");
 #else
-    if (rank == 0)
-    {
+    if(rank == 0) {
       std::cout << "\nTesting HiOp RAJA int vector\n";
       std::cout << "  ... using host memory space:\n";
     }
     fail += runIntTests<VectorTestsIntRaja>("host");
-#endif // GPU
-#endif // RAJA
+#endif  // GPU
+#endif  // RAJA
   }
-  
+
   //
   // Test summary
   //
-  if (rank == 0)
-  {
+  if(rank == 0) {
     if(fail)
       std::cout << "\n" << fail << " vector tests failed!\n\n";
     else
@@ -215,14 +203,14 @@ int main(int argc, char** argv)
 }
 
 /// Driver for all real type vector tests
-template <typename T>
+template<typename T>
 int runTests(const char* mem_space, MPI_Comm comm)
 {
   using namespace hiop;
   using hiop::tests::global_ordinal_type;
 
-  int rank=0;
-  int numRanks=1;
+  int rank = 0;
+  int numRanks = 1;
 
 #ifdef HIOP_USE_MPI
   MPI_Comm_rank(comm, &rank);
@@ -234,17 +222,16 @@ int runTests(const char* mem_space, MPI_Comm comm)
 
   global_ordinal_type Nlocal = 1000;
   global_ordinal_type Mlocal = 500;
-  global_ordinal_type Nglobal = Nlocal*numRanks;
+  global_ordinal_type Nglobal = Nlocal * numRanks;
 
-  global_ordinal_type* n_partition = new global_ordinal_type [numRanks + 1];
-  global_ordinal_type* m_partition = new global_ordinal_type [numRanks + 1];
+  global_ordinal_type* n_partition = new global_ordinal_type[numRanks + 1];
+  global_ordinal_type* m_partition = new global_ordinal_type[numRanks + 1];
   n_partition[0] = 0;
   m_partition[0] = 0;
 
-  for(int i = 1; i < numRanks + 1; ++i)
-  {
-    n_partition[i] = i*Nlocal;
-    m_partition[i] = i*Mlocal;
+  for(int i = 1; i < numRanks + 1; ++i) {
+    n_partition[i] = i * Nlocal;
+    m_partition[i] = i * Mlocal;
   }
 
   hiopVector* a = LinearAlgebraFactory::create_vector(mem_space, Nglobal, n_partition, comm);
@@ -257,10 +244,10 @@ int runTests(const char* mem_space, MPI_Comm comm)
   hiopVector* z = LinearAlgebraFactory::create_vector(mem_space, Nglobal, n_partition, comm);
 
   hiopVectorInt* v_smaller_idxs = LinearAlgebraFactory::create_vector_int(mem_space, Mlocal);
-  
+
   hiopVectorInt* v_map = LinearAlgebraFactory::create_vector_int(mem_space, Mlocal);
   hiopVectorInt* v2_map = LinearAlgebraFactory::create_vector_int(mem_space, Mlocal);
-  
+
   int fail = 0;
 
   fail += test.vectorGetSize(*x, Nglobal, rank);
@@ -271,8 +258,7 @@ int runTests(const char* mem_space, MPI_Comm comm)
   fail += test.vectorCopyFrom(*x, *y, rank);
   fail += test.vectorCopyTo(*x, *y, rank);
 
-  if (rank == 0)
-  {
+  if(rank == 0) {
     fail += test.vector_copy_from_indexes(*v_smaller, *v, *v_smaller_idxs);
     fail += test.vectorCopyFromStarting(*v, *v_smaller);
     fail += test.vectorStartingAtCopyFromStartingAt(*v_smaller, *v);
@@ -327,15 +313,14 @@ int runTests(const char* mem_space, MPI_Comm comm)
   fail += test.vectorMatchesPattern(*x, *y, rank);
   fail += test.vectorAdjustDuals_plh(*x, *y, *z, *a, rank);
 
-  if (rank == 0)
-  {
+  if(rank == 0) {
     fail += test.vectorIsnan(*v);
     fail += test.vectorIsinf(*v);
     fail += test.vectorIsfinite(*v);
   }
 
   // TODO: remove
-  //fail += test.vector_is_equal(*x, *y, rank);
+  // fail += test.vector_is_equal(*x, *y, rank);
 
   delete a;
   delete b;
@@ -355,7 +340,7 @@ int runTests(const char* mem_space, MPI_Comm comm)
 }
 
 /// Driver for all integer vector tests
-template <typename T>
+template<typename T>
 int runIntTests(const char* mem_space)
 {
   using namespace hiop;
@@ -374,10 +359,10 @@ int runIntTests(const char* mem_space)
   fail += test.vectorGetElement(*x);
   fail += test.vectorSetElement(*x);
   fail += test.vector_linspace(*x);
-  
+
   auto* y = LinearAlgebraFactory::create_vector_int(mem_space, sz);
   fail += test.vector_copy_from(*x, *y);
-  
+
   delete x;
   delete y;
 

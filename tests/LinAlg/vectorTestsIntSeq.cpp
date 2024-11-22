@@ -57,7 +57,10 @@
 #include "vectorTestsIntSeq.hpp"
 #include <cassert>
 
-namespace hiop { namespace tests {
+namespace hiop
+{
+namespace tests
+{
 
 int VectorTestsIntSeq::getLocalElement(hiop::hiopVectorInt* xvec, int idx) const
 {
@@ -87,4 +90,5 @@ void VectorTestsIntSeq::setLocalElement(hiop::hiopVectorInt* xvec, int value) co
   }
 }
 
-}} // namespace hiop::tests
+}  // namespace tests
+}  // namespace hiop

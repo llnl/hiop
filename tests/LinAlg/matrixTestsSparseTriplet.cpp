@@ -53,7 +53,7 @@
  * @author Slaven Peles <slaven.peles@pnnl.gov>, PNNL
  * @author Cameron Rutherford <robert.rutherford@pnnl.gov>, PNNL
  * @author Jake K. Ryan <jake.ryan@pnnl.gov>, PNNL
- * 
+ *
  */
 
 #include <cstring>
@@ -61,52 +61,49 @@
 #include "matrixTestsSparseTriplet.hpp"
 #include <hiopVectorIntSeq.hpp>
 
-namespace hiop{ namespace tests {
+namespace hiop
+{
+namespace tests
+{
 
-/// Set `i`th element of vector `x` 
-void MatrixTestsSparseTriplet::setLocalElement(
-    hiop::hiopVector* xvec,
-    const local_ordinal_type i,
-    const real_type val)
+/// Set `i`th element of vector `x`
+void MatrixTestsSparseTriplet::setLocalElement(hiop::hiopVector* xvec, const local_ordinal_type i, const real_type val)
 {
   auto x = dynamic_cast<hiop::hiopVectorPar*>(xvec);
-  if(x != nullptr)
-  {
+  if(x != nullptr) {
     real_type* data = x->local_data();
     data[i] = val;
-  }
-  else THROW_NULL_DEREF;
+  } else
+    THROW_NULL_DEREF;
 }
 
 /// Returns element (i,j) of a dense matrix `A`.
 /// First need to retrieve hiopMatrixDense from the abstract interface
-real_type MatrixTestsSparseTriplet::getLocalElement(
-    const hiop::hiopMatrix* A,
-    local_ordinal_type row,
-    local_ordinal_type col)
+real_type MatrixTestsSparseTriplet::getLocalElement(const hiop::hiopMatrix* A,
+                                                    local_ordinal_type row,
+                                                    local_ordinal_type col)
 {
   auto mat = dynamic_cast<const hiop::hiopMatrixDense*>(A);
-  
-  if (mat != nullptr)
-  {
+
+  if(mat != nullptr) {
     const double* M = mat->local_data_const();
-    //return M[row][col];
-    return M[row*mat->get_local_size_n()+col];
+    // return M[row][col];
+    return M[row * mat->get_local_size_n() + col];
   }
 
-  else THROW_NULL_DEREF;
+  else
+    THROW_NULL_DEREF;
 }
 
 /// Returns element _i_ of vector _x_.
 /// First need to retrieve hiopVectorPar from the abstract interface
-real_type MatrixTestsSparseTriplet::getLocalElement(
-    const hiop::hiopVector* x,
-    local_ordinal_type i)
+real_type MatrixTestsSparseTriplet::getLocalElement(const hiop::hiopVector* x, local_ordinal_type i)
 {
   const hiop::hiopVectorPar* xvec = dynamic_cast<const hiop::hiopVectorPar*>(x);
   if(xvec != nullptr)
     return xvec->local_data_const()[i];
-  else THROW_NULL_DEREF;
+  else
+    THROW_NULL_DEREF;
 }
 
 real_type* MatrixTestsSparseTriplet::getMatrixData(hiop::hiopMatrixSparse* A)
@@ -123,14 +120,12 @@ real_type MatrixTestsSparseTriplet::getMatrixData(hiop::hiopMatrixSparse* A, loc
   auto* jCol = mat->j_col();
   auto nnz = mat->numberOfNonzeros();
 
-  for (auto k=0; k< nnz; i++)
-  {
-    if(iRow[k]==i && jCol[k]==j){
+  for(auto k = 0; k < nnz; i++) {
+    if(iRow[k] == i && jCol[k] == j) {
       return val[k];
     }
     // assume elements are row-major ordered.
-    if(iRow[k]>=i)
-      break;
+    if(iRow[k] >= i) break;
   }
   return zero;
 }
@@ -153,7 +148,8 @@ int MatrixTestsSparseTriplet::getLocalSize(const hiop::hiopVector* x)
   const hiop::hiopVectorPar* xvec = dynamic_cast<const hiop::hiopVectorPar*>(x);
   if(xvec != nullptr)
     return static_cast<int>(xvec->get_local_size());
-  else THROW_NULL_DEREF;
+  else
+    THROW_NULL_DEREF;
 }
 
 /**
@@ -165,16 +161,13 @@ int MatrixTestsSparseTriplet::getLocalSize(const hiop::hiopVector* x)
 [[nodiscard]]
 int MatrixTestsSparseTriplet::verifyAnswer(hiop::hiopMatrixSparse* A, const double answer)
 {
-  if(A == nullptr)
-    return 1;
+  if(A == nullptr) return 1;
   auto mat = dynamic_cast<hiop::hiopMatrixSparseTriplet*>(A);
   const local_ordinal_type nnz = mat->numberOfNonzeros();
   const real_type* values = mat->M();
   int fail = 0;
-  for (local_ordinal_type i=0; i<nnz; i++)
-  {
-    if (!isEqual(values[i], answer))
-    {
+  for(local_ordinal_type i = 0; i < nnz; i++) {
+    if(!isEqual(values[i], answer)) {
       fail++;
     }
   }
@@ -188,17 +181,17 @@ int MatrixTestsSparseTriplet::verifyAnswer(hiop::hiopMatrixSparse* A, const doub
  *
  */
 [[nodiscard]]
-int MatrixTestsSparseTriplet::verifyAnswer(hiop::hiopMatrix* A, local_ordinal_type nnz_st, local_ordinal_type nnz_ed, const double answer)
+int MatrixTestsSparseTriplet::verifyAnswer(hiop::hiopMatrix* A,
+                                           local_ordinal_type nnz_st,
+                                           local_ordinal_type nnz_ed,
+                                           const double answer)
 {
-  if(A == nullptr)
-    return 1;
+  if(A == nullptr) return 1;
   auto mat = dynamic_cast<hiop::hiopMatrixSparseTriplet*>(A);
   const real_type* values = mat->M();
   int fail = 0;
-  for (local_ordinal_type i=nnz_st; i<nnz_ed; i++)
-  {
-    if (!isEqual(values[i], answer))
-    {
+  for(local_ordinal_type i = nnz_st; i < nnz_ed; i++) {
+    if(!isEqual(values[i], answer)) {
       fail++;
     }
   }
@@ -210,22 +203,18 @@ int MatrixTestsSparseTriplet::verifyAnswer(hiop::hiopMatrix* A, local_ordinal_ty
  * answer dynamically, based on the row and column
  */
 [[nodiscard]]
-int MatrixTestsSparseTriplet::verifyAnswer(
-    hiop::hiopMatrixDense* A,
-    std::function<real_type(local_ordinal_type, local_ordinal_type)> expect)
+int MatrixTestsSparseTriplet::verifyAnswer(hiop::hiopMatrixDense* A,
+                                           std::function<real_type(local_ordinal_type, local_ordinal_type)> expect)
 {
-  //auto A = dynamic_cast<hiop::hiopMatrixDense*>(Amat);
+  // auto A = dynamic_cast<hiop::hiopMatrixDense*>(Amat);
   assert(A->get_local_size_n() == A->n() && "Matrix should not be distributed");
   const local_ordinal_type M = A->get_local_size_m();
   const local_ordinal_type N = A->get_local_size_n();
   int fail = 0;
-  for (local_ordinal_type i=0; i<M; i++)
-  {
-    for (local_ordinal_type j=0; j<N; j++)
-    {
-      if (!isEqual(getLocalElement(A, i, j), expect(i, j)))
-      {
-        //printf("(%d, %d) failed. %f != %f.\n", i, j, getLocalElement(A, i, j), expect(i, j));
+  for(local_ordinal_type i = 0; i < M; i++) {
+    for(local_ordinal_type j = 0; j < N; j++) {
+      if(!isEqual(getLocalElement(A, i, j), expect(i, j))) {
+        // printf("(%d, %d) failed. %f != %f.\n", i, j, getLocalElement(A, i, j), expect(i, j));
         fail++;
       }
     }
@@ -234,16 +223,14 @@ int MatrixTestsSparseTriplet::verifyAnswer(
 }
 
 /// Checks if _local_ vector elements are set to `answer`.
-  [[nodiscard]]
+[[nodiscard]]
 int MatrixTestsSparseTriplet::verifyAnswer(hiop::hiopVector* x, double answer)
-{ 
+{
   const local_ordinal_type N = getLocalSize(x);
 
   int local_fail = 0;
-  for(local_ordinal_type i=0; i<N; ++i)
-  {
-    if(!isEqual(getLocalElement(x, i), answer))
-    {
+  for(local_ordinal_type i = 0; i < N; ++i) {
+    if(!isEqual(getLocalElement(x, i), answer)) {
       printf("Failed. %f != %f.\n", getLocalElement(x, i), answer);
       ++local_fail;
     }
@@ -251,18 +238,14 @@ int MatrixTestsSparseTriplet::verifyAnswer(hiop::hiopVector* x, double answer)
   return local_fail;
 }
 
-  [[nodiscard]]
-int MatrixTestsSparseTriplet::verifyAnswer(
-    hiop::hiopVector* x,
-    std::function<real_type(local_ordinal_type)> expect)
+[[nodiscard]]
+int MatrixTestsSparseTriplet::verifyAnswer(hiop::hiopVector* x, std::function<real_type(local_ordinal_type)> expect)
 {
   const local_ordinal_type N = getLocalSize(x);
 
   int local_fail = 0;
-  for (int i=0; i<N; i++)
-  {
-    if(!isEqual(getLocalElement(x, i), expect(i)))
-    {
+  for(int i = 0; i < N; i++) {
+    if(!isEqual(getLocalElement(x, i), expect(i))) {
       printf("Failed. %f != %f.\n", getLocalElement(x, i), expect(i));
       ++local_fail;
     }
@@ -278,8 +261,7 @@ local_ordinal_type* MatrixTestsSparseTriplet::numNonzerosPerRow(hiop::hiopMatrix
   auto sparsity_pattern = new local_ordinal_type[mat->m()];
   std::memset(sparsity_pattern, 0, sizeof(local_ordinal_type) * mat->m());
 
-  for(local_ordinal_type i = 0; i < nnz; i++)
-  {
+  for(local_ordinal_type i = 0; i < nnz; i++) {
     sparsity_pattern[iRow[i]]++;
   }
   return sparsity_pattern;
@@ -293,38 +275,33 @@ local_ordinal_type* MatrixTestsSparseTriplet::numNonzerosPerCol(hiop::hiopMatrix
   auto sparsity_pattern = new local_ordinal_type[mat->n()];
   std::memset(sparsity_pattern, 0, sizeof(local_ordinal_type) * mat->n());
 
-  for(local_ordinal_type i = 0; i < nnz; i++)
-  {
+  for(local_ordinal_type i = 0; i < nnz; i++) {
     sparsity_pattern[jCol[i]]++;
   }
   return sparsity_pattern;
 }
 
-void MatrixTestsSparseTriplet::initializeMatrix(
-    hiop::hiopMatrixSparse* mat,
-    local_ordinal_type entries_per_row)
+void MatrixTestsSparseTriplet::initializeMatrix(hiop::hiopMatrixSparse* mat, local_ordinal_type entries_per_row)
 {
   auto* A = dynamic_cast<hiop::hiopMatrixSparseTriplet*>(mat);
-  local_ordinal_type * iRow = A->i_row();
-  local_ordinal_type * jCol = A->j_col();
-  double * val = A->M();
+  local_ordinal_type* iRow = A->i_row();
+  local_ordinal_type* jCol = A->j_col();
+  double* val = A->M();
 
   local_ordinal_type m = A->m();
   local_ordinal_type n = A->n();
 
   assert(A->numberOfNonzeros() == m * entries_per_row && "Matrix initialized with insufficent number of non-zero entries");
 
-  for(local_ordinal_type row = 0, col = 0, i = 0; row < m && i < A->numberOfNonzeros(); row++, col = 0) 
-  {
-    for(local_ordinal_type j=0; j<entries_per_row-1; i++, j++, col += n / entries_per_row)
-    {
+  for(local_ordinal_type row = 0, col = 0, i = 0; row < m && i < A->numberOfNonzeros(); row++, col = 0) {
+    for(local_ordinal_type j = 0; j < entries_per_row - 1; i++, j++, col += n / entries_per_row) {
       iRow[i] = row;
       jCol[i] = col;
       val[i] = one;
     }
 
     iRow[i] = row;
-    jCol[i] = n-1;
+    jCol[i] = n - 1;
     val[i++] = one;
   }
 }
@@ -335,13 +312,13 @@ void MatrixTestsSparseTriplet::initializeMatrix(
  * device memory will copy from device when this is called, CPU-bound classes
  * will no-op.
  */
-void MatrixTestsSparseTriplet::maybeCopyToDev(hiop::hiopMatrixSparse*) { }
+void MatrixTestsSparseTriplet::maybeCopyToDev(hiop::hiopMatrixSparse*) {}
 
 /**
  * @brief placeholder on CPU-bound classes.
  * @see MatrixTestsSparseTriplet::maybeCopyToDev
  */
-void MatrixTestsSparseTriplet::maybeCopyFromDev(hiop::hiopMatrixSparse*) { }
+void MatrixTestsSparseTriplet::maybeCopyFromDev(hiop::hiopMatrixSparse*) {}
 
 int MatrixTestsSparseTriplet::getLocalElement(hiop::hiopVectorInt* xvec, int idx) const
 {
@@ -362,4 +339,5 @@ void MatrixTestsSparseTriplet::setLocalElement(hiop::hiopVectorInt* xvec, int id
   }
 }
 
-}} // namespace hiop::tests
+}  // namespace tests
+}  // namespace hiop

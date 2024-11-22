@@ -58,76 +58,69 @@
 #include "hiopOptions.hpp"
 #include "LinAlgFactory.hpp"
 
-namespace hiop {
-  hiopLinSolver::hiopLinSolver()
-    : nlp_(NULL), perf_report_(false)
-  {
-  }
-  hiopLinSolver::~hiopLinSolver()
-  {
-  }
+namespace hiop
+{
+hiopLinSolver::hiopLinSolver()
+    : nlp_(NULL),
+      perf_report_(false)
+{}
+hiopLinSolver::~hiopLinSolver() {}
 
-  /// Constructor allocates dense system matrix
-  hiopLinSolverSymDense::hiopLinSolverSymDense(int n, hiopNlpFormulation* nlp)
-  {
-    nlp_ = nlp;
-    perf_report_ = "on"==hiop::tolower(nlp_->options->GetString("time_kkt"));
-    M_ = LinearAlgebraFactory::create_matrix_dense(nlp_->options->GetString("mem_space"), n, n);
-  }
+/// Constructor allocates dense system matrix
+hiopLinSolverSymDense::hiopLinSolverSymDense(int n, hiopNlpFormulation* nlp)
+{
+  nlp_ = nlp;
+  perf_report_ = "on" == hiop::tolower(nlp_->options->GetString("time_kkt"));
+  M_ = LinearAlgebraFactory::create_matrix_dense(nlp_->options->GetString("mem_space"), n, n);
+}
 
-  /// Default constructor is protected and should fail when called
-  hiopLinSolverSymDense::hiopLinSolverSymDense()
+/// Default constructor is protected and should fail when called
+hiopLinSolverSymDense::hiopLinSolverSymDense()
     : M_(nullptr)
-  {
-    assert(false);
-  }
+{
+  assert(false);
+}
 
-  /// Destructor deletes the system matrix
-  hiopLinSolverSymDense::~hiopLinSolverSymDense()
-  {
-    delete M_;
-  }
+/// Destructor deletes the system matrix
+hiopLinSolverSymDense::~hiopLinSolverSymDense() { delete M_; }
 
-  /// Method to return reference to the system matrix
-  hiopMatrixDense& hiopLinSolverSymDense::sysMatrix()
-  {
-    return *M_;
-  }
+/// Method to return reference to the system matrix
+hiopMatrixDense& hiopLinSolverSymDense::sysMatrix() { return *M_; }
 
-  hiopLinSolverSymSparse::hiopLinSolverSymSparse(int n, int nnz, hiopNlpFormulation* nlp)
-  {
-    //we default to triplet matrix for now; derived classes using CSR matrices will not call
-    //this constructor (will call the 1-parameter constructor below) so they avoid creating
-    //the triplet matrix
-    M_ = LinearAlgebraFactory::create_matrix_sparse(nlp->options->GetString("mem_space"), n, n, nnz);
-    //this class will own `M_`
-    sys_mat_owned_ = true;
-    nlp_ = nlp;
-    perf_report_ = "on"==hiop::tolower(nlp->options->GetString("time_kkt"));
-  }
+hiopLinSolverSymSparse::hiopLinSolverSymSparse(int n, int nnz, hiopNlpFormulation* nlp)
+{
+  // we default to triplet matrix for now; derived classes using CSR matrices will not call
+  // this constructor (will call the 1-parameter constructor below) so they avoid creating
+  // the triplet matrix
+  M_ = LinearAlgebraFactory::create_matrix_sparse(nlp->options->GetString("mem_space"), n, n, nnz);
+  // this class will own `M_`
+  sys_mat_owned_ = true;
+  nlp_ = nlp;
+  perf_report_ = "on" == hiop::tolower(nlp->options->GetString("time_kkt"));
+}
 
-  hiopLinSolverSymSparse::hiopLinSolverSymSparse(hiopNlpFormulation* nlp)
-  {
-    M_ = nullptr;
-    sys_mat_owned_ = false;
-    nlp_ = nlp;
-    perf_report_ = "on"==hiop::tolower(nlp->options->GetString("time_kkt"));
-  }
+hiopLinSolverSymSparse::hiopLinSolverSymSparse(hiopNlpFormulation* nlp)
+{
+  M_ = nullptr;
+  sys_mat_owned_ = false;
+  nlp_ = nlp;
+  perf_report_ = "on" == hiop::tolower(nlp->options->GetString("time_kkt"));
+}
 
-  hiopLinSolverSymSparse::hiopLinSolverSymSparse(hiopMatrixSparse* M, hiopNlpFormulation* nlp)
-  {
-    M_ = M;
-    sys_mat_owned_ = false;
-    nlp_ = nlp;
-    perf_report_ = "on"==hiop::tolower(nlp->options->GetString("time_kkt"));
-  }
-  
-  hiopLinSolverNonSymSparse::hiopLinSolverNonSymSparse(int n, int nnz, hiopNlpFormulation* nlp)
-  {
-    M_ = LinearAlgebraFactory::create_matrix_sparse(nlp->options->GetString("mem_space"), n, n, nnz);
-    sys_mat_owned_ = false;
-    nlp_ = nlp;
-    perf_report_ = "on"==hiop::tolower(nlp->options->GetString("time_kkt"));
-  }
+hiopLinSolverSymSparse::hiopLinSolverSymSparse(hiopMatrixSparse* M, hiopNlpFormulation* nlp)
+{
+  M_ = M;
+  sys_mat_owned_ = false;
+  nlp_ = nlp;
+  perf_report_ = "on" == hiop::tolower(nlp->options->GetString("time_kkt"));
+}
 
-} // namespace hiop
+hiopLinSolverNonSymSparse::hiopLinSolverNonSymSparse(int n, int nnz, hiopNlpFormulation* nlp)
+{
+  M_ = LinearAlgebraFactory::create_matrix_sparse(nlp->options->GetString("mem_space"), n, n, nnz);
+  sys_mat_owned_ = false;
+  nlp_ = nlp;
+  perf_report_ = "on" == hiop::tolower(nlp->options->GetString("time_kkt"));
+}
+
+}  // namespace hiop

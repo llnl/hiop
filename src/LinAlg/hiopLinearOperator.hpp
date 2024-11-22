@@ -47,11 +47,11 @@
 // product endorsement purposes.
 
 /* implements the linear solver class using the PARDISO solver
-* @file hiopLinearOperator.hpp
-* @ingroup LinearSolvers
-* @author Nai-Yuan Chiang <chiang7@lnnl.gov>, LLNL
-* @author Cosmin G. Petra <petra1@lnnl.gov>, LLNL
-*/
+ * @file hiopLinearOperator.hpp
+ * @ingroup LinearSolvers
+ * @author Nai-Yuan Chiang <chiang7@lnnl.gov>, LLNL
+ * @author Cosmin G. Petra <petra1@lnnl.gov>, LLNL
+ */
 
 #ifndef HIOP_MATVECOPR
 #define HIOP_MATVECOPR
@@ -66,14 +66,14 @@ namespace hiop
 class hiopKKTLinSys;
 
 /**
- * The abstract interface to a mat-vec operation required by 
+ * The abstract interface to a mat-vec operation required by
  * the iterative solvers.
  */
 class hiopLinearOperator
 {
 public:
-  hiopLinearOperator(){};
-  virtual ~hiopLinearOperator(){};
+  hiopLinearOperator() {};
+  virtual ~hiopLinearOperator() {};
 
   /** y = Mat * x */
   virtual bool times_vec(hiopVector& y, const hiopVector& x) = 0;
@@ -82,11 +82,12 @@ public:
   virtual bool trans_times_vec(hiopVector& y, const hiopVector& x) = 0;
 };
 
-/** 
+/**
  * An implementation of the abstract class @hiopLinearOperator that performs a mat-vec operation
  * with both the matrix and vector being on the same processor.
  */
-class hiopMatVecOpr : public hiopLinearOperator {
+class hiopMatVecOpr : public hiopLinearOperator
+{
 public:
   hiopMatVecOpr(hiopMatrix* mat);
   virtual ~hiopMatVecOpr() {};
@@ -101,6 +102,6 @@ protected:
   hiopMatrix* mMat_;
 };
 
-};
+};  // namespace hiop
 
 #endif

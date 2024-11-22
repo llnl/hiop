@@ -68,12 +68,12 @@ namespace host
 
 int array_random_uniform_kernel(int n, double* d_array, double minv, double maxv)
 {
-  std::uniform_real_distribution<double> unif(minv,maxv);
+  std::uniform_real_distribution<double> unif(minv, maxv);
   std::default_random_engine re;
 
   re.seed(generate_seed());
 
-  for(auto i=0; i<n; ++i) {
+  for(auto i = 0; i < n; ++i) {
     d_array[i] = unif(re);
   }
 
@@ -87,13 +87,12 @@ int array_random_uniform_kernel(int n, double* d_array)
 
   re.seed(generate_seed());
 
-  for(auto i=0; i<n; ++i) {
+  for(auto i = 0; i < n; ++i) {
     d_array[i] = unif(re);
   }
 
   return 1;
 }
 
-}  //end of namespace
-} //end of namespace
-
+}  // namespace host
+}  // namespace hiop

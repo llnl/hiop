@@ -53,13 +53,16 @@
  * @author Slaven Peles <slaven.peles@pnnl.gov>, PNNL
  * @author Cameron Rutherford <robert.rutherford@pnnl.gov>, PNNL
  * @author Nai-Yuan Chiang <chiang7@llnl.gov>, LLNL
- * 
+ *
  */
 #pragma once
 
 #include "vectorTests.hpp"
 
-namespace hiop { namespace tests {
+namespace hiop
+{
+namespace tests
+{
 
 /**
  * @brief Utilities for testing hiopVectorCuda class
@@ -70,8 +73,8 @@ namespace hiop { namespace tests {
 class VectorTestsCuda : public VectorTests
 {
 public:
-  VectorTestsCuda(){}
-  virtual ~VectorTestsCuda(){}
+  VectorTestsCuda() {}
+  virtual ~VectorTestsCuda() {}
 
 private:
   virtual const real_type* getLocalDataConst(hiop::hiopVector* x);
@@ -83,4 +86,5 @@ private:
   MPI_Comm getMPIComm(hiop::hiopVector* x);
 };
 
-}} // namespace hiop::tests
+}  // namespace tests
+}  // namespace hiop

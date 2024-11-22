@@ -13,90 +13,93 @@ using namespace hiop;
 
 // static bool self_check(size_type n, double obj_value);
 
-static bool parse_arguments(int argc, char **argv,
+static bool parse_arguments(int argc,
+                            char** argv,
                             bool& self_check,
                             size_type& n_sp,
                             size_type& n_de,
                             bool& one_call_cons,
                             bool& empty_sp_row)
 {
-  self_check=false;
+  self_check = false;
   empty_sp_row = false;
   n_sp = 1000;
   n_de = 1000;
   one_call_cons = false;
   switch(argc) {
-  case 1:
-    //no arguments
-    return true;
-    break;
-  case 6: // 5 arguments
+    case 1:
+      // no arguments
+      return true;
+      break;
+    case 6:  // 5 arguments
     {
-      if(std::string(argv[5]) == "-selfcheck")
-            self_check=true;
+      if(std::string(argv[5]) == "-selfcheck") self_check = true;
     }
-  case 5: // 4 arguments
+    case 5:  // 4 arguments
     {
       if(std::string(argv[4]) == "-selfcheck") {
-        self_check=true;
+        self_check = true;
       }
       if(std::string(argv[4]) == "-empty_sp_row") {
-        empty_sp_row=true;
-      }      
+        empty_sp_row = true;
+      }
     }
-  case 4: // 3 arguments
+    case 4:  // 3 arguments
     {
-      one_call_cons = (bool) atoi(argv[3]);
+      one_call_cons = (bool)atoi(argv[3]);
     }
-  case 3: //2 arguments
+    case 3:  // 2 arguments
     {
       n_de = atoi(argv[2]);
-      if(n_de<0) n_de = 0;
+      if(n_de < 0) n_de = 0;
     }
-  case 2: //1 argument
+    case 2:  // 1 argument
     {
       n_sp = atoi(argv[1]);
-      if(n_sp<0) n_sp = 0;
-    }
-    break;
-  default: 
-    return false; //5 or more arguments
+      if(n_sp < 0) n_sp = 0;
+    } break;
+    default:
+      return false;  // 5 or more arguments
   }
 
-  if(self_check && (n_sp!=400 || n_de!=100) )
-    return false;
-  
+  if(self_check && (n_sp != 400 || n_de != 100)) return false;
+
   return true;
 };
 
 static void usage(const char* exeName)
 {
-  printf("HiOp driver %s that solves a synthetic problem of variable size in the "
-         "mixed dense-sparse formulation.\n", exeName);
+  printf(
+      "HiOp driver %s that solves a synthetic problem of variable size in the "
+      "mixed dense-sparse formulation.\n",
+      exeName);
   printf("Usage: \n");
   printf("  '$ %s sp_vars_size de_vars_size eq_ineq_combined_nlp -empty_sp_row -selfcheck'\n", exeName);
   printf("Arguments, all integers, excepting string '-selfcheck'\n");
   printf("  'sp_vars_size': # of sparse variables [default 400, optional]\n");
   printf("  'de_vars_size': # of dense variables [default 100, optional]\n");
   printf("  '-empty_sp_row': set an empty row in sparser inequality Jacobian. [optional]\n");
-  printf("  '-selfcheck': compares the optimal objective with sp_vars_size being 400 and "
-         "de_vars_size being 100 (these two exact values must be passed as arguments). [optional]\n");
-  printf("  'eq_ineq_combined_nlp': 0 or 1, specifying whether the NLP formulation with split "
-         "constraints should be used (0) or not (1) [default 0, optional]\n");
+  printf(
+      "  '-selfcheck': compares the optimal objective with sp_vars_size being 400 and "
+      "de_vars_size being 100 (these two exact values must be passed as arguments). [optional]\n");
+  printf(
+      "  'eq_ineq_combined_nlp': 0 or 1, specifying whether the NLP formulation with split "
+      "constraints should be used (0) or not (1) [default 0, optional]\n");
 }
 
-
-int main(int argc, char **argv)
+int main(int argc, char** argv)
 {
-  int rank=0;
+  int rank = 0;
 #ifdef HIOP_USE_MPI
   MPI_Init(&argc, &argv);
   int comm_size;
-  int ierr = MPI_Comm_size(MPI_COMM_WORLD, &comm_size); assert(MPI_SUCCESS==ierr);
-  //int ierr = MPI_Comm_rank(MPI_COMM_WORLD, &rank); assert(MPI_SUCCESS==ierr);
+  int ierr = MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
+  assert(MPI_SUCCESS == ierr);
+  // int ierr = MPI_Comm_rank(MPI_COMM_WORLD, &rank); assert(MPI_SUCCESS==ierr);
   if(comm_size != 1) {
-    printf("[error] driver detected more than one rank but the driver should be run "
-           "in serial only; will exit\n");
+    printf(
+        "[error] driver detected more than one rank but the driver should be run "
+        "in serial only; will exit\n");
     MPI_Finalize();
     return 1;
   }
@@ -114,10 +117,10 @@ int main(int argc, char **argv)
     return 1;
   }
 
-  double obj_value=-1e+20;
+  double obj_value = -1e+20;
   hiopSolveStatus status;
 
-  //user's NLP -> implementation of hiop::hiopInterfaceMDS
+  // user's NLP -> implementation of hiop::hiopInterfaceMDS
   MdsEx1* my_nlp;
   if(one_call_cons) {
     my_nlp = new MdsEx1OneCallCons(n_sp, n_de, has_empty_sp_row);
@@ -142,13 +145,14 @@ int main(int argc, char **argv)
   status = solver.run();
   obj_value = solver.getObjective();
 
-  int ret_code = 0; //0 success, -1 failure
-  
+  int ret_code = 0;  // 0 success, -1 failure
 
-  if(selfCheck) { // && has_empty_sp_row) {
-    if(fabs(obj_value-(-4.9994906229741609e+01))>1e-6) {
-      printf("selfcheck: objective mismatch for MDS Ex1 problem with 400 sparse variables and 100 "
-             "dense variables did. BTW, obj=%18.12e was returned by HiOp.\n", obj_value);
+  if(selfCheck) {  // && has_empty_sp_row) {
+    if(fabs(obj_value - (-4.9994906229741609e+01)) > 1e-6) {
+      printf(
+          "selfcheck: objective mismatch for MDS Ex1 problem with 400 sparse variables and 100 "
+          "dense variables did. BTW, obj=%18.12e was returned by HiOp.\n",
+          obj_value);
       ret_code = -1;
     } else {
       printf("selfcheck passed\n");
@@ -156,18 +160,17 @@ int main(int argc, char **argv)
     }
 
   } else {
-    if(status<0) {
-      if(rank==0) {
+    if(status < 0) {
+      if(rank == 0) {
         printf("solver returned negative solve status: %d (objective is %18.12e)\n", status, obj_value);
-      } 
+      }
       ret_code = -1;
     } else {
-      if(rank==0) {
+      if(rank == 0) {
         printf("solver returned successfully: objective is %18.12e)\n", obj_value);
-      } 
+      }
       ret_code = 0;
-
-    } 
+    }
   }
 
 #if 0
@@ -233,7 +236,7 @@ int main(int argc, char **argv)
 #endif
 
   delete my_nlp;
-  
+
 #ifdef HIOP_USE_MAGMA
   magma_finalize();
 #endif

@@ -57,7 +57,10 @@
 #include <hiopVectorInt.hpp>
 #include "vectorTestsInt.hpp"
 
-namespace hiop { namespace tests {
+namespace hiop
+{
+namespace tests
+{
 
 /**
  * @brief Collection of helper methods for hiopVectorIntSeq
@@ -68,8 +71,8 @@ namespace hiop { namespace tests {
 class VectorTestsIntSeq : public VectorTestsInt
 {
 public:
-  VectorTestsIntSeq(){}
-  virtual ~VectorTestsIntSeq(){}
+  VectorTestsIntSeq() {}
+  virtual ~VectorTestsIntSeq() {}
 
 private:
   virtual int getLocalElement(hiop::hiopVectorInt*, int) const;
@@ -77,4 +80,5 @@ private:
   virtual void setLocalElement(hiop::hiopVectorInt*, int) const;
 };
 
-}} // namespace hiop::tests
+}  // namespace tests
+}  // namespace hiop

@@ -60,16 +60,15 @@
 #include "resolve_cusolver_defs.hpp"
 #include <string>
 
+namespace ReSolve
+{
 
-namespace ReSolve {
-
-  class MatrixCsr;
-  class IterativeRefinement;
-
+class MatrixCsr;
+class IterativeRefinement;
 
 /**
  * @brief Implements refactorization solvers using KLU and cuSOLVER libraries
- * 
+ *
  */
 class RefactorizationSolver
 {
@@ -81,8 +80,8 @@ public:
 
   void enable_iterative_refinement();
   void setup_iterative_refinement_matrix(int n, int nnz);
-  void configure_iterative_refinement(cusparseHandle_t   cusparse_handle,
-                                      cublasHandle_t     cublas_handle,
+  void configure_iterative_refinement(cusparseHandle_t cusparse_handle,
+                                      cublasHandle_t cublas_handle,
                                       cusolverRfHandle_t cusolverrf_handle,
                                       int n,
                                       double* d_T,
@@ -93,109 +92,81 @@ public:
 
   /**
    * @brief Set the number of nonzeros in system matrix.
-   * 
-   * @param nnz 
+   *
+   * @param nnz
    */
-  void set_nnz(int nnz)
-  {
-    nnz_ = nnz;
-  }
+  void set_nnz(int nnz) { nnz_ = nnz; }
 
-  IterativeRefinement* ir()
-  {
-    return ir_;
-  }
+  IterativeRefinement* ir() { return ir_; }
 
-  MatrixCsr* mat_A_csr()
-  {
-    return mat_A_csr_;
-  }
+  MatrixCsr* mat_A_csr() { return mat_A_csr_; }
 
-  double* devr()
-  {
-    return devr_;
-  }
+  double* devr() { return devr_; }
 
-  int& ordering()
-  {
-    return ordering_;
-  }
+  int& ordering() { return ordering_; }
 
-  std::string& fact()
-  {
-    return fact_;
-  }
+  std::string& fact() { return fact_; }
 
-  std::string& refact()
-  {
-    return refact_;
-  }
+  std::string& refact() { return refact_; }
 
-  std::string& use_ir()
-  {
-    return use_ir_;
-  }
+  std::string& use_ir() { return use_ir_; }
 
-  void set_silent_output(bool silent_output)
-  {
-    silent_output_ = silent_output;
-  }
-  
+  void set_silent_output(bool silent_output) { silent_output_ = silent_output; }
+
   /**
    * @brief Set up factorization of the first linear system.
-   * 
-   * @return int 
+   *
+   * @return int
    */
   int setup_factorization();
 
   /**
    * @brief Factorize system matrix
-   * 
+   *
    * @return int - factorization status: success=0, failure=-1
    */
   int factorize();
 
   /**
    * @brief Set the up the refactorization
-   * 
+   *
    */
   void setup_refactorization();
 
   /**
    * @brief Refactorize system matrix
-   * 
-   * @return int 
+   *
+   * @return int
    */
   int refactorize();
 
   /**
    * @brief Invokes triangular solver given matrix factors
-   * 
-   * @param dx 
-   * @param tol 
-   * @return bool 
+   *
+   * @param dx
+   * @param tol
+   * @return bool
    */
   bool triangular_solve(double* dx, double tol, std::string memspace);
 
-
 private:
-  int n_{ 0 };   ///< Size of the linear system
-  int nnz_{ 0 }; ///< Number of nonzeros in the system's matrix
+  int n_{0};    ///< Size of the linear system
+  int nnz_{0};  ///< Number of nonzeros in the system's matrix
 
-  MatrixCsr* mat_A_csr_{ nullptr };    ///< System matrix in nonsymmetric CSR format
-  IterativeRefinement* ir_{ nullptr }; ///< Iterative refinement class
+  MatrixCsr* mat_A_csr_{nullptr};     ///< System matrix in nonsymmetric CSR format
+  IterativeRefinement* ir_{nullptr};  ///< Iterative refinement class
 
-  bool cusolver_glu_enabled_{ false };         ///< cusolverGLU on/off flag
-  bool cusolver_rf_enabled_{ false };          ///< cusolverRf on/off flag
-  bool iterative_refinement_enabled_{ false }; ///< Iterative refinement on/off flag
-  bool is_first_solve_{ true };                ///< If it is first call to triangular solver
+  bool cusolver_glu_enabled_{false};          ///< cusolverGLU on/off flag
+  bool cusolver_rf_enabled_{false};           ///< cusolverRf on/off flag
+  bool iterative_refinement_enabled_{false};  ///< Iterative refinement on/off flag
+  bool is_first_solve_{true};                 ///< If it is first call to triangular solver
 
   // Options
-  int ordering_{ -1 };
+  int ordering_{-1};
   std::string fact_;
   std::string refact_;
   std::string use_ir_;
-  bool silent_output_{ true };
+  bool silent_output_{true};
 
   /** needed for cuSolver **/
 
@@ -234,28 +205,22 @@ private:
 
   /* needed for cuSolverRf */
   int* d_P_ = nullptr;
-  int* d_Q_ = nullptr; // permutation matrices
+  int* d_Q_ = nullptr;  // permutation matrices
   double* d_T_ = nullptr;
 
   /**
    * @brief Function that computes M = (L-I) + U
-   * 
-   * @param n 
-   * @param nnzL 
-   * @param Lp 
-   * @param Li 
-   * @param nnzU 
-   * @param Up 
-   * @param Ui 
-   * @return int 
+   *
+   * @param n
+   * @param nnzL
+   * @param Lp
+   * @param Li
+   * @param nnzU
+   * @param Up
+   * @param Ui
+   * @return int
    */
-  int createM(const int n, 
-              const int nnzL, 
-              const int* Lp, 
-              const int* Li, 
-              const int nnzU, 
-              const int* Up, 
-              const int* Ui);
+  int createM(const int n, const int nnzL, const int* Lp, const int* Li, const int nnzU, const int* Up, const int* Ui);
 
   int initializeKLU();
   int initializeCusolverGLU();
@@ -264,18 +229,16 @@ private:
   int refactorizationSetupCusolverGLU();
   int refactorizationSetupCusolverRf();
 
-
   /**
    * @brief Check for CUDA errors.
-   * 
+   *
    * @tparam T - type of the result
    * @param result - result value
    * @param file   - file name where the error occured
    * @param line   - line at which the error occured
    */
-  template <typename T>
+  template<typename T>
   void resolveCheckCudaError(T result, const char* const file, int const line);
-
 };
 
-} // namespace ReSolve
+}  // namespace ReSolve

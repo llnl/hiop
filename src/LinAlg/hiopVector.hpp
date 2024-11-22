@@ -3,47 +3,47 @@
 // Written by Cosmin G. Petra, petra1@llnl.gov.
 // LLNL-CODE-742473. All rights reserved.
 //
-// This file is part of HiOp. For details, see https://github.com/LLNL/hiop. HiOp 
-// is released under the BSD 3-clause license (https://opensource.org/licenses/BSD-3-Clause). 
+// This file is part of HiOp. For details, see https://github.com/LLNL/hiop. HiOp
+// is released under the BSD 3-clause license (https://opensource.org/licenses/BSD-3-Clause).
 // Please also read “Additional BSD Notice” below.
 //
-// Redistribution and use in source and binary forms, with or without modification, 
+// Redistribution and use in source and binary forms, with or without modification,
 // are permitted provided that the following conditions are met:
-// i. Redistributions of source code must retain the above copyright notice, this list 
+// i. Redistributions of source code must retain the above copyright notice, this list
 // of conditions and the disclaimer below.
-// ii. Redistributions in binary form must reproduce the above copyright notice, 
-// this list of conditions and the disclaimer (as noted below) in the documentation and/or 
+// ii. Redistributions in binary form must reproduce the above copyright notice,
+// this list of conditions and the disclaimer (as noted below) in the documentation and/or
 // other materials provided with the distribution.
-// iii. Neither the name of the LLNS/LLNL nor the names of its contributors may be used to 
-// endorse or promote products derived from this software without specific prior written 
+// iii. Neither the name of the LLNS/LLNL nor the names of its contributors may be used to
+// endorse or promote products derived from this software without specific prior written
 // permission.
 //
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY 
-// EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES 
-// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT 
-// SHALL LAWRENCE LIVERMORE NATIONAL SECURITY, LLC, THE U.S. DEPARTMENT OF ENERGY OR 
-// CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
-// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS 
-// OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED 
-// AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT 
-// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, 
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY
+// EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT
+// SHALL LAWRENCE LIVERMORE NATIONAL SECURITY, LLC, THE U.S. DEPARTMENT OF ENERGY OR
+// CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+// OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED
+// AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
 // EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 //
 // Additional BSD Notice
-// 1. This notice is required to be provided under our contract with the U.S. Department 
-// of Energy (DOE). This work was produced at Lawrence Livermore National Laboratory under 
+// 1. This notice is required to be provided under our contract with the U.S. Department
+// of Energy (DOE). This work was produced at Lawrence Livermore National Laboratory under
 // Contract No. DE-AC52-07NA27344 with the DOE.
-// 2. Neither the United States Government nor Lawrence Livermore National Security, LLC 
-// nor any of their employees, makes any warranty, express or implied, or assumes any 
-// liability or responsibility for the accuracy, completeness, or usefulness of any 
+// 2. Neither the United States Government nor Lawrence Livermore National Security, LLC
+// nor any of their employees, makes any warranty, express or implied, or assumes any
+// liability or responsibility for the accuracy, completeness, or usefulness of any
 // information, apparatus, product, or process disclosed, or represents that its use would
 // not infringe privately-owned rights.
-// 3. Also, reference herein to any specific commercial products, process, or services by 
-// trade name, trademark, manufacturer or otherwise does not necessarily constitute or 
-// imply its endorsement, recommendation, or favoring by the United States Government or 
-// Lawrence Livermore National Security, LLC. The views and opinions of authors expressed 
-// herein do not necessarily state or reflect those of the United States Government or 
-// Lawrence Livermore National Security, LLC, and shall not be used for advertising or 
+// 3. Also, reference herein to any specific commercial products, process, or services by
+// trade name, trademark, manufacturer or otherwise does not necessarily constitute or
+// imply its endorsement, recommendation, or favoring by the United States Government or
+// Lawrence Livermore National Security, LLC. The views and opinions of authors expressed
+// herein do not necessarily state or reflect those of the United States Government or
+// Lawrence Livermore National Security, LLC, and shall not be used for advertising or
 // product endorsement purposes.
 
 #pragma once
@@ -58,14 +58,13 @@ namespace hiop
 
 //"forward" defs
 class hiopVectorPar;
-  
+
 class hiopVector
 {
 public:
   hiopVector()
-    : n_(0)
-  {
-  }
+      : n_(0)
+  {}
   virtual ~hiopVector() {};
 
   /**
@@ -78,7 +77,7 @@ public:
    *
    * @param[in] c - constant
    */
-  virtual void setToConstant( double c ) = 0;
+  virtual void setToConstant(double c) = 0;
 
   /**
    * @brief Set all elements to random values uniformly distributed between `minv` and `maxv`.
@@ -94,7 +93,7 @@ public:
    * @param[in] c - constant
    * @param[in] select - pattern selection
    */
-  virtual void setToConstant_w_patternSelect(double c, const hiopVector& select)=0;
+  virtual void setToConstant_w_patternSelect(double c, const hiopVector& select) = 0;
 
   /**
    * @brief Copy data from `vec` to this vector
@@ -111,7 +110,7 @@ public:
    *
    * @param[in] local_array - A raw array from which to copy into `this`
    *
-   * @pre `local_array` is allocated by same memory backend and in the same 
+   * @pre `local_array` is allocated by same memory backend and in the same
    * memory space used by `this`.
    * @pre `local_array` must be of same size as the data block of `this`.
    * @post Elements of `this` are overwritten with elements of `local_array`.
@@ -165,7 +164,6 @@ public:
    */
   virtual void copyFromStarting(int start_index, const hiopVector& src) = 0;
 
-
   /**
    * @brief Copy `nv` elements from `start_index_in_v` at array `v` to this vector
    *
@@ -189,18 +187,18 @@ public:
    * @param[in] vsrc - the source vector from which to copy into `this`
    *
    * @pre `this` and source vector should have the same size.
-   * @pre `this` and source vector should have the same MPI distributions (and, 
+   * @pre `this` and source vector should have the same MPI distributions (and,
    * hence, same number of local elements) when applicable.
    */
   virtual void copy_from_vectorpar(const hiopVectorPar& vsrc) = 0;
 
   /**
-   * @brief Copy from src the elements specified by the indices in index_in_src. 
+   * @brief Copy from src the elements specified by the indices in index_in_src.
    *
    * @param[in] src - the source vector from which to copy into `this`
    * @param[in] index_in_src - position in the source vector
    *
-   * @pre All vectors must reside in the same memory space. 
+   * @pre All vectors must reside in the same memory space.
    * @pre Size of src must be greater or equal than size of this
    * @pre Size of index_in_src must be equal to size of this
    * @pre Elements of index_in_src must be valid (zero-based) indexes in src
@@ -208,12 +206,12 @@ public:
   virtual void copy_from_indexes(const hiopVector& src, const hiopVectorInt& index_in_src) = 0;
 
   /**
-   * @brief Copy from src the elements specified by the indices in index_in_src. 
+   * @brief Copy from src the elements specified by the indices in index_in_src.
    *
    * @param[in] src - the raw array from which to copy into `this`
    * @param[in] index_in_src - position in the source vector
    *
-   * @pre All vectors and arrays must reside in the same memory space. 
+   * @pre All vectors and arrays must reside in the same memory space.
    * @pre Size of src must be greater or equal than size of this
    * @pre Size of index_in_src must be equal to size of this
    * @pre Elements of index_in_src must be valid (zero-based) indexes in src
@@ -228,9 +226,9 @@ public:
    * @param[in] v - the source vector
    * @param[in] start_idx_src - position in `v` from where to copy
    *
-   * @pre Elements are copied into 'this' till the end of the 'this' is reached, more exactly a number 
+   * @pre Elements are copied into 'this' till the end of the 'this' is reached, more exactly a number
    * of lenght(this) - start_idx_dest elements.
-   * @pre The method expects that in 'v' there are at least as many elements starting 
+   * @pre The method expects that in 'v' there are at least as many elements starting
    * 'start_idx_src' as 'this' has starting at start_idx_dest, or in other words,
    * length(this) - start_idx_dest <= length(v) - start_idx_src
    */
@@ -255,7 +253,7 @@ public:
    * Host-device memory transfer will occur for device implementations.
    *
    * @pre `this` and destination vector should have the same size.
-   * @pre `this` and destination vector should have the same MPI distributions (and, 
+   * @pre `this` and destination vector should have the same MPI distributions (and,
    * hence, same number of local elements) when applicable.
    */
   virtual void copy_to_vectorpar(hiopVectorPar& vdest) const = 0;
@@ -294,9 +292,7 @@ public:
    * @pre `ix` and `this` must have same partitioning.
    */
   /// @brief Copy the entries in 'this' where corresponding 'ix' is nonzero, to v starting at start_index in 'v'.
-  virtual void copyToStartingAt_w_pattern(hiopVector& vec,
-                                          index_type start_index_in_dest,
-                                          const hiopVector& ix) const = 0;
+  virtual void copyToStartingAt_w_pattern(hiopVector& vec, index_type start_index_in_dest, const hiopVector& ix) const = 0;
 
   /**
    * @brief copy 'c' and `d` into `this`, according to the map 'c_map` and `d_map`, respectively.
@@ -310,9 +306,9 @@ public:
    * @pre the size of `this` = the size of `c` + the size of `d`.
    * @pre `c_map` \Union `d_map` = {0, ..., size_of_this_vec-1}
    */
-  virtual void copy_from_two_vec_w_pattern(const hiopVector& c, 
-                                           const hiopVectorInt& c_map, 
-                                           const hiopVector& d, 
+  virtual void copy_from_two_vec_w_pattern(const hiopVector& c,
+                                           const hiopVectorInt& c_map,
+                                           const hiopVector& d,
                                            const hiopVectorInt& d_map) = 0;
 
   /**
@@ -326,16 +322,16 @@ public:
    * @pre the size of `this` = the size of `c` + the size of `d`.
    * @pre `c_map` \Union `d_map` = {0, ..., size_of_this_vec-1}
    */
-  virtual void copy_to_two_vec_w_pattern(hiopVector& c, 
-                                         const hiopVectorInt& c_map, 
-                                         hiopVector& d, 
+  virtual void copy_to_two_vec_w_pattern(hiopVector& c,
+                                         const hiopVectorInt& c_map,
+                                         hiopVector& d,
                                          const hiopVectorInt& d_map) const = 0;
 
   /**
    * @brief Copy elements of `this` vector to `dest` with offsets.
    *
-   * Copy `this` (source) starting at `start_idx_in_src` to `dest` 
-   * starting at index 'int start_idx_dest'. If num_elems>=0, 'num_elems' will be copied; 
+   * Copy `this` (source) starting at `start_idx_in_src` to `dest`
+   * starting at index 'int start_idx_dest'. If num_elems>=0, 'num_elems' will be copied;
    *
    * @param[in] start_idx_in_src - position in `this` from where to copy
    * @param[out] dest - destination vector to where to copy vector data
@@ -352,13 +348,13 @@ public:
   virtual void startingAtCopyToStartingAt(index_type start_idx_in_src,
                                           hiopVector& dest,
                                           index_type start_idx_dest,
-                                          size_type num_elems=-1) const = 0;
+                                          size_type num_elems = -1) const = 0;
 
   /**
    * @brief Copy elements of `this` vector to `dest` with offsets.
    *
-   * Copy `this` (source) starting at `start_idx_in_src` to `dest` 
-   * starting at index 'int start_idx_dest'. If num_elems>=0, 'num_elems' will be copied; 
+   * Copy `this` (source) starting at `start_idx_in_src` to `dest`
+   * starting at index 'int start_idx_dest'. If num_elems>=0, 'num_elems' will be copied;
    *
    * @param[in] start_idx_in_src - position in `this` from where to copy
    * @param[out] dest - destination vector to where to copy vector data
@@ -377,7 +373,7 @@ public:
                                                     hiopVector& dest,
                                                     index_type start_idx_dest,
                                                     const hiopVector& selec_dest,
-                                                    size_type num_elems=-1) const = 0;
+                                                    size_type num_elems = -1) const = 0;
 
   /**
    * @brief L2 vector norm.
@@ -424,10 +420,10 @@ public:
    * @pre  `this` and `vec` have same partitioning.
    * @post `vec` is not modified
    */
-  virtual void componentMult( const hiopVector& vec ) = 0;
+  virtual void componentMult(const hiopVector& vec) = 0;
 
   /**
-   * @brief Divide `this` vector elemenwise in-place by `vec`. 
+   * @brief Divide `this` vector elemenwise in-place by `vec`.
    *
    * @param[in] vec - input vector
    *
@@ -435,11 +431,11 @@ public:
    * @pre vec[i] != 0 forall i
    * @post `vec` is not modified
    */
-  virtual void componentDiv ( const hiopVector& vec ) = 0;
+  virtual void componentDiv(const hiopVector& vec) = 0;
 
   /**
    * @brief Divide `this` vector elemenwise in-place by `vec`
-   * with pattern selection. 
+   * with pattern selection.
    *
    * @param[in] vec - input vector
    * @param[in] select - pattern selection
@@ -501,7 +497,7 @@ public:
   virtual void component_sqrt() = 0;
 
   /**
-   * @brief Scale `this` vector by `c` 
+   * @brief Scale `this` vector by `c`
    *
    * @param[in] c - scaling factor
    */
@@ -521,7 +517,7 @@ public:
   virtual void axpy(double alpha, const hiopVector& xvec) = 0;
 
   /**
-   * @brief Implementation of AXPY kernel, for selected entries. 
+   * @brief Implementation of AXPY kernel, for selected entries.
    * this[i] += alpha * x[i] for all i where select[i] == 1.0;
    *
    * @param[in] alpha - scaling factor
@@ -538,7 +534,7 @@ public:
   /**
    * @brief Performs axpy, this += alpha*x, on the indexes in this specified by i.
    *
-   * @param[in] alpha - scaling factor 
+   * @param[in] alpha - scaling factor
    * @param[in] xvec - vector of doubles to be axpy-ed to this
    *  (size equal to size of i and less than or equal to size of this)
    * @param[in] i - vector of indexes in this to which the axpy operation is performed
@@ -547,25 +543,25 @@ public:
    * @pre The entries of i must be valid (zero-based) indexes in this
    */
   virtual void axpy(double alpha, const hiopVector& xvec, const hiopVectorInt& i) = 0;
-  
+
   /**
    * @brief this[i] += alpha*x[i]*z[i] forall i
    *
    * @param[in] alpha - scaling factor
-   * @param[in] xvec - vector of doubles to be axzpy-ed to this 
-   * @param[in] zvec - vector of doubles to be axzpy-ed to this 
+   * @param[in] xvec - vector of doubles to be axzpy-ed to this
+   * @param[in] zvec - vector of doubles to be axzpy-ed to this
    *
    * @pre `this`, `xvec` and `zvec` have same partitioning.
    * @post `xvec` and `zvec` are not modified
    */
-  virtual void axzpy (double alpha, const hiopVector& xvec, const hiopVector& zvec) = 0;
+  virtual void axzpy(double alpha, const hiopVector& xvec, const hiopVector& zvec) = 0;
 
   /**
    * @brief this[i] += alpha*x[i]/z[i] forall i
    *
    * @param[in] alpha - scaling factor
-   * @param[in] xvec - vector of doubles to be axdzpy-ed to this 
-   * @param[in] zvec - vector of doubles to be axdzpy-ed to this 
+   * @param[in] xvec - vector of doubles to be axdzpy-ed to this
+   * @param[in] zvec - vector of doubles to be axdzpy-ed to this
    *
    * @pre `this`, `xvec` and `zvec` have same partitioning.
    * @pre zvec[i] != 0 forall i
@@ -577,18 +573,15 @@ public:
    * @brief this[i] += alpha*x[i]/z[i] forall i with pattern selection
    *
    * @param[in] alpha - scaling factor
-   * @param[in] xvec - vector of doubles to be axdzpy-ed to this 
-   * @param[in] zvec - vector of doubles to be axdzpy-ed to this 
+   * @param[in] xvec - vector of doubles to be axdzpy-ed to this
+   * @param[in] zvec - vector of doubles to be axdzpy-ed to this
    * @param[in] select - pattern selection
    *
    * @pre `this`, `xvec`, `zvec` and `select` have same partitioning.
    * @pre zvec[i] != 0 when select[i] = 1
    * @post `xvec`, `zvec` and `select` are not modified
    */
-  virtual void axdzpy_w_pattern(double alpha,
-                                const hiopVector& xvec,
-                                const hiopVector& zvec,
-                                const hiopVector& select) = 0;
+  virtual void axdzpy_w_pattern(double alpha, const hiopVector& xvec, const hiopVector& zvec, const hiopVector& select) = 0;
 
   /**
    * @brief this[i] += c forall i
@@ -670,7 +663,7 @@ public:
 
   /**
    * @brief Linear damping term
-   * Computes the log barrier's linear damping term of the Filter-IPM method of 
+   * Computes the log barrier's linear damping term of the Filter-IPM method of
    * WaectherBiegler (see paper, section 3.7).
    * Essentially compute  kappa_d*mu* \sum { this[i] | ixleft[i]==1 and ixright[i]==0 }
    *
@@ -692,14 +685,14 @@ public:
 
   /**
    * @brief add linear damping term
-   * Performs `this[i] = alpha*this[i] + sign*ct` where sign=1 when EXACTLY one of 
-   * ixleft[i] and ixright[i] is 1.0 and sign=0 otherwise. 
+   * Performs `this[i] = alpha*this[i] + sign*ct` where sign=1 when EXACTLY one of
+   * ixleft[i] and ixright[i] is 1.0 and sign=0 otherwise.
    *
    * Supports distributed/MPI vectors, but performs only elementwise operations and do not
    * require communication.
    *
    * This method is used to add gradient contributions from the (linear) damping term used
-   * to handle unbounded problems. The damping terms are used for variables that are 
+   * to handle unbounded problems. The damping terms are used for variables that are
    * bounded on one side only.
    *
    * @param[in] ixleft - pattern selection 1
@@ -771,7 +764,7 @@ public:
    *
    * @warning This is local method only!
    */
-  virtual bool projectIntoBounds_local(const hiopVector& xlo, 
+  virtual bool projectIntoBounds_local(const hiopVector& xlo,
                                        const hiopVector& ixl,
                                        const hiopVector& xup,
                                        const hiopVector& ixu,
@@ -844,11 +837,8 @@ public:
    * @post `xvec` and `ixvec` are not modified
    *
    * @note Implementation probably inefficient.
-   */  
-  virtual void adjustDuals_plh(const hiopVector& xvec, 
-                               const hiopVector& ixvec,
-                               const double& mu,
-                               const double& kappa) = 0;
+   */
+  virtual void adjustDuals_plh(const hiopVector& xvec, const hiopVector& ixvec, const double& mu, const double& kappa) = 0;
 
   /**
    * @brief Check if all elements of the vector are zero
@@ -885,13 +875,13 @@ public:
    * @warning This is local method only!
    */
   virtual bool isfinite_local() const = 0;
-  
+
   /**
    * @brief Prints vector data to a file in Matlab format.
    *
    * @pre Vector data was moved from the memory space to the host mirror.
    */
-  virtual void print(FILE* file=nullptr, const char* message=nullptr, int max_elems=-1, int rank=-1) const = 0;
+  virtual void print(FILE* file = nullptr, const char* message = nullptr, int max_elems = -1, int rank = -1) const = 0;
 
   /**
    * @brief allocates a vector that mirrors this, but doesn't copy the values
@@ -901,7 +891,7 @@ public:
   /**
    * @brief allocates a vector that mirrors this, and copies the values
    */
-  virtual hiopVector* new_copy () const = 0;
+  virtual hiopVector* new_copy() const = 0;
 
   /**
    * @brief return the global size of `this` vector
@@ -932,7 +922,7 @@ public:
    * @brief accessor to the local data of `this` vector
    */
   virtual const double* local_data_host_const() const = 0;
-  
+
   /**
    * @brief get the number of values that are less than the given tolerance 'val'.
    *
@@ -941,7 +931,7 @@ public:
    * @post `val` is not modified
    * @todo: add unit test
    */
-  virtual size_type numOfElemsLessThan(const double &val) const = 0;
+  virtual size_type numOfElemsLessThan(const double& val) const = 0;
 
   /**
    * @brief get the number of values whose absolute value are less than the given tolerance 'val'.
@@ -951,10 +941,10 @@ public:
    * @post `val` is not modified
    * @todo: add unit test
    */
-  virtual size_type numOfElemsAbsLessThan(const double &val) const = 0;  
+  virtual size_type numOfElemsAbsLessThan(const double& val) const = 0;
 
   /**
-   * @brief set enum-type array 'arr', starting at `start` and ending at `end`, 
+   * @brief set enum-type array 'arr', starting at `start` and ending at `end`,
    * to the values in array `arr_src` from 'start_src`
    *
    * @param[out] arr - array of used to define hiopInterfaceBase::NonlinearityType
@@ -969,14 +959,14 @@ public:
    * @post `arr_src` is not modified
    * @todo: add unit test
    */
-  virtual void set_array_from_to(hiopInterfaceBase::NonlinearityType* arr, 
-                                 const int start, 
-                                 const int end, 
+  virtual void set_array_from_to(hiopInterfaceBase::NonlinearityType* arr,
+                                 const int start,
+                                 const int end,
                                  const hiopInterfaceBase::NonlinearityType* arr_src,
                                  const int start_src) const = 0;
 
   /**
-   * @brief set enum-type array 'arr', starting at `start` and ending at `end`, 
+   * @brief set enum-type array 'arr', starting at `start` and ending at `end`,
    * to the values in array `arr_src` from 'start_src`
    *
    * @param[out] arr - array of used to define hiopInterfaceBase::NonlinearityType
@@ -989,9 +979,9 @@ public:
    * @post `arr_src` is not modified
    * @todo: add unit test
    */
-  virtual void set_array_from_to(hiopInterfaceBase::NonlinearityType* arr, 
-                                 const int start, 
-                                 const int end, 
+  virtual void set_array_from_to(hiopInterfaceBase::NonlinearityType* arr,
+                                 const int start,
+                                 const int end,
                                  const hiopInterfaceBase::NonlinearityType arr_src) const = 0;
 
   /**
@@ -1003,15 +993,13 @@ public:
   virtual bool is_equal(const hiopVector& vec) const = 0;
 
 protected:
-  size_type n_; //we assume sequential data
+  size_type n_;  // we assume sequential data
 protected:
   /**
    * @brief for internal use only; derived classes may use copy constructor and always allocate data_
    */
   hiopVector(const hiopVector& v)
-    : n_(v.n_)
-  {
-  };
+      : n_(v.n_) {};
 };
 
-}
+}  // namespace hiop

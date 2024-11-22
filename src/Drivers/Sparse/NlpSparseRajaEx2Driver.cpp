@@ -14,7 +14,7 @@ using namespace hiop;
 static bool self_check(size_type n, double obj_value, const bool inertia_free);
 
 static bool parse_arguments(int argc,
-                            char **argv,
+                            char** argv,
                             size_type& n,
                             bool& self_check,
                             bool& inertia_free,
@@ -33,113 +33,112 @@ static bool parse_arguments(int argc,
   use_ginkgo_cuda = false;
   use_ginkgo_hip = false;
   switch(argc) {
-  case 1:
-    //no arguments
-    return true;
-    break;
-  case 5: //4 arguments
+    case 1:
+      // no arguments
+      return true;
+      break;
+    case 5:  // 4 arguments
     {
       if(std::string(argv[4]) == "-selfcheck") {
-        self_check = true;    
+        self_check = true;
       } else if(std::string(argv[4]) == "-inertiafree") {
         inertia_free = true;
       } else if(std::string(argv[4]) == "-resolve_cuda_glu") {
         use_resolve_cuda_glu = true;
       } else if(std::string(argv[4]) == "-resolve_cuda_rf") {
         use_resolve_cuda_rf = true;
-      } else if(std::string(argv[4]) == "-ginkgo"){
+      } else if(std::string(argv[4]) == "-ginkgo") {
         use_ginkgo = true;
-      } else if(std::string(argv[4]) == "-ginkgo_cuda"){
+      } else if(std::string(argv[4]) == "-ginkgo_cuda") {
         use_ginkgo = true;
         use_ginkgo_cuda = true;
-      } else if(std::string(argv[4]) == "-ginkgo_hip"){
+      } else if(std::string(argv[4]) == "-ginkgo_hip") {
         use_ginkgo = true;
         use_ginkgo_hip = true;
       } else {
         n = std::atoi(argv[4]);
-        if(n<=0) {
+        if(n <= 0) {
           return false;
         }
       }
     }
-  case 4: //3 arguments
+    case 4:  // 3 arguments
     {
       if(std::string(argv[3]) == "-selfcheck") {
-        self_check = true;    
+        self_check = true;
       } else if(std::string(argv[3]) == "-inertiafree") {
         inertia_free = true;
       } else if(std::string(argv[3]) == "-resolve_cuda_glu") {
         use_resolve_cuda_glu = true;
       } else if(std::string(argv[3]) == "-resolve_cuda_rf") {
         use_resolve_cuda_rf = true;
-      } else if(std::string(argv[3]) == "-ginkgo"){
+      } else if(std::string(argv[3]) == "-ginkgo") {
         use_ginkgo = true;
-      } else if(std::string(argv[3]) == "-ginkgo_cuda"){
+      } else if(std::string(argv[3]) == "-ginkgo_cuda") {
         use_ginkgo = true;
         use_ginkgo_cuda = true;
-      } else if(std::string(argv[3]) == "-ginkgo_hip"){
+      } else if(std::string(argv[3]) == "-ginkgo_hip") {
         use_ginkgo = true;
         use_ginkgo_hip = true;
       } else {
         n = std::atoi(argv[3]);
-        if(n<=0) {
+        if(n <= 0) {
           return false;
         }
       }
     }
-    case 3: //2 arguments
+    case 3:  // 2 arguments
     {
       if(std::string(argv[2]) == "-selfcheck") {
-        self_check = true;    
+        self_check = true;
       } else if(std::string(argv[2]) == "-inertiafree") {
         inertia_free = true;
       } else if(std::string(argv[2]) == "-resolve_cuda_glu") {
         use_resolve_cuda_glu = true;
       } else if(std::string(argv[2]) == "-resolve_cuda_rf") {
         use_resolve_cuda_rf = true;
-      } else if(std::string(argv[2]) == "-ginkgo"){
+      } else if(std::string(argv[2]) == "-ginkgo") {
         use_ginkgo = true;
-      } else if(std::string(argv[2]) == "-ginkgo_cuda"){
+      } else if(std::string(argv[2]) == "-ginkgo_cuda") {
         use_ginkgo = true;
         use_ginkgo_cuda = true;
-      } else if(std::string(argv[2]) == "-ginkgo_hip"){
+      } else if(std::string(argv[2]) == "-ginkgo_hip") {
         use_ginkgo = true;
         use_ginkgo_hip = true;
       } else {
         n = std::atoi(argv[2]);
-        if(n<=0) {
+        if(n <= 0) {
           return false;
         }
       }
     }
-  case 2: //1 argument
+    case 2:  // 1 argument
     {
       if(std::string(argv[1]) == "-selfcheck") {
-        self_check = true;    
+        self_check = true;
       } else if(std::string(argv[1]) == "-inertiafree") {
         inertia_free = true;
       } else if(std::string(argv[1]) == "-resolve_cuda_glu") {
         use_resolve_cuda_glu = true;
       } else if(std::string(argv[1]) == "-resolve_cuda_rf") {
         use_resolve_cuda_rf = true;
-      } else if(std::string(argv[1]) == "-ginkgo"){
+      } else if(std::string(argv[1]) == "-ginkgo") {
         use_ginkgo = true;
-      } else if(std::string(argv[1]) == "-ginkgo_cuda"){
+      } else if(std::string(argv[1]) == "-ginkgo_cuda") {
         use_ginkgo = true;
         use_ginkgo_cuda = true;
-      } else if(std::string(argv[1]) == "-ginkgo_hip"){
+      } else if(std::string(argv[1]) == "-ginkgo_hip") {
         use_ginkgo = true;
         use_ginkgo_hip = true;
       } else {
         n = std::atoi(argv[1]);
-        if(n<=0) {
+        if(n <= 0) {
           return false;
         }
       }
-    }
-    break;
-  default:
-    return false; // 4 or more arguments
+    } break;
+    default:
+      return false;  // 4 or more arguments
   }
 
 // Currently only CUDA backend for ReSolve is available. Unselect ReSolve if CUDA is not enabled
@@ -195,24 +194,30 @@ static void usage(const char* exeName)
   printf("Arguments:\n");
   printf("  'problem_size': number of decision variables [optional, default is 50]\n");
   printf("  '-inertiafree': indicate if inertia free approach should be used [optional]\n");
-  printf("  '-selfcheck': compares the optimal objective with a previously saved value for the "
-         "problem specified by 'problem_size'. [optional]\n");
-  printf("  '-use_resolve_cuda_glu': use ReSolve linear solver with KLU factorization and cusolverGLU refactorization [optional]\n");
-  printf("  '-use_resolve_cuda_rf' : use ReSolve linear solver with KLU factorization and cusolverRf  refactorization [optional]\n");
+  printf(
+      "  '-selfcheck': compares the optimal objective with a previously saved value for the "
+      "problem specified by 'problem_size'. [optional]\n");
+  printf(
+      "  '-use_resolve_cuda_glu': use ReSolve linear solver with KLU factorization and cusolverGLU refactorization "
+      "[optional]\n");
+  printf(
+      "  '-use_resolve_cuda_rf' : use ReSolve linear solver with KLU factorization and cusolverRf  refactorization "
+      "[optional]\n");
   printf("  '-ginkgo': use GINKGO linear solver [optional]\n");
 }
 
-
-int main(int argc, char **argv)
+int main(int argc, char** argv)
 {
-  int rank=0;
+  int rank = 0;
 #ifdef HIOP_USE_MPI
   MPI_Init(&argc, &argv);
   int comm_size;
-  int ierr = MPI_Comm_size(MPI_COMM_WORLD, &comm_size); assert(MPI_SUCCESS==ierr);
+  int ierr = MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
+  assert(MPI_SUCCESS == ierr);
   if(comm_size != 1) {
-    printf("[error] driver detected more than one rank but the driver should be run "
-           "in serial only; will exit\n");
+    printf(
+        "[error] driver detected more than one rank but the driver should be run "
+        "in serial only; will exit\n");
     MPI_Finalize();
     return 1;
   }
@@ -229,11 +234,20 @@ int main(int argc, char **argv)
   size_type n = 50;
   bool inertia_free = false;
   bool use_resolve_cuda_glu = false;
-  bool use_resolve_cuda_rf  = false;
-  bool use_ginkgo      = false;
+  bool use_resolve_cuda_rf = false;
+  bool use_ginkgo = false;
   bool use_ginkgo_cuda = false;
-  bool use_ginkgo_hip  = false;
-  if(!parse_arguments(argc, argv, n, selfCheck, inertia_free, use_resolve_cuda_glu, use_resolve_cuda_rf, use_ginkgo, use_ginkgo_cuda, use_ginkgo_hip)) { 
+  bool use_ginkgo_hip = false;
+  if(!parse_arguments(argc,
+                      argv,
+                      n,
+                      selfCheck,
+                      inertia_free,
+                      use_resolve_cuda_glu,
+                      use_resolve_cuda_rf,
+                      use_ginkgo,
+                      use_ginkgo_cuda,
+                      use_ginkgo_hip)) {
     usage(argv[0]);
 #ifdef HIOP_USE_MPI
     MPI_Finalize();
@@ -246,7 +260,7 @@ int main(int argc, char **argv)
   bool rankdefic_Jac_ineq = true;
   double scal_neg_obj = 0.1;
 
-  //first test
+  // first test
   {
     SparseRajaEx2 nlp_interface(mem_space, n, convex_obj, rankdefic_Jac_eq, rankdefic_Jac_ineq, scal_neg_obj);
     hiopNlpSparse nlp(nlp_interface);
@@ -254,8 +268,8 @@ int main(int argc, char **argv)
     nlp.options->SetStringValue("KKTLinsys", "xdycyd");
 
     // only support cusolverLU right now, 2023.02.28
-    //lsq initialization of the duals fails for this example since the Jacobian is rank deficient
-    //use zero initialization
+    // lsq initialization of the duals fails for this example since the Jacobian is rank deficient
+    // use zero initialization
     nlp.options->SetStringValue("linear_solver_sparse", "resolve");
     if(use_resolve_cuda_rf) {
       nlp.options->SetStringValue("resolve_refactorization", "rf");
@@ -269,11 +283,11 @@ int main(int argc, char **argv)
 
     hiopAlgFilterIPMNewton solver(&nlp);
     hiopSolveStatus status = solver.run();
-    
+
     double obj_value = solver.getObjective();
-    
-    if(status<0) {
-      if(rank==0) {
+
+    if(status < 0) {
+      if(rank == 0) {
         printf("solver returned negative solve status: %d (with objective is %18.12e)\n", status, obj_value);
       }
 #ifdef HIOP_USE_MPI
@@ -282,7 +296,7 @@ int main(int argc, char **argv)
       return -1;
     }
 
-    //this is used for "regression" testing when the driver is called with -selfcheck
+    // this is used for "regression" testing when the driver is called with -selfcheck
     if(selfCheck) {
       if(!self_check(n, obj_value, inertia_free)) {
 #ifdef HIOP_USE_MPI
@@ -291,13 +305,12 @@ int main(int argc, char **argv)
         return -1;
       }
     } else {
-      if(rank==0) {
+      if(rank == 0) {
         printf("Optimal objective: %22.14e. Solver status: %d\n", obj_value, status);
       }
     }
   }
-  
-  
+
 #ifdef HIOP_USE_MPI
   MPI_Finalize();
 #endif
@@ -305,31 +318,36 @@ int main(int argc, char **argv)
   return 0;
 }
 
-
 static bool self_check(size_type n, double objval, const bool inertia_free)
 {
-#define num_n_saved 3 //keep this is sync with n_saved and objval_saved
+#define num_n_saved 3  // keep this is sync with n_saved and objval_saved
   const size_type n_saved[] = {50, 500, 10000};
-  const double objval_saved[] = { 8.7754974e+00,  6.4322371e+01,  1.2369786e+03};
+  const double objval_saved[] = {8.7754974e+00, 6.4322371e+01, 1.2369786e+03};
 
 #define relerr 1e-6
-  bool found=false;
-  for(int it=0; it<num_n_saved; it++) {
-    if(n_saved[it]==n) {
-      found=true;
-      if(fabs( (objval_saved[it]-objval)/(1+objval_saved[it])) > relerr) {
-        printf("selfcheck failure. Objective (%18.12e) does not agree (%d digits) with the saved value (%18.12e) for n=%d.\n",
-               objval, -(int)log10(relerr), objval_saved[it], n);
+  bool found = false;
+  for(int it = 0; it < num_n_saved; it++) {
+    if(n_saved[it] == n) {
+      found = true;
+      if(fabs((objval_saved[it] - objval) / (1 + objval_saved[it])) > relerr) {
+        printf(
+            "selfcheck failure. Objective (%18.12e) does not agree (%d digits) with the saved value (%18.12e) for n=%d.\n",
+            objval,
+            -(int)log10(relerr),
+            objval_saved[it],
+            n);
         return false;
       } else {
-        printf("selfcheck success (%d digits)\n",  -(int)log10(relerr));
+        printf("selfcheck success (%d digits)\n", -(int)log10(relerr));
       }
       break;
     }
   }
 
   if(!found) {
-    printf("selfcheck: driver does not have the objective for n=%d saved. BTW, obj=%18.12e was obtained for this n.\n", n, objval);
+    printf("selfcheck: driver does not have the objective for n=%d saved. BTW, obj=%18.12e was obtained for this n.\n",
+           n,
+           objval);
     return false;
   }
 

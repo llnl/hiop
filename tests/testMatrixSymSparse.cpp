@@ -96,24 +96,20 @@ void initializeSymSparseMat(hiop::hiopMatrixSparse* mat)
   auto iRow_idx = 0;
   auto jCol_idx = 0;
 
-  for (auto i = 0; i < num_entries; i++)
-  {
-    if(i % density == 0)
-    {
+  for(auto i = 0; i < num_entries; i++) {
+    if(i % density == 0) {
       iRow[nonZerosUsed] = iRow_idx;
       jCol[nonZerosUsed] = jCol_idx;
       val[nonZerosUsed] = i;
       nonZerosUsed++;
-      if(nnz == nonZerosUsed)
-      {
+      if(nnz == nonZerosUsed) {
         break;
-      } 
+      }
     }
 
     jCol_idx++;
     // If we are at the end of the current row
-    if (jCol_idx % n == 0)
-    {
+    if(jCol_idx % n == 0) {
       iRow_idx++;
       jCol_idx = iRow_idx;
     }
@@ -122,20 +118,23 @@ void initializeSymSparseMat(hiop::hiopMatrixSparse* mat)
 }
 
 #ifdef HIOP_USE_RAJA
-//TODO: this is a quick hack. Will need to modify this class to be aware of the instantiated
-// template parameters for vector and matrix RAJA classes. Likely a better approach would be
-// to revise the tests to try out multiple configurations of the memory backends and execution
-// policies for RAJA dense matrix.
+// TODO: this is a quick hack. Will need to modify this class to be aware of the instantiated
+//  template parameters for vector and matrix RAJA classes. Likely a better approach would be
+//  to revise the tests to try out multiple configurations of the memory backends and execution
+//  policies for RAJA dense matrix.
 #if defined(HIOP_USE_CUDA)
 #include <ExecPoliciesRajaCudaImpl.hpp>
-using hiopMatrixSymSparseTripletRajaT = hiop::hiopMatrixRajaSymSparseTriplet<hiop::MemBackendUmpire, hiop::ExecPolicyRajaCuda>;
+using hiopMatrixSymSparseTripletRajaT =
+    hiop::hiopMatrixRajaSymSparseTriplet<hiop::MemBackendUmpire, hiop::ExecPolicyRajaCuda>;
 #elif defined(HIOP_USE_HIP)
 #include <ExecPoliciesRajaHipImpl.hpp>
-using hiopMatrixSymSparseTripletRajaT = hiop::hiopMatrixRajaSymSparseTriplet<hiop::MemBackendUmpire, hiop::ExecPolicyRajaHip>;
+using hiopMatrixSymSparseTripletRajaT =
+    hiop::hiopMatrixRajaSymSparseTriplet<hiop::MemBackendUmpire, hiop::ExecPolicyRajaHip>;
 #else
-//#if !defined(HIOP_USE_CUDA) && !defined(HIOP_USE_HIP)
+// #if !defined(HIOP_USE_CUDA) && !defined(HIOP_USE_HIP)
 #include <ExecPoliciesRajaOmpImpl.hpp>
-using hiopMatrixSymSparseTripletRajaT = hiop::hiopMatrixRajaSymSparseTriplet<hiop::MemBackendUmpire, hiop::ExecPolicyRajaOmp>;
+using hiopMatrixSymSparseTripletRajaT =
+    hiop::hiopMatrixRajaSymSparseTriplet<hiop::MemBackendUmpire, hiop::ExecPolicyRajaOmp>;
 #endif
 
 /**
@@ -160,22 +159,18 @@ void initializeRajaSymSparseMat(hiop::hiopMatrixSparse* mat)
   auto iRow_idx = 0;
   auto jCol_idx = 0;
 
-  for (auto i = 0; i < num_entries; i++)
-  {
-    if (i % density == 0)
-    {
+  for(auto i = 0; i < num_entries; i++) {
+    if(i % density == 0) {
       iRow[nonZerosUsed] = iRow_idx;
       jCol[nonZerosUsed] = jCol_idx;
       val[nonZerosUsed] = i;
       nonZerosUsed++;
-      if (nonZerosUsed == nnz)
-        break;
+      if(nonZerosUsed == nnz) break;
     }
 
     jCol_idx++;
     // If we are at the end of the current row
-    if (jCol_idx % n == 0)
-    {
+    if(jCol_idx % n == 0) {
       iRow_idx++;
       jCol_idx = iRow_idx;
     }
@@ -205,7 +200,7 @@ int main(int argc, char** argv)
     std::cout << "\nTesting hiopMatrixSymSparseTriplet\n";
     hiop::tests::MatrixTestsSymSparseTriplet test;
     test.set_mem_space(mem_space);
-    
+
     // Establishing sparsity pattern and initializing Matrix
     local_ordinal_type entries_per_row = 5;
     local_ordinal_type nnz = M_global * entries_per_row;
@@ -214,13 +209,11 @@ int main(int argc, char** argv)
     hiop::hiopVectorPar vec_m_2(M_global);
     hiop::hiopMatrixDenseRowMajor mxm_dense(2 * M_global, 2 * M_global);
 
-    hiop::hiopMatrixSparse* m_sym = 
-      hiop::LinearAlgebraFactory::create_matrix_sym_sparse(mem_space, M_global, nnz);
+    hiop::hiopMatrixSparse* m_sym = hiop::LinearAlgebraFactory::create_matrix_sym_sparse(mem_space, M_global, nnz);
     initializeSymSparseMat(m_sym);
 
     local_ordinal_type nnz_m2 = m_sym->numberOfOffDiagNonzeros() + M_global;
-    hiop::hiopMatrixSparse* m2_sym = 
-      hiop::LinearAlgebraFactory::create_matrix_sym_sparse(mem_space, 2*M_global, nnz_m2);
+    hiop::hiopMatrixSparse* m2_sym = hiop::LinearAlgebraFactory::create_matrix_sym_sparse(mem_space, 2 * M_global, nnz_m2);
 
     fail += test.matrixTimesVec(*m_sym, vec_m, vec_m_2);
     fail += test.matrixAddUpperTriangleToSymDenseMatrixUpperTriangle(mxm_dense, *m_sym);
@@ -240,12 +233,12 @@ int main(int argc, char** argv)
     const std::string mem_space = "HOST";
 #else
     const std::string mem_space = "DEVICE";
-#endif    
-    std::cout << "\nTesting hiopMatrixRajaSymSparseTriplet mem_space=" << mem_space << "\n" ;
+#endif
+    std::cout << "\nTesting hiopMatrixRajaSymSparseTriplet mem_space=" << mem_space << "\n";
 
     hiop::tests::MatrixTestsRajaSymSparseTriplet test;
     test.set_mem_space(mem_space);
-    
+
     // Establishing sparsity pattern and initializing Matrix
     local_ordinal_type entries_per_row = 5;
     local_ordinal_type nnz = M_local * entries_per_row;
@@ -253,15 +246,13 @@ int main(int argc, char** argv)
     hiop::hiopVector* vec_m = hiop::LinearAlgebraFactory::create_vector(mem_space, M_global);
     hiop::hiopVector* vec_m_2 = hiop::LinearAlgebraFactory::create_vector(mem_space, M_global);
     hiop::hiopMatrixDense* mxm_dense =
-      hiop::LinearAlgebraFactory::create_matrix_dense(mem_space, 2*M_global, 2*M_global);
+        hiop::LinearAlgebraFactory::create_matrix_dense(mem_space, 2 * M_global, 2 * M_global);
 
-    hiop::hiopMatrixSparse* m_sym = 
-      hiop::LinearAlgebraFactory::create_matrix_sym_sparse(mem_space, M_local, nnz);
+    hiop::hiopMatrixSparse* m_sym = hiop::LinearAlgebraFactory::create_matrix_sym_sparse(mem_space, M_local, nnz);
     initializeRajaSymSparseMat(m_sym);
 
     local_ordinal_type nnz_m2 = m_sym->numberOfOffDiagNonzeros() + M_global;
-    hiop::hiopMatrixSparse* m2_sym = 
-      hiop::LinearAlgebraFactory::create_matrix_sym_sparse(mem_space, 2*M_global, nnz_m2);
+    hiop::hiopMatrixSparse* m2_sym = hiop::LinearAlgebraFactory::create_matrix_sym_sparse(mem_space, 2 * M_global, nnz_m2);
 
     fail += test.matrixTimesVec(*m_sym, *vec_m, *vec_m_2);
     fail += test.matrixAddUpperTriangleToSymDenseMatrixUpperTriangle(*mxm_dense, *m_sym);

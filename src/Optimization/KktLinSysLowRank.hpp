@@ -63,15 +63,15 @@ namespace hiop
 /**
  * @brief Encapsulates solves with the KKT system of IPM filter.
  *
- * This class is for problems where the Hessian of the Lagrangian is a or is approximated 
+ * This class is for problems where the Hessian of the Lagrangian is a or is approximated
  * by low-rank matrix plus a multiple of identity and the number of the constraints is not
- * too large. 
- * 
- * It works with Hessian being a HessianDiagPlusLowRank class and the constraints Jacobian 
- * being hiopMatrixDense. 
+ * too large.
  *
- * This class solves the XYcYd compression of the full KKT. See solveCompressed method 
- * for details on the approach used to solve the linear system. 
+ * It works with Hessian being a HessianDiagPlusLowRank class and the constraints Jacobian
+ * being hiopMatrixDense.
+ *
+ * This class solves the XYcYd compression of the full KKT. See solveCompressed method
+ * for details on the approach used to solve the linear system.
  */
 
 class KktLinSysLowRank : public hiopKKTLinSysCompressedXYcYd
@@ -82,15 +82,15 @@ public:
 
   /// @brief Updates the KKT system with new info at current iteration
   bool update(const hiopIterate* iter,
-	      const hiopVector* grad_f,
-	      const hiopMatrix* Jac_c,
+              const hiopVector* grad_f,
+              const hiopMatrix* Jac_c,
               const hiopMatrix* Jac_d,
-	      hiopMatrix* Hess)
+              hiopMatrix* Hess)
   {
     const hiopMatrixDense* Jac_c_ = dynamic_cast<const hiopMatrixDense*>(Jac_c);
     const hiopMatrixDense* Jac_d_ = dynamic_cast<const hiopMatrixDense*>(Jac_d);
     HessianDiagPlusRowRank* Hess_ = dynamic_cast<HessianDiagPlusRowRank*>(Hess);
-    if(Jac_c_==nullptr || Jac_d_==nullptr || Hess_==nullptr) {
+    if(Jac_c_ == nullptr || Jac_d_ == nullptr || Hess_ == nullptr) {
       assert(false);
       return false;
     }
@@ -99,10 +99,10 @@ public:
 
   /// @brief Updates the KKT system with new info at current iteration
   virtual bool update(const hiopIterate* iter,
-		      const hiopVector* grad_f,
-		      const hiopMatrixDense* Jac_c,
+                      const hiopVector* grad_f,
+                      const hiopMatrixDense* Jac_c,
                       const hiopMatrixDense* Jac_d,
-		      HessianDiagPlusRowRank* Hess);
+                      HessianDiagPlusRowRank* Hess);
 
   virtual bool build_kkt_matrix(const hiopPDPerturbation& pdreg)
   {
@@ -112,7 +112,7 @@ public:
 
   /**
    * Solves the compressed linear system, part of the KKT Linear System interface
-   * 
+   *
    * Solves the system corresponding to directions for x, yc, and yd, namely
    * [ H_BFGS + Dx   Jc^T  Jd^T   ] [ dx]   [ rx ]
    * [    Jc          0     0     ] [dyc] = [ ryc]
@@ -132,17 +132,18 @@ public:
                                hiopVector& dyc,
                                hiopVector& dyd);
 
-  //LAPACK wrappers
+  // LAPACK wrappers
   int solve(hiopMatrixDense& M, hiopVector& rhs);
   int solveWithRefin(hiopMatrixDense& M, hiopVector& rhs);
 #ifdef HIOP_DEEPCHECKS
-  static double solveError(const hiopMatrixDense& M,  const hiopVector& x, hiopVector& rhs);
+  static double solveError(const hiopMatrixDense& M, const hiopVector& x, hiopVector& rhs);
   double errorCompressedLinsys(const hiopVector& rx,
                                const hiopVector& ryc,
                                const hiopVector& ryd,
-			       const hiopVector& dx,
+                               const hiopVector& dx,
                                const hiopVector& dyc,
                                const hiopVector& dyd);
+
 protected:
   /// @brief perform y=beta*y+alpha*H*x without the log barrier term from H
   void HessianTimesVec_noLogBarrierTerm(double beta, hiopVector& y, double alpha, const hiopVector& x)
@@ -155,15 +156,15 @@ protected:
 
 private:
   /// The kxk reduced matrix
-  hiopMatrixDense* N_; 
+  hiopMatrixDense* N_;
 #ifdef HIOP_DEEPCHECKS
   /// A copy of the above to compute the residual
-  hiopMatrixDense* Nmat_; 
+  hiopMatrixDense* Nmat_;
 #endif
-  //internal buffers: k is usually 2 x quasi-Newton memory; n is the size of primal variable vector
-  hiopMatrixDense* kxn_mat_; 
+  // internal buffers: k is usually 2 x quasi-Newton memory; n is the size of primal variable vector
+  hiopMatrixDense* kxn_mat_;
   hiopVector* k_vec1_;
 };
-} //end namespace
+}  // namespace hiop
 
-#endif // HIOP_KKTLINSYSY_LOWRANK
+#endif  // HIOP_KKTLINSYSY_LOWRANK

@@ -57,27 +57,27 @@
 #include "hiopVector.hpp"
 
 #include <cmath>
-#include <cstring> //for memcpy
+#include <cstring>  //for memcpy
 #include <cstdio>
 #include <math.h>
 
 namespace hiop
 {
 
-/* 
-*  Specialized interface for feasibility restoration problem with sparse blocks in the Jacobian and Hessian.
-*/
+/*
+ *  Specialized interface for feasibility restoration problem with sparse blocks in the Jacobian and Hessian.
+ */
 hiopFRProbSparse::hiopFRProbSparse(hiopAlgFilterIPMBase& solver_base)
-  : solver_base_(solver_base), 
-    last_x_{nullptr}, 
-    last_d_{nullptr}
+    : solver_base_(solver_base),
+      last_x_{nullptr},
+      last_d_{nullptr}
 {
   nlp_base_ = dynamic_cast<hiopNlpSparse*>(solver_base.get_nlp());
   n_x_ = nlp_base_->n();
   m_eq_ = nlp_base_->m_eq();
   m_ineq_ = nlp_base_->m_ineq();
 
-  n_ = n_x_ + 2*m_eq_ + 2*m_ineq_;
+  n_ = n_x_ + 2 * m_eq_ + 2 * m_ineq_;
   m_ = m_eq_ + m_ineq_;
 
   pe_st_ = n_x_;
@@ -108,28 +108,26 @@ hiopFRProbSparse::hiopFRProbSparse(hiopAlgFilterIPMBase& solver_base)
   // nnz for sparse matrices;
   nnz_Jac_c_ = nlp_base_->get_nnz_Jaceq() + 2 * m_eq_;
   nnz_Jac_d_ = nlp_base_->get_nnz_Jacineq() + 2 * m_ineq_;
-  
+
   // not sure if Hess has diagonal terms, compute nnz_hess here
   // assuming hess is in upper_triangular form
   hiopMatrixSparse* Hess_base = dynamic_cast<hiopMatrixSparse*>(solver_base_.get_Hess_Lagr());
   nnz_Hess_Lag_ = n_x_ + Hess_base->numberOfOffDiagNonzeros();
-  
+
   Jac_cd_ = LinearAlgebraFactory::create_matrix_sparse(nlp_base_->options->GetString("mem_space"),
                                                        m_,
                                                        n_,
                                                        nnz_Jac_c_ + nnz_Jac_d_);
-  Hess_cd_ = LinearAlgebraFactory::create_matrix_sym_sparse(nlp_base_->options->GetString("mem_space"),
-                                                            n_,
-                                                            nnz_Hess_Lag_);
-  
+  Hess_cd_ = LinearAlgebraFactory::create_matrix_sym_sparse(nlp_base_->options->GetString("mem_space"), n_, nnz_Hess_Lag_);
+
   // set mu0 to be the maximun of the current barrier parameter mu and norm_inf(|c|)*/
-  theta_ref_ = solver_base_.get_resid()->get_theta(); //at current point, i.e., reference point
+  theta_ref_ = solver_base_.get_resid()->get_theta();  // at current point, i.e., reference point
   nrmInf_feas_ref_ = solver_base_.get_resid()->get_nrmInf_bar_feasib();
   mu_ = solver_base.get_mu();
   mu_ = std::max(mu_, nrmInf_feas_ref_);
 
   zeta_ = std::sqrt(mu_);
-  rho_ = 1000; // FIXME: make this as an user option
+  rho_ = 1000;  // FIXME: make this as an user option
 }
 
 hiopFRProbSparse::~hiopFRProbSparse()
@@ -154,8 +152,8 @@ hiopFRProbSparse::~hiopFRProbSparse()
   }
 }
 
-bool hiopFRProbSparse::get_MPI_comm(MPI_Comm& comm_out) 
-{ 
+bool hiopFRProbSparse::get_MPI_comm(MPI_Comm& comm_out)
+{
 #ifdef HIOP_USE_MPI
   comm_out = nlp_base_->get_comm();
 #else
@@ -180,7 +178,7 @@ bool hiopFRProbSparse::get_prob_info(NonlinearityType& type)
   return true;
 }
 
-bool hiopFRProbSparse::get_vars_info(const size_type& n, double *xlow, double* xupp, NonlinearityType* type)
+bool hiopFRProbSparse::get_vars_info(const size_type& n, double* xlow, double* xupp, NonlinearityType* type)
 {
   assert(n == n_);
 
@@ -190,11 +188,11 @@ bool hiopFRProbSparse::get_vars_info(const size_type& n, double *xlow, double* x
 
   // x, p and n
   wrk_primal_->setToConstant(0.0);
-  xl.copyToStarting(*wrk_primal_,0);
+  xl.copyToStarting(*wrk_primal_, 0);
   wrk_primal_->copyTo(xlow);
 
   wrk_primal_->setToConstant(1e+20);
-  xu.copyToStarting(*wrk_primal_,0);
+  xu.copyToStarting(*wrk_primal_, 0);
   wrk_primal_->copyTo(xupp);
 
   wrk_primal_->set_array_from_to(type, 0, n_x_, var_type, 0);
@@ -247,9 +245,9 @@ bool hiopFRProbSparse::eval_f(const size_type& n, const double* x, bool new_x, d
   assert(n == n_);
   obj_value = 0.;
 
-  wrk_primal_->copy_from_starting_at(x, 0, n_); // [x pe ne pi ni]
-  wrk_x_->copy_from_starting_at(x, 0, n_x_);    // [x]
-  
+  wrk_primal_->copy_from_starting_at(x, 0, n_);  // [x pe ne pi ni]
+  wrk_x_->copy_from_starting_at(x, 0, n_x_);     // [x]
+
   // rho*sum(p+n)
   obj_value += rho_ * (wrk_primal_->sum_local() - wrk_x_->sum_local());
 
@@ -261,7 +259,7 @@ bool hiopFRProbSparse::eval_f(const size_type& n, const double* x, bool new_x, d
   obj_value += 0.5 * zeta_ * wrk_db * wrk_db;
 
   // keep a copy of the original objective value
-  nlp_base_->eval_f(*wrk_x_, new_x, obj_base_); 
+  nlp_base_->eval_f(*wrk_x_, new_x, obj_base_);
 
   return true;
 }
@@ -279,7 +277,7 @@ bool hiopFRProbSparse::eval_grad_f(const size_type& n, const double* x, bool new
   wrk_x_->componentMult(*DR_);
   wrk_x_->componentMult(*DR_);
   wrk_x_->scale(zeta_);
-  wrk_x_->copyToStarting(*wrk_primal_,0);
+  wrk_x_->copyToStarting(*wrk_primal_, 0);
 
   wrk_primal_->copyTo(gradf);
 
@@ -297,11 +295,7 @@ bool hiopFRProbSparse::eval_cons(const size_type& n,
   return false;
 }
 
-bool hiopFRProbSparse::eval_cons(const size_type& n,
-                                 const size_type& m,
-                                 const double* x,
-                                 bool new_x,
-                                 double* cons)
+bool hiopFRProbSparse::eval_cons(const size_type& n, const size_type& m, const double* x, bool new_x, double* cons)
 {
   assert(n == n_);
   assert(m == m_);
@@ -311,15 +305,15 @@ bool hiopFRProbSparse::eval_cons(const size_type& n,
   nlp_base_->eval_c_d(*wrk_x_, new_x, *wrk_c_, *wrk_d_);
 
   // compute FR equality constratint body c-pe+ne
-  wrk_eq_->copy_from_starting_at(x, pe_st_, m_eq_);     //pe
+  wrk_eq_->copy_from_starting_at(x, pe_st_, m_eq_);  // pe
   wrk_c_->axpy(-1.0, *wrk_eq_);
-  wrk_eq_->copy_from_starting_at(x, ne_st_, m_eq_);     //ne
+  wrk_eq_->copy_from_starting_at(x, ne_st_, m_eq_);  // ne
   wrk_c_->axpy(1.0, *wrk_eq_);
 
   // compute FR inequality constratint body d-pi+ni
-  wrk_ineq_->copy_from_starting_at(x, pi_st_, m_ineq_); //pi
+  wrk_ineq_->copy_from_starting_at(x, pi_st_, m_ineq_);  // pi
   wrk_d_->axpy(-1.0, *wrk_ineq_);
-  wrk_ineq_->copy_from_starting_at(x, ni_st_, m_ineq_); //ni
+  wrk_ineq_->copy_from_starting_at(x, ni_st_, m_ineq_);  // ni
   wrk_d_->axpy(1.0, *wrk_ineq_);
 
   // assemble the full vector
@@ -331,7 +325,8 @@ bool hiopFRProbSparse::eval_cons(const size_type& n,
   return true;
 }
 
-bool hiopFRProbSparse::eval_Jac_cons(const size_type& n, const size_type& m,
+bool hiopFRProbSparse::eval_Jac_cons(const size_type& n,
+                                     const size_type& m,
                                      const size_type& num_cons,
                                      const index_type* idx_cons,
                                      const double* x,
@@ -354,8 +349,8 @@ bool hiopFRProbSparse::eval_Jac_cons(const size_type& n,
                                      int* jJacS,
                                      double* MJacS)
 {
-  assert( n == n_);
-  assert( m == m_);
+  assert(n == n_);
+  assert(m == m_);
 
   assert(nnzJacS == nlp_base_->get_nnz_Jaceq() + nlp_base_->get_nnz_Jacineq() + 2 * (m_));
 
@@ -368,11 +363,11 @@ bool hiopFRProbSparse::eval_Jac_cons(const size_type& n,
     wrk_x_->copy_from_starting_at(x, 0, n_x_);
 
     // get Jac_c and Jac_d for the x part --- use original Jac_c/Jac_d as buffers
-    nlp_base_->eval_Jac_c_d(*wrk_x_, new_x, Jac_c, Jac_d); 
+    nlp_base_->eval_Jac_c_d(*wrk_x_, new_x, Jac_c, Jac_d);
   }
 
   Jac_cd_->set_Jac_FR(Jac_c, Jac_d, iJacS, jJacS, MJacS);
-  
+
   return true;
 }
 
@@ -404,7 +399,7 @@ bool hiopFRProbSparse::eval_Hess_Lagr(const size_type& n,
     double obj_factor = 0.0;
     // get Hess for the x part --- use original Hess as buffers
     nlp_base_->eval_Hess_Lagr(*wrk_x_, new_x, obj_factor, *wrk_eq_, *wrk_ineq_, new_lambda, Hess);
-    
+
     // additional diag Hess for x:  zeta*DR^2
     wrk_x_->setToConstant(zeta_);
     wrk_x_->componentMult(*DR_);
@@ -413,22 +408,22 @@ bool hiopFRProbSparse::eval_Hess_Lagr(const size_type& n,
 
   // extend Hes to the p and n parts
   Hess_cd_->set_Hess_FR(Hess, iHSS, jHSS, MHSS, *wrk_x_);
-  
+
   return true;
 }
 
 bool hiopFRProbSparse::get_warmstart_point(const size_type& n,
                                            const size_type& m,
                                            double* x0,
-                                           double* z_bndL0, 
+                                           double* z_bndL0,
                                            double* z_bndU0,
                                            double* lambda0,
                                            double* ineq_slack,
                                            double* vl0,
-                                           double* vu0 )
+                                           double* vu0)
 {
-  assert( n == n_);
-  assert( m == m_);
+  assert(n == n_);
+  assert(m == m_);
 
   hiopVector* c = solver_base_.get_c();
   hiopVector* d = solver_base_.get_d();
@@ -446,14 +441,14 @@ bool hiopFRProbSparse::get_warmstart_point(const size_type& n,
   s->copyTo(ineq_slack);
 
   /*
-  * compute pe (wrk_c_) and ne (wrk_eq_) rom equation (33)
-  */
+   * compute pe (wrk_c_) and ne (wrk_eq_) rom equation (33)
+   */
   // firstly use pe as a temp vec
-  double tmp_db = mu_/(2*rho_);
+  double tmp_db = mu_ / (2 * rho_);
   wrk_cbody_->copyFrom(*c);
-  wrk_cbody_->axpy(-1.0, crhs);     // wrk_cbody_ = (c-crhs)
+  wrk_cbody_->axpy(-1.0, crhs);  // wrk_cbody_ = (c-crhs)
   wrk_c_->setToConstant(tmp_db);
-  wrk_c_->axpy(-0.5, *wrk_cbody_);   // wrk_c_ = (mu-rho*(c-crhs))/(2*rho)
+  wrk_c_->axpy(-0.5, *wrk_cbody_);  // wrk_c_ = (mu-rho*(c-crhs))/(2*rho)
 
   // compute ne (wrk_eq_)
   wrk_eq_->copyFrom(*wrk_c_);
@@ -467,13 +462,13 @@ bool hiopFRProbSparse::get_warmstart_point(const size_type& n,
   wrk_c_->axpy(1.0, *wrk_eq_);
 
   /*
-  * compute pi (wrk_d_) and ni (wrk_ineq_) rom equation (33)
-  */
+   * compute pi (wrk_d_) and ni (wrk_ineq_) rom equation (33)
+   */
   // firstly use pi as a temp vec
   wrk_dbody_->copyFrom(*d);
-  wrk_dbody_->axpy(-1.0, *s);        // wrk_dbody_ = (d-s)
+  wrk_dbody_->axpy(-1.0, *s);  // wrk_dbody_ = (d-s)
   wrk_d_->setToConstant(tmp_db);
-  wrk_d_->axpy(-0.5, *wrk_dbody_);   // wrk_c_ = (mu-rho*(d-s))/(2*rho)
+  wrk_d_->axpy(-0.5, *wrk_dbody_);  // wrk_c_ = (mu-rho*(d-s))/(2*rho)
 
   // compute ni (wrk_ineq_)
   wrk_ineq_->copyFrom(*wrk_d_);
@@ -487,13 +482,13 @@ bool hiopFRProbSparse::get_warmstart_point(const size_type& n,
   wrk_d_->axpy(1.0, *wrk_ineq_);
 
   /*
-  * assemble x0
-  */
+   * assemble x0
+   */
   wrk_x_->copyToStarting(*wrk_primal_, 0);
-  wrk_c_->copyToStarting(*wrk_primal_, n_x_);                         // pe
-  wrk_eq_->copyToStarting(*wrk_primal_, n_x_ + m_eq_);                // ne
-  wrk_d_->copyToStarting(*wrk_primal_, n_x_ + 2*m_eq_);               // pi
-  wrk_ineq_->copyToStarting(*wrk_primal_, n_x_ + 2*m_eq_ + m_ineq_);  // ni
+  wrk_c_->copyToStarting(*wrk_primal_, n_x_);                           // pe
+  wrk_eq_->copyToStarting(*wrk_primal_, n_x_ + m_eq_);                  // ne
+  wrk_d_->copyToStarting(*wrk_primal_, n_x_ + 2 * m_eq_);               // pi
+  wrk_ineq_->copyToStarting(*wrk_primal_, n_x_ + 2 * m_eq_ + m_ineq_);  // ni
 
   wrk_primal_->copyTo(x0);
 
@@ -514,10 +509,10 @@ bool hiopFRProbSparse::get_warmstart_point(const size_type& n,
 
   // assemble zl
   wrk_x_->copyToStarting(*wrk_primal_, 0);
-  wrk_c_->copyToStarting(*wrk_primal_, n_x_);                         // pe
-  wrk_eq_->copyToStarting(*wrk_primal_, n_x_ + m_eq_);                // ne
-  wrk_d_->copyToStarting(*wrk_primal_, n_x_ + 2*m_eq_);               // pi
-  wrk_ineq_->copyToStarting(*wrk_primal_, n_x_ + 2*m_eq_ + m_ineq_);  // ni
+  wrk_c_->copyToStarting(*wrk_primal_, n_x_);                           // pe
+  wrk_eq_->copyToStarting(*wrk_primal_, n_x_ + m_eq_);                  // ne
+  wrk_d_->copyToStarting(*wrk_primal_, n_x_ + 2 * m_eq_);               // pi
+  wrk_ineq_->copyToStarting(*wrk_primal_, n_x_ + 2 * m_eq_ + m_ineq_);  // ni
   wrk_primal_->copyTo(z_bndL0);
 
   // get zu
@@ -574,8 +569,8 @@ bool hiopFRProbSparse::iterate_callback(int iter,
   nlp_base_->eval_c_d(*wrk_x_, true, *wrk_cbody_, *wrk_dbody_);
 
   // compute theta for base problem
-  wrk_cbody_->axpy(-1.0, crhs);           // wrk_cbody_ = (c-crhs)
-  wrk_dbody_->axpy(-1.0, *wrk_d_);        // wrk_dbody_ = (d-s)
+  wrk_cbody_->axpy(-1.0, crhs);     // wrk_cbody_ = (c-crhs)
+  wrk_dbody_->axpy(-1.0, *wrk_d_);  // wrk_dbody_ = (d-s)
 
   double theta_ori = 0.0;
   theta_ori += wrk_cbody_->onenorm();
@@ -588,25 +583,26 @@ bool hiopFRProbSparse::iterate_callback(int iter,
   double max_nrmInf_feas = nlp_base_->options->GetNumeric("kappa_resto") * nrmInf_feas_ref_;
 
   // termination condition 1) theta_curr <= kappa_resto*theta_ref
-  if(nrmInf_feas_ori <= max_nrmInf_feas && iter>0) {
+  if(nrmInf_feas_ori <= max_nrmInf_feas && iter > 0) {
     // termination condition 2) (theta and logbar) are not in the original filter
     // check (original) filter condition
 
     // compute the original logbar objective from the trial point given by the FR problem
     // Note that this function will updates the slack and dual variables
-    
-    // set original trial (x,d) to the soltion from FR problem 
+
+    // set original trial (x,d) to the soltion from FR problem
     hiopIterate* it_base_trial = solver_base_.get_it_trial_nonconst();
-    const hiopIterate* it_base_curr  = solver_base_.get_it_curr();
+    const hiopIterate* it_base_curr = solver_base_.get_it_curr();
     it_base_trial->get_x()->copyFrom(*wrk_x_);
     it_base_trial->get_d()->copyFrom(*wrk_d_);
 
     // compute other slacks in the base problem
-    [[maybe_unused]] const size_type n_adjusted_slacks = it_base_trial->compute_safe_slacks(*it_base_curr, solver_base_.get_mu());
+    [[maybe_unused]] const size_type n_adjusted_slacks =
+        it_base_trial->compute_safe_slacks(*it_base_curr, solver_base_.get_mu());
 
-    // evaluate base problem log barr     
+    // evaluate base problem log barr
     solver_base_.get_logbar()->updateWithNlpInfo_trial_funcOnly(*it_base_trial, obj_base_, *wrk_cbody_, *wrk_dbody_);
-	  
+
     double trial_bar_obj_ori = solver_base_.get_logbar()->f_logbar_trial;
 
     if(!solver_base_.filter_contains(theta_ori, trial_bar_obj_ori)) {
@@ -626,7 +622,7 @@ bool hiopFRProbSparse::iterate_callback(int iter,
 bool hiopFRProbSparse::force_update_x(const int n, double* x)
 {
   // this function is used in FR in FR, see eq (33)
-  assert( n == n_);
+  assert(n == n_);
 
   hiopVector* c = solver_base_.get_c();
   hiopVector* d = solver_base_.get_d();
@@ -637,14 +633,14 @@ bool hiopFRProbSparse::force_update_x(const int n, double* x)
   wrk_x_->copy_from_starting_at(x, 0, n_x_);
 
   /*
-  * compute pe (wrk_c_) and ne (wrk_eq_) rom equation (33)
-  */
+   * compute pe (wrk_c_) and ne (wrk_eq_) rom equation (33)
+   */
   // firstly use pe as a temp vec
-  double tmp_db = mu_/(2*rho_);
+  double tmp_db = mu_ / (2 * rho_);
   wrk_cbody_->copyFrom(*c);
-  wrk_cbody_->axpy(-1.0, crhs);     // wrk_cbody_ = (c-crhs)
+  wrk_cbody_->axpy(-1.0, crhs);  // wrk_cbody_ = (c-crhs)
   wrk_c_->setToConstant(tmp_db);
-  wrk_c_->axpy(-0.5, *wrk_cbody_);   // wrk_c_ = (mu-rho*(c-crhs))/(2*rho)
+  wrk_c_->axpy(-0.5, *wrk_cbody_);  // wrk_c_ = (mu-rho*(c-crhs))/(2*rho)
 
   // compute ne (wrk_eq_)
   wrk_eq_->copyFrom(*wrk_c_);
@@ -658,13 +654,13 @@ bool hiopFRProbSparse::force_update_x(const int n, double* x)
   wrk_c_->axpy(1.0, *wrk_eq_);
 
   /*
-  * compute pi (wrk_d_) and ni (wrk_ineq_) rom equation (33)
-  */
+   * compute pi (wrk_d_) and ni (wrk_ineq_) rom equation (33)
+   */
   // firstly use pi as a temp vec
   wrk_dbody_->copyFrom(*d);
-  wrk_dbody_->axpy(-1.0, *s);        // wrk_dbody_ = (d-s)
+  wrk_dbody_->axpy(-1.0, *s);  // wrk_dbody_ = (d-s)
   wrk_d_->setToConstant(tmp_db);
-  wrk_d_->axpy(-0.5, *wrk_dbody_);   // wrk_c_ = (mu-rho*(d-s))/(2*rho)
+  wrk_d_->axpy(-0.5, *wrk_dbody_);  // wrk_c_ = (mu-rho*(d-s))/(2*rho)
 
   // compute ni (wrk_ineq_)
   wrk_ineq_->copyFrom(*wrk_d_);
@@ -678,31 +674,26 @@ bool hiopFRProbSparse::force_update_x(const int n, double* x)
   wrk_d_->axpy(1.0, *wrk_ineq_);
 
   /*
-  * assemble x = [x pe ne pi ni
-  */      
+   * assemble x = [x pe ne pi ni
+   */
   wrk_x_->copyToStarting(*wrk_primal_, 0);
   wrk_c_->copyToStarting(*wrk_primal_, n_x_);
   wrk_eq_->copyToStarting(*wrk_primal_, n_x_ + m_eq_);
-  wrk_d_->copyToStarting(*wrk_primal_, n_x_ + 2*m_eq_);
-  wrk_ineq_->copyToStarting(*wrk_primal_, n_x_ + 2*m_eq_ + m_ineq_);
+  wrk_d_->copyToStarting(*wrk_primal_, n_x_ + 2 * m_eq_);
+  wrk_ineq_->copyToStarting(*wrk_primal_, n_x_ + 2 * m_eq_ + m_ineq_);
 
   wrk_primal_->copyTo(x);
 
   return true;
 }
 
-
-
-
-
-
-/* 
-*  Specialized interface for feasibility restoration problem with MDS blocks in the Jacobian and Hessian.
-*/
+/*
+ *  Specialized interface for feasibility restoration problem with MDS blocks in the Jacobian and Hessian.
+ */
 hiopFRProbMDS::hiopFRProbMDS(hiopAlgFilterIPMBase& solver_base)
-  : solver_base_(solver_base), 
-    last_x_{nullptr}, 
-    last_d_{nullptr}
+    : solver_base_(solver_base),
+      last_x_{nullptr},
+      last_d_{nullptr}
 {
   nlp_base_ = dynamic_cast<hiopNlpMDS*>(solver_base.get_nlp());
   n_x_ = nlp_base_->n();
@@ -711,8 +702,8 @@ hiopFRProbMDS::hiopFRProbMDS(hiopAlgFilterIPMBase& solver_base)
   m_eq_ = nlp_base_->m_eq();
   m_ineq_ = nlp_base_->m_ineq();
 
-  n_ = n_x_ + 2*m_eq_ + 2*m_ineq_;
-  n_sp_ = n_x_sp_ + 2*m_eq_ + 2*m_ineq_;
+  n_ = n_x_ + 2 * m_eq_ + 2 * m_ineq_;
+  n_sp_ = n_x_sp_ + 2 * m_eq_ + 2 * m_ineq_;
   n_de_ = n_x_de_;
   m_ = m_eq_ + m_ineq_;
 
@@ -756,17 +747,17 @@ hiopFRProbMDS::hiopFRProbMDS(hiopAlgFilterIPMBase& solver_base)
   nnz_sp_Hess_Lagr_SS_ = n_x_sp_ + Hess_SS->sp_mat()->numberOfOffDiagNonzeros();
   nnz_sp_Hess_Lagr_SD_ = 0;
 
-  Jac_cd_ = new hiopMatrixMDS(m_, n_sp_, n_de_, nnz_sp_Jac_c_+nnz_sp_Jac_d_, nlp_base_->options->GetString("mem_space"));
+  Jac_cd_ = new hiopMatrixMDS(m_, n_sp_, n_de_, nnz_sp_Jac_c_ + nnz_sp_Jac_d_, nlp_base_->options->GetString("mem_space"));
   Hess_cd_ = new hiopMatrixSymBlockDiagMDS(n_sp_, n_de_, nnz_sp_Hess_Lagr_SS_, nlp_base_->options->GetString("mem_space"));
 
   // set mu0 to be the maximun of the current barrier parameter mu and norm_inf(|c|)*/
-  theta_ref_ = solver_base_.get_resid()->get_theta(); //at current point, i.e., reference point
+  theta_ref_ = solver_base_.get_resid()->get_theta();  // at current point, i.e., reference point
   nrmInf_feas_ref_ = solver_base_.get_resid()->get_nrmInf_bar_feasib();
   mu_ = solver_base.get_mu();
   mu_ = std::max(mu_, nrmInf_feas_ref_);
 
   zeta_ = std::sqrt(mu_);
-  rho_ = 1000; // FIXME: make this as an user option
+  rho_ = 1000;  // FIXME: make this as an user option
 }
 
 hiopFRProbMDS::~hiopFRProbMDS()
@@ -784,7 +775,7 @@ hiopFRProbMDS::~hiopFRProbMDS()
 
   delete wrk_x_sp_;
   delete wrk_x_de_;
-  
+
   delete Jac_cd_;
   delete Hess_cd_;
   if(last_x_) {
@@ -795,8 +786,8 @@ hiopFRProbMDS::~hiopFRProbMDS()
   }
 }
 
-bool hiopFRProbMDS::get_MPI_comm(MPI_Comm& comm_out) 
-{ 
+bool hiopFRProbMDS::get_MPI_comm(MPI_Comm& comm_out)
+{
 #ifdef HIOP_USE_MPI
   comm_out = nlp_base_->get_comm();
 #else
@@ -821,7 +812,7 @@ bool hiopFRProbMDS::get_prob_info(NonlinearityType& type)
   return true;
 }
 
-bool hiopFRProbMDS::get_vars_info(const size_type& n, double *xlow, double* xupp, NonlinearityType* type)
+bool hiopFRProbMDS::get_vars_info(const size_type& n, double* xlow, double* xupp, NonlinearityType* type)
 {
   assert(n == n_);
 
@@ -841,9 +832,9 @@ bool hiopFRProbMDS::get_vars_info(const size_type& n, double *xlow, double* xupp
   wrk_primal_->copyTo(xupp);
 
   wrk_primal_->set_array_from_to(type, 0, n_, hiopLinear);
-  wrk_primal_->set_array_from_to(type, x_sp_st_, x_sp_st_+n_x_sp_, var_type, 0);
-  wrk_primal_->set_array_from_to(type, x_de_st_, x_de_st_+n_x_de_, var_type, n_x_sp_);
-  
+  wrk_primal_->set_array_from_to(type, x_sp_st_, x_sp_st_ + n_x_sp_, var_type, 0);
+  wrk_primal_->set_array_from_to(type, x_de_st_, x_de_st_ + n_x_de_, var_type, n_x_sp_);
+
   return true;
 }
 
@@ -895,10 +886,10 @@ bool hiopFRProbMDS::eval_f(const size_type& n, const double* x, bool new_x, doub
   assert(n == n_);
   obj_value = 0.;
 
-  wrk_primal_->copy_from_starting_at(x, 0, n_); // [xsp pe ne pi ni xde]
-  wrk_primal_->startingAtCopyToStartingAt(x_sp_st_, *wrk_x_, 0, n_x_sp_);       // [xsp]
-  wrk_primal_->startingAtCopyToStartingAt(x_de_st_, *wrk_x_, n_x_sp_, n_x_de_); // [xde]
-  
+  wrk_primal_->copy_from_starting_at(x, 0, n_);                                  // [xsp pe ne pi ni xde]
+  wrk_primal_->startingAtCopyToStartingAt(x_sp_st_, *wrk_x_, 0, n_x_sp_);        // [xsp]
+  wrk_primal_->startingAtCopyToStartingAt(x_de_st_, *wrk_x_, n_x_sp_, n_x_de_);  // [xde]
+
   // rho*sum(p+n)
   obj_value += rho_ * (wrk_primal_->sum_local() - wrk_x_->sum_local());
 
@@ -909,7 +900,7 @@ bool hiopFRProbMDS::eval_f(const size_type& n, const double* x, bool new_x, doub
 
   obj_value += 0.5 * zeta_ * wrk_db * wrk_db;
 
-  nlp_base_->eval_f(*wrk_x_, new_x, obj_base_); 
+  nlp_base_->eval_f(*wrk_x_, new_x, obj_base_);
 
   return true;
 }
@@ -919,10 +910,10 @@ bool hiopFRProbMDS::eval_grad_f(const size_type& n, const double* x, bool new_x,
   assert(n == n_);
 
   // x
-  wrk_primal_->copy_from_starting_at(x, 0, n_); // [xsp pe ne pi ni xde]
-  wrk_primal_->startingAtCopyToStartingAt(x_sp_st_, *wrk_x_, 0, n_x_sp_);       // x = [xsp xde]
-  wrk_primal_->startingAtCopyToStartingAt(x_de_st_, *wrk_x_, n_x_sp_, n_x_de_); // x = [xsp xde]
-  
+  wrk_primal_->copy_from_starting_at(x, 0, n_);                                  // [xsp pe ne pi ni xde]
+  wrk_primal_->startingAtCopyToStartingAt(x_sp_st_, *wrk_x_, 0, n_x_sp_);        // x = [xsp xde]
+  wrk_primal_->startingAtCopyToStartingAt(x_de_st_, *wrk_x_, n_x_sp_, n_x_de_);  // x = [xsp xde]
+
   // p and n
   wrk_primal_->setToConstant(rho_);
 
@@ -931,9 +922,9 @@ bool hiopFRProbMDS::eval_grad_f(const size_type& n, const double* x, bool new_x,
   wrk_x_->componentMult(*DR_);
   wrk_x_->componentMult(*DR_);
   wrk_x_->scale(zeta_);
-  wrk_x_->startingAtCopyToStartingAt(0, *wrk_primal_, x_sp_st_, n_x_sp_);       // x = [xsp pe ne pi ni xde]
-  wrk_x_->startingAtCopyToStartingAt(n_x_sp_, *wrk_primal_, x_de_st_, n_x_de_); // x = [xsp pe ne pi ni xde]
-  
+  wrk_x_->startingAtCopyToStartingAt(0, *wrk_primal_, x_sp_st_, n_x_sp_);        // x = [xsp pe ne pi ni xde]
+  wrk_x_->startingAtCopyToStartingAt(n_x_sp_, *wrk_primal_, x_de_st_, n_x_de_);  // x = [xsp pe ne pi ni xde]
+
   wrk_primal_->copyTo(gradf);
 
   return true;
@@ -950,31 +941,27 @@ bool hiopFRProbMDS::eval_cons(const size_type& n,
   return false;
 }
 
-bool hiopFRProbMDS::eval_cons(const size_type& n,
-                              const size_type& m,
-                              const double* x,
-                              bool new_x,
-                              double* cons)
+bool hiopFRProbMDS::eval_cons(const size_type& n, const size_type& m, const double* x, bool new_x, double* cons)
 {
   assert(n == n_);
   assert(m == m_);
 
   // evaluate base case c and d
-  wrk_primal_->copy_from_starting_at(x, 0, n_); // [xsp pe ne pi ni xde]
-  wrk_primal_->startingAtCopyToStartingAt(x_sp_st_, *wrk_x_, 0, n_x_sp_);       // x = [xsp xde]
-  wrk_primal_->startingAtCopyToStartingAt(x_de_st_, *wrk_x_, n_x_sp_, n_x_de_); // x = [xsp xde]
+  wrk_primal_->copy_from_starting_at(x, 0, n_);                                  // [xsp pe ne pi ni xde]
+  wrk_primal_->startingAtCopyToStartingAt(x_sp_st_, *wrk_x_, 0, n_x_sp_);        // x = [xsp xde]
+  wrk_primal_->startingAtCopyToStartingAt(x_de_st_, *wrk_x_, n_x_sp_, n_x_de_);  // x = [xsp xde]
   nlp_base_->eval_c_d(*wrk_x_, new_x, *wrk_c_, *wrk_d_);
 
   // compute FR equality constratint body c-pe+ne
-  wrk_eq_->copy_from_starting_at(x, pe_st_, m_eq_);     //pe
+  wrk_eq_->copy_from_starting_at(x, pe_st_, m_eq_);  // pe
   wrk_c_->axpy(-1.0, *wrk_eq_);
-  wrk_eq_->copy_from_starting_at(x, ne_st_, m_eq_);     //ne
+  wrk_eq_->copy_from_starting_at(x, ne_st_, m_eq_);  // ne
   wrk_c_->axpy(1.0, *wrk_eq_);
 
   // compute FR inequality constratint body d-pi+ni
-  wrk_ineq_->copy_from_starting_at(x, pi_st_, m_ineq_); //pi
+  wrk_ineq_->copy_from_starting_at(x, pi_st_, m_ineq_);  // pi
   wrk_d_->axpy(-1.0, *wrk_ineq_);
-  wrk_ineq_->copy_from_starting_at(x, ni_st_, m_ineq_); //ni
+  wrk_ineq_->copy_from_starting_at(x, ni_st_, m_ineq_);  // ni
   wrk_d_->axpy(1.0, *wrk_ineq_);
 
   // assemble the full vector
@@ -990,7 +977,7 @@ bool hiopFRProbMDS::eval_Jac_cons(const size_type& n,
                                   const size_type& m,
                                   const size_type& num_cons,
                                   const index_type* idx_cons,
-                                  const double* x, 
+                                  const double* x,
                                   bool new_x,
                                   const size_type& nsparse,
                                   const size_type& ndense,
@@ -1004,7 +991,7 @@ bool hiopFRProbMDS::eval_Jac_cons(const size_type& n,
 }
 
 /// @pre assuming Jac of the original prob is sorted
-bool hiopFRProbMDS::eval_Jac_cons(const size_type& n, 
+bool hiopFRProbMDS::eval_Jac_cons(const size_type& n,
                                   const size_type& m,
                                   const double* x,
                                   bool new_x,
@@ -1016,11 +1003,11 @@ bool hiopFRProbMDS::eval_Jac_cons(const size_type& n,
                                   double* MJacS,
                                   double* JacD)
 {
-  assert( n == n_);
-  assert( m == m_);
-  assert( nsparse == n_sp_);
-  assert( ndense == n_de_);
-  assert( nnzJacS == nlp_base_->get_nnz_sp_Jaceq() + nlp_base_->get_nnz_sp_Jacineq() + 2 * (m_));
+  assert(n == n_);
+  assert(m == m_);
+  assert(nsparse == n_sp_);
+  assert(ndense == n_de_);
+  assert(nnzJacS == nlp_base_->get_nnz_sp_Jaceq() + nlp_base_->get_nnz_sp_Jacineq() + 2 * (m_));
 
   hiopMatrixMDS* Jac_c = dynamic_cast<hiopMatrixMDS*>(solver_base_.get_Jac_c());
   hiopMatrixMDS* Jac_d = dynamic_cast<hiopMatrixMDS*>(solver_base_.get_Jac_d());
@@ -1029,12 +1016,12 @@ bool hiopFRProbMDS::eval_Jac_cons(const size_type& n,
   // extend Jac to the p and n parts
   if(MJacS != nullptr) {
     // get x for the original problem
-     wrk_primal_->copy_from_starting_at(x, 0, n_); // [xsp pe ne pi ni xde]
-     wrk_primal_->startingAtCopyToStartingAt(x_sp_st_, *wrk_x_, 0, n_x_sp_);       // x = [xsp xde]
-     wrk_primal_->startingAtCopyToStartingAt(x_de_st_, *wrk_x_, n_x_sp_, n_x_de_); // x = [xsp xde]
+    wrk_primal_->copy_from_starting_at(x, 0, n_);                                  // [xsp pe ne pi ni xde]
+    wrk_primal_->startingAtCopyToStartingAt(x_sp_st_, *wrk_x_, 0, n_x_sp_);        // x = [xsp xde]
+    wrk_primal_->startingAtCopyToStartingAt(x_de_st_, *wrk_x_, n_x_sp_, n_x_de_);  // x = [xsp xde]
 
     // get Jac_c and Jac_d for the x part --- use original Jac_c/Jac_d as buffers
-    nlp_base_->eval_Jac_c_d(*wrk_x_, new_x, *Jac_c, *Jac_d); 
+    nlp_base_->eval_Jac_c_d(*wrk_x_, new_x, *Jac_c, *Jac_d);
   }
 
   Jac_cd_->set_Jac_FR(*Jac_c, *Jac_d, iJacS, jJacS, MJacS, JacD);
@@ -1045,15 +1032,15 @@ bool hiopFRProbMDS::eval_Jac_cons(const size_type& n,
 bool hiopFRProbMDS::get_warmstart_point(const size_type& n,
                                         const size_type& m,
                                         double* x0,
-                                        double* z_bndL0, 
+                                        double* z_bndL0,
                                         double* z_bndU0,
                                         double* lambda0,
                                         double* ineq_slack,
                                         double* vl0,
-                                        double* vu0 )
+                                        double* vu0)
 {
-  assert( n == n_);
-  assert( m == m_);
+  assert(n == n_);
+  assert(m == m_);
 
   hiopVector* c = solver_base_.get_c();
   hiopVector* d = solver_base_.get_d();
@@ -1073,14 +1060,14 @@ bool hiopFRProbMDS::get_warmstart_point(const size_type& n,
   s->copyTo(ineq_slack);
 
   /*
-  * compute pe (wrk_c_) and ne (wrk_eq_) rom equation (33)
-  */
+   * compute pe (wrk_c_) and ne (wrk_eq_) rom equation (33)
+   */
   // firstly use pe as a temp vec
-  double tmp_db = mu_/(2*rho_);
+  double tmp_db = mu_ / (2 * rho_);
   wrk_cbody_->copyFrom(*c);
-  wrk_cbody_->axpy(-1.0, crhs);     // wrk_cbody_ = (c-crhs)
+  wrk_cbody_->axpy(-1.0, crhs);  // wrk_cbody_ = (c-crhs)
   wrk_c_->setToConstant(tmp_db);
-  wrk_c_->axpy(-0.5, *wrk_cbody_);   // wrk_c_ = (mu-rho*(c-crhs))/(2*rho)
+  wrk_c_->axpy(-0.5, *wrk_cbody_);  // wrk_c_ = (mu-rho*(c-crhs))/(2*rho)
 
   // compute ne (wrk_eq_)
   wrk_eq_->copyFrom(*wrk_c_);
@@ -1094,13 +1081,13 @@ bool hiopFRProbMDS::get_warmstart_point(const size_type& n,
   wrk_c_->axpy(1.0, *wrk_eq_);
 
   /*
-  * compute pi (wrk_d_) and ni (wrk_ineq_) rom equation (33)
-  */
+   * compute pi (wrk_d_) and ni (wrk_ineq_) rom equation (33)
+   */
   // firstly use pi as a temp vec
   wrk_dbody_->copyFrom(*d);
-  wrk_dbody_->axpy(-1.0, *s);        // wrk_dbody_ = (d-s)
+  wrk_dbody_->axpy(-1.0, *s);  // wrk_dbody_ = (d-s)
   wrk_d_->setToConstant(tmp_db);
-  wrk_d_->axpy(-0.5, *wrk_dbody_);   // wrk_c_ = (mu-rho*(d-s))/(2*rho)
+  wrk_d_->axpy(-0.5, *wrk_dbody_);  // wrk_c_ = (mu-rho*(d-s))/(2*rho)
 
   // compute ni (wrk_ineq_)
   wrk_ineq_->copyFrom(*wrk_d_);
@@ -1114,14 +1101,14 @@ bool hiopFRProbMDS::get_warmstart_point(const size_type& n,
   wrk_d_->axpy(1.0, *wrk_ineq_);
 
   /*
-  * assemble x0
-  */
-  wrk_x_->startingAtCopyToStartingAt(0, *wrk_primal_, x_sp_st_, n_x_sp_);       // [xsp pe ne pi ni xde]
-  wrk_c_->copyToStarting(*wrk_primal_, pe_st_);     // pe
-  wrk_eq_->copyToStarting(*wrk_primal_, ne_st_);    // ne
-  wrk_d_->copyToStarting(*wrk_primal_, pi_st_);     // pi
-  wrk_ineq_->copyToStarting(*wrk_primal_, ni_st_);  // ni
-  wrk_x_->startingAtCopyToStartingAt(n_x_sp_, *wrk_primal_, x_de_st_, n_x_de_); // [xsp pe ne pi ni xde]
+   * assemble x0
+   */
+  wrk_x_->startingAtCopyToStartingAt(0, *wrk_primal_, x_sp_st_, n_x_sp_);        // [xsp pe ne pi ni xde]
+  wrk_c_->copyToStarting(*wrk_primal_, pe_st_);                                  // pe
+  wrk_eq_->copyToStarting(*wrk_primal_, ne_st_);                                 // ne
+  wrk_d_->copyToStarting(*wrk_primal_, pi_st_);                                  // pi
+  wrk_ineq_->copyToStarting(*wrk_primal_, ni_st_);                               // ni
+  wrk_x_->startingAtCopyToStartingAt(n_x_sp_, *wrk_primal_, x_de_st_, n_x_de_);  // [xsp pe ne pi ni xde]
 
   wrk_primal_->copyTo(x0);
 
@@ -1141,20 +1128,20 @@ bool hiopFRProbMDS::get_warmstart_point(const size_type& n,
   wrk_ineq_->scale(mu_);
 
   // assemble zl
-  wrk_x_->startingAtCopyToStartingAt(0, *wrk_primal_, x_sp_st_, n_x_sp_);       // [xsp pe ne pi ni xde]
-  wrk_c_->copyToStarting(*wrk_primal_, pe_st_);     // pe
-  wrk_eq_->copyToStarting(*wrk_primal_, ne_st_);    // ne
-  wrk_d_->copyToStarting(*wrk_primal_, pi_st_);     // pi
-  wrk_ineq_->copyToStarting(*wrk_primal_, ni_st_);  // ni
-  wrk_x_->startingAtCopyToStartingAt(n_x_sp_, *wrk_primal_, x_de_st_, n_x_de_); // [xsp pe ne pi ni xde]  
+  wrk_x_->startingAtCopyToStartingAt(0, *wrk_primal_, x_sp_st_, n_x_sp_);        // [xsp pe ne pi ni xde]
+  wrk_c_->copyToStarting(*wrk_primal_, pe_st_);                                  // pe
+  wrk_eq_->copyToStarting(*wrk_primal_, ne_st_);                                 // ne
+  wrk_d_->copyToStarting(*wrk_primal_, pi_st_);                                  // pi
+  wrk_ineq_->copyToStarting(*wrk_primal_, ni_st_);                               // ni
+  wrk_x_->startingAtCopyToStartingAt(n_x_sp_, *wrk_primal_, x_de_st_, n_x_de_);  // [xsp pe ne pi ni xde]
   wrk_primal_->copyTo(z_bndL0);
 
   // get zu
   wrk_primal_->setToZero();
   wrk_x_->copyFrom(*zu);
   wrk_x_->component_min(rho_);
-  wrk_x_->startingAtCopyToStartingAt(0, *wrk_primal_, x_sp_st_, n_x_sp_);       // [xsp pe ne pi ni xde]
-  wrk_x_->startingAtCopyToStartingAt(n_x_sp_, *wrk_primal_, x_de_st_, n_x_de_); // [xsp pe ne pi ni xde]  
+  wrk_x_->startingAtCopyToStartingAt(0, *wrk_primal_, x_sp_st_, n_x_sp_);        // [xsp pe ne pi ni xde]
+  wrk_x_->startingAtCopyToStartingAt(n_x_sp_, *wrk_primal_, x_de_st_, n_x_de_);  // [xsp pe ne pi ni xde]
   wrk_primal_->copyTo(z_bndU0);
 
   // compute vl vu
@@ -1199,15 +1186,15 @@ bool hiopFRProbMDS::iterate_callback(int iter,
   const hiopVector& crhs = nlp_base_->get_crhs();
 
   // evaluate c_body and d_body in base problem
-  wrk_primal_->copy_from_starting_at(x, 0, n_); // [xsp pe ne pi ni xde]
-  wrk_primal_->startingAtCopyToStartingAt(x_sp_st_, *wrk_x_, 0, n_x_sp_);       // x = [xsp xde]
-  wrk_primal_->startingAtCopyToStartingAt(x_de_st_, *wrk_x_, n_x_sp_, n_x_de_); // x = [xsp xde]
+  wrk_primal_->copy_from_starting_at(x, 0, n_);                                  // [xsp pe ne pi ni xde]
+  wrk_primal_->startingAtCopyToStartingAt(x_sp_st_, *wrk_x_, 0, n_x_sp_);        // x = [xsp xde]
+  wrk_primal_->startingAtCopyToStartingAt(x_de_st_, *wrk_x_, n_x_sp_, n_x_de_);  // x = [xsp xde]
   wrk_d_->copy_from_starting_at(s, 0, m_ineq_);
   nlp_base_->eval_c_d(*wrk_x_, true, *wrk_cbody_, *wrk_dbody_);
 
   // compute theta for base problem
-  wrk_cbody_->axpy(-1.0, crhs);           // wrk_cbody_ = (c-crhs)
-  wrk_dbody_->axpy(-1.0, *wrk_d_);        // wrk_dbody_ = (d-s)
+  wrk_cbody_->axpy(-1.0, crhs);     // wrk_cbody_ = (c-crhs)
+  wrk_dbody_->axpy(-1.0, *wrk_d_);  // wrk_dbody_ = (d-s)
 
   double theta_ori = 0.0;
   theta_ori += wrk_cbody_->onenorm();
@@ -1220,25 +1207,26 @@ bool hiopFRProbMDS::iterate_callback(int iter,
   double max_nrmInf_feas = nlp_base_->options->GetNumeric("kappa_resto") * nrmInf_feas_ref_;
 
   // termination condition 1) theta_curr <= kappa_resto*theta_ref
-  if(nrmInf_feas_ori <= max_nrmInf_feas && iter>0) {
+  if(nrmInf_feas_ori <= max_nrmInf_feas && iter > 0) {
     // termination condition 2) (theta and logbar) are not in the original filter
     // check (original) filter condition
 
     // compute the original logbar objective from the trial point given by the FR problem
     // Note that this function will updates the slack and dual variables
-    
-    // set original trial (x,d) to the soltion from FR problem 
+
+    // set original trial (x,d) to the soltion from FR problem
     hiopIterate* it_base_trial = solver_base_.get_it_trial_nonconst();
-    const hiopIterate* it_base_curr  = solver_base_.get_it_curr();
+    const hiopIterate* it_base_curr = solver_base_.get_it_curr();
     it_base_trial->get_x()->copyFrom(*wrk_x_);
     it_base_trial->get_d()->copyFrom(*wrk_d_);
 
     // compute other slacks in the base problem
-    [[maybe_unused]] const size_type n_adjusted_slacks = it_base_trial->compute_safe_slacks(*it_base_curr, solver_base_.get_mu());
+    [[maybe_unused]] const size_type n_adjusted_slacks =
+        it_base_trial->compute_safe_slacks(*it_base_curr, solver_base_.get_mu());
 
-    // evaluate base problem log barr     
+    // evaluate base problem log barr
     solver_base_.get_logbar()->updateWithNlpInfo_trial_funcOnly(*it_base_trial, obj_base_, *wrk_cbody_, *wrk_dbody_);
-	  
+
     double trial_bar_obj_ori = solver_base_.get_logbar()->f_logbar_trial;
 
     if(!solver_base_.filter_contains(theta_ori, trial_bar_obj_ori)) {
@@ -1258,7 +1246,7 @@ bool hiopFRProbMDS::iterate_callback(int iter,
 bool hiopFRProbMDS::force_update_x(const int n, double* x)
 {
   // this function is used in FR in FR, see eq (33)
-  assert( n == n_);
+  assert(n == n_);
 
   hiopVector* c = solver_base_.get_c();
   hiopVector* d = solver_base_.get_d();
@@ -1266,19 +1254,19 @@ bool hiopFRProbMDS::force_update_x(const int n, double* x)
   const hiopVector& crhs = nlp_base_->get_crhs();
 
   // x is fixed
-  wrk_primal_->copy_from_starting_at(x, 0, n_); // [xsp pe ne pi ni xde]
-  wrk_primal_->startingAtCopyToStartingAt(x_sp_st_, *wrk_x_, 0, n_x_sp_);       // x = [xsp xde]
-  wrk_primal_->startingAtCopyToStartingAt(x_de_st_, *wrk_x_, n_x_sp_, n_x_de_); // x = [xsp xde]
+  wrk_primal_->copy_from_starting_at(x, 0, n_);                                  // [xsp pe ne pi ni xde]
+  wrk_primal_->startingAtCopyToStartingAt(x_sp_st_, *wrk_x_, 0, n_x_sp_);        // x = [xsp xde]
+  wrk_primal_->startingAtCopyToStartingAt(x_de_st_, *wrk_x_, n_x_sp_, n_x_de_);  // x = [xsp xde]
 
   /*
-  * compute pe (wrk_c_) and ne (wrk_eq_) rom equation (33)
-  */
+   * compute pe (wrk_c_) and ne (wrk_eq_) rom equation (33)
+   */
   // firstly use pe as a temp vec
-  double tmp_db = mu_/(2*rho_);
+  double tmp_db = mu_ / (2 * rho_);
   wrk_cbody_->copyFrom(*c);
-  wrk_cbody_->axpy(-1.0, crhs);     // wrk_cbody_ = (c-crhs)
+  wrk_cbody_->axpy(-1.0, crhs);  // wrk_cbody_ = (c-crhs)
   wrk_c_->setToConstant(tmp_db);
-  wrk_c_->axpy(-0.5, *wrk_cbody_);   // wrk_c_ = (mu-rho*(c-crhs))/(2*rho)
+  wrk_c_->axpy(-0.5, *wrk_cbody_);  // wrk_c_ = (mu-rho*(c-crhs))/(2*rho)
 
   // compute ne (wrk_eq_)
   wrk_eq_->copyFrom(*wrk_c_);
@@ -1292,13 +1280,13 @@ bool hiopFRProbMDS::force_update_x(const int n, double* x)
   wrk_c_->axpy(1.0, *wrk_eq_);
 
   /*
-  * compute pi (wrk_d_) and ni (wrk_ineq_) rom equation (33)
-  */
+   * compute pi (wrk_d_) and ni (wrk_ineq_) rom equation (33)
+   */
   // firstly use pi as a temp vec
   wrk_dbody_->copyFrom(*d);
-  wrk_dbody_->axpy(-1.0, *s);        // wrk_dbody_ = (d-s)
+  wrk_dbody_->axpy(-1.0, *s);  // wrk_dbody_ = (d-s)
   wrk_d_->setToConstant(tmp_db);
-  wrk_d_->axpy(-0.5, *wrk_dbody_);   // wrk_c_ = (mu-rho*(d-s))/(2*rho)
+  wrk_d_->axpy(-0.5, *wrk_dbody_);  // wrk_c_ = (mu-rho*(d-s))/(2*rho)
 
   // compute ni (wrk_ineq_)
   wrk_ineq_->copyFrom(*wrk_d_);
@@ -1312,14 +1300,14 @@ bool hiopFRProbMDS::force_update_x(const int n, double* x)
   wrk_d_->axpy(1.0, *wrk_ineq_);
 
   /*
-  * assemble x
-  */
-  wrk_x_->startingAtCopyToStartingAt(0, *wrk_primal_, x_sp_st_, n_x_sp_);       // [xsp pe ne pi ni xde]
-  wrk_c_->copyToStarting(*wrk_primal_, pe_st_);     // pe
-  wrk_eq_->copyToStarting(*wrk_primal_, ne_st_);    // ne
-  wrk_d_->copyToStarting(*wrk_primal_, pi_st_);     // pi
-  wrk_ineq_->copyToStarting(*wrk_primal_, ni_st_);  // ni
-  wrk_x_->startingAtCopyToStartingAt(n_x_sp_, *wrk_primal_, x_de_st_, n_x_de_); // [xsp pe ne pi ni xde]  
+   * assemble x
+   */
+  wrk_x_->startingAtCopyToStartingAt(0, *wrk_primal_, x_sp_st_, n_x_sp_);        // [xsp pe ne pi ni xde]
+  wrk_c_->copyToStarting(*wrk_primal_, pe_st_);                                  // pe
+  wrk_eq_->copyToStarting(*wrk_primal_, ne_st_);                                 // ne
+  wrk_d_->copyToStarting(*wrk_primal_, pi_st_);                                  // pi
+  wrk_ineq_->copyToStarting(*wrk_primal_, ni_st_);                               // ni
+  wrk_x_->startingAtCopyToStartingAt(n_x_sp_, *wrk_primal_, x_de_st_, n_x_de_);  // [xsp pe ne pi ni xde]
 
   wrk_primal_->copyTo(x);
 
@@ -1354,9 +1342,9 @@ bool hiopFRProbMDS::eval_Hess_Lagr(const size_type& n,
 
   if(MHSS != nullptr) {
     // get x for the original problem
-    wrk_primal_->copy_from_starting_at(x, 0, n_); // [xsp pe ne pi ni xde]
-    wrk_primal_->startingAtCopyToStartingAt(x_sp_st_, *wrk_x_, 0, n_x_sp_);       // x = [xsp xde]
-    wrk_primal_->startingAtCopyToStartingAt(x_de_st_, *wrk_x_, n_x_sp_, n_x_de_); // x = [xsp xde]
+    wrk_primal_->copy_from_starting_at(x, 0, n_);                                  // [xsp pe ne pi ni xde]
+    wrk_primal_->startingAtCopyToStartingAt(x_sp_st_, *wrk_x_, 0, n_x_sp_);        // x = [xsp xde]
+    wrk_primal_->startingAtCopyToStartingAt(x_de_st_, *wrk_x_, n_x_sp_, n_x_de_);  // x = [xsp xde]
 
     // split lambda
     wrk_eq_->copy_from_starting_at(lambda, 0, m_eq_);
@@ -1365,14 +1353,14 @@ bool hiopFRProbMDS::eval_Hess_Lagr(const size_type& n,
     double obj_factor = 0.0;
     // get Hess for the x part --- use original Hess as buffers
     nlp_base_->eval_Hess_Lagr(*wrk_x_, new_x, obj_factor, *wrk_eq_, *wrk_ineq_, new_lambda, *Hess);
-    
+
     // additional diag Hess for x:  zeta*DR^2
     wrk_x_->setToConstant(zeta_);
     wrk_x_->componentMult(*DR_);
     wrk_x_->componentMult(*DR_);
-    
+
     wrk_x_->copyToStarting(0, *wrk_x_sp_);
-    wrk_x_->copyToStarting(n_x_sp_, *wrk_x_de_);    
+    wrk_x_->copyToStarting(n_x_sp_, *wrk_x_de_);
   }
 
   // extend Hes to the p and n parts
@@ -1382,11 +1370,11 @@ bool hiopFRProbMDS::eval_Hess_Lagr(const size_type& n,
 }
 
 /*
-index_type hiopFRProbDense::denseVecBase2FR(hiopVector* vec_base, hiopVector* vec_fr) 
-{ 
+index_type hiopFRProbDense::denseVecBase2FR(hiopVector* vec_base, hiopVector* vec_fr)
+{
   assert(vec_base->get_size() == n_x_);
   assert(vec_fr->get_size() == n_);
-  
+
    {
       return idx_local + col_partition_[my_rank];
     }
@@ -1396,13 +1384,13 @@ index_type hiopFRProbDense::denseVecBase2FR(hiopVector* vec_base, hiopVector* ve
 }
 */
 
-/* 
-*  Specialized interface for feasibility restoration problem with MDS blocks in the Jacobian and Hessian.
-*/
+/*
+ *  Specialized interface for feasibility restoration problem with MDS blocks in the Jacobian and Hessian.
+ */
 hiopFRProbDense::hiopFRProbDense(hiopAlgFilterIPMBase& solver_base)
-  : solver_base_(solver_base), 
-    last_x_{nullptr}, 
-    last_d_{nullptr}
+    : solver_base_(solver_base),
+      last_x_{nullptr},
+      last_d_{nullptr}
 {
   nlp_base_ = dynamic_cast<hiopNlpDenseConstraints*>(solver_base.get_nlp());
   n_x_ = nlp_base_->n();
@@ -1411,7 +1399,7 @@ hiopFRProbDense::hiopFRProbDense(hiopAlgFilterIPMBase& solver_base)
 #ifdef HIOP_USE_MPI
   vec_distrib_base_ = nlp_base_->getVecDistInfo();
 #endif
-  n_ = n_x_ + 2*m_eq_ + 2*m_ineq_;
+  n_ = n_x_ + 2 * m_eq_ + 2 * m_ineq_;
   m_ = m_eq_ + m_ineq_;
 
   pe_st_ = n_x_;
@@ -1437,7 +1425,7 @@ hiopFRProbDense::hiopFRProbDense(hiopAlgFilterIPMBase& solver_base)
 #endif
 
   // assign col_partition_
-  col_partition_ = new index_type[comm_size_+1];
+  col_partition_ = new index_type[comm_size_ + 1];
   col_partition_[0] = 0;
   col_partition_[comm_size_] = n_;
 
@@ -1448,8 +1436,7 @@ hiopFRProbDense::hiopFRProbDense(hiopAlgFilterIPMBase& solver_base)
     }
   }
   if(col_partition_) {
-    wrk_primal_ = LinearAlgebraFactory::create_vector(nlp_base_->options->GetString("mem_space"), n_,
-                                                      col_partition_, comm_);
+    wrk_primal_ = LinearAlgebraFactory::create_vector(nlp_base_->options->GetString("mem_space"), n_, col_partition_, comm_);
     Jac_cd_ = LinearAlgebraFactory::create_matrix_dense("DEFAULT", m_, n_, col_partition_, comm_);
   } else {
     wrk_primal_ = LinearAlgebraFactory::create_vector(nlp_base_->options->GetString("mem_space"), n_);
@@ -1473,13 +1460,13 @@ hiopFRProbDense::hiopFRProbDense(hiopAlgFilterIPMBase& solver_base)
   last_d_ = wrk_d_->alloc_clone();
 
   // set mu0 to be the maximun of the current barrier parameter mu and norm_inf(|c|)*/
-  theta_ref_ = solver_base_.get_resid()->get_theta(); //at current point, i.e., reference point
+  theta_ref_ = solver_base_.get_resid()->get_theta();  // at current point, i.e., reference point
   nrmInf_feas_ref_ = solver_base_.get_resid()->get_nrmInf_bar_feasib();
   mu_ = solver_base.get_mu();
   mu_ = std::max(mu_, nrmInf_feas_ref_);
 
   zeta_ = std::sqrt(mu_);
-  rho_ = 1000; // FIXME: make this as an user option
+  rho_ = 1000;  // FIXME: make this as an user option
 }
 
 hiopFRProbDense::~hiopFRProbDense()
@@ -1494,7 +1481,7 @@ hiopFRProbDense::~hiopFRProbDense()
   delete wrk_primal_;
   delete wrk_dual_;
   delete DR_;
-  
+
   delete Jac_cd_;
 
   if(last_x_) {
@@ -1506,8 +1493,8 @@ hiopFRProbDense::~hiopFRProbDense()
   delete[] col_partition_;
 }
 
-bool hiopFRProbDense::get_MPI_comm(MPI_Comm& comm_out) 
-{ 
+bool hiopFRProbDense::get_MPI_comm(MPI_Comm& comm_out)
+{
   comm_out = comm_;
   return true;
 }
@@ -1518,7 +1505,7 @@ bool hiopFRProbDense::get_vecdistrib_info(size_type global_n, index_type* cols)
     for(int i = 0; i <= comm_size_; i++) {
       cols[i] = col_partition_[i];
     }
-  } else { 
+  } else {
     assert(false && "You shouldn't need distrib info for this size.");
   }
   return true;
@@ -1540,7 +1527,7 @@ bool hiopFRProbDense::get_prob_info(NonlinearityType& type)
   return true;
 }
 
-bool hiopFRProbDense::get_vars_info(const size_type& n, double *xlow, double* xupp, NonlinearityType* type)
+bool hiopFRProbDense::get_vars_info(const size_type& n, double* xlow, double* xupp, NonlinearityType* type)
 {
   assert(n == n_);
 
@@ -1552,18 +1539,18 @@ bool hiopFRProbDense::get_vars_info(const size_type& n, double *xlow, double* xu
   // build new lower bound
   wrk_primal_->setToConstant(0.0);
   // FIXME; add global methed. now we only have local method
-  xl.copyToStarting(*wrk_primal_,0);
+  xl.copyToStarting(*wrk_primal_, 0);
   wrk_primal_->copyTo(xlow);
 
   // build new upper bound
   wrk_primal_->setToConstant(1e+20);
-  xu.copyToStarting(*wrk_primal_,0);
+  xu.copyToStarting(*wrk_primal_, 0);
   wrk_primal_->copyTo(xupp);
 
   for(index_type i_local = 0; i_local < xl.get_local_size(); ++i_local) {
     type[i_local] = hiopNonlinear;
   }
-  
+
   return true;
 }
 
@@ -1600,16 +1587,17 @@ bool hiopFRProbDense::eval_f(const size_type& n, const double* x, bool new_x, do
   obj_value = 0.;
 
   // FIXME; add global methed. now we only have local method, or sync mpi results here
-  wrk_primal_->copy_from_starting_at(x, 0, n_); // [x pe ne pi ni]
-  wrk_x_->copy_from_starting_at(x, 0, n_x_);    // [x]
-  
+  wrk_primal_->copy_from_starting_at(x, 0, n_);  // [x pe ne pi ni]
+  wrk_x_->copy_from_starting_at(x, 0, n_x_);     // [x]
+
   // rho*sum(p+n)
   // FIXME; add global methed. now we only have local method, or sync mpi results here
   obj_value += rho_ * (wrk_primal_->sum_local() - wrk_x_->sum_local());
 
 #ifdef HIOP_USE_MPI
   double obj_global;
-  int ierr = MPI_Allreduce(&obj_value, &obj_global, 1, MPI_DOUBLE, MPI_SUM, comm_); assert(ierr==MPI_SUCCESS);
+  int ierr = MPI_Allreduce(&obj_value, &obj_global, 1, MPI_DOUBLE, MPI_SUM, comm_);
+  assert(ierr == MPI_SUCCESS);
   obj_value = obj_global;
 #endif
 
@@ -1640,21 +1628,17 @@ bool hiopFRProbDense::eval_grad_f(const size_type& n, const double* x, bool new_
   wrk_x_->componentMult(*DR_);
   wrk_x_->componentMult(*DR_);
   wrk_x_->scale(zeta_);
-  
+
   // build [x p n]
   // FIXME; add global methed. now we only have local method
-  wrk_x_->copyToStarting(*wrk_primal_,0);
-  
+  wrk_x_->copyToStarting(*wrk_primal_, 0);
+
   wrk_primal_->copyTo(gradf);
 
   return true;
 }
 
-bool hiopFRProbDense::eval_cons(const size_type& n,
-                                const size_type& m,
-                                const double* x,
-                                bool new_x,
-                                double* cons)
+bool hiopFRProbDense::eval_cons(const size_type& n, const size_type& m, const double* x, bool new_x, double* cons)
 {
   assert(n == n_);
   assert(m == m_);
@@ -1669,41 +1653,41 @@ bool hiopFRProbDense::eval_cons(const size_type& n,
   // p and n are only located in the last rank
   // compute FR equality constratint body c-pe+ne
   if(m_eq_ > 0) {
-    if(rank_ == comm_size_-1) {
-      wrk_eq_->copy_from_starting_at(x+pe_st_-col_partition_[rank_], 0, m_eq_);     //pe
+    if(rank_ == comm_size_ - 1) {
+      wrk_eq_->copy_from_starting_at(x + pe_st_ - col_partition_[rank_], 0, m_eq_);  // pe
       wrk_c_->axpy(-1.0, *wrk_eq_);
-      wrk_eq_->copy_from_starting_at(x+ne_st_-col_partition_[rank_], 0, m_eq_);     //ne
+      wrk_eq_->copy_from_starting_at(x + ne_st_ - col_partition_[rank_], 0, m_eq_);  // ne
       wrk_c_->axpy(1.0, *wrk_eq_);
     }
-    int ierr = MPI_Bcast(wrk_c_->local_data(), m_eq_, MPI_DOUBLE, comm_size_-1, comm_); 
-    assert(ierr==MPI_SUCCESS);
+    int ierr = MPI_Bcast(wrk_c_->local_data(), m_eq_, MPI_DOUBLE, comm_size_ - 1, comm_);
+    assert(ierr == MPI_SUCCESS);
   }
 
   // compute FR equality constratint body d-pi+ni
   if(m_ineq_ > 0) {
-    if(rank_ == comm_size_-1) {
-      wrk_ineq_->copy_from_starting_at(x+pi_st_-col_partition_[rank_], 0, m_ineq_); //pi
+    if(rank_ == comm_size_ - 1) {
+      wrk_ineq_->copy_from_starting_at(x + pi_st_ - col_partition_[rank_], 0, m_ineq_);  // pi
       wrk_d_->axpy(-1.0, *wrk_ineq_);
-      wrk_ineq_->copy_from_starting_at(x+ni_st_-col_partition_[rank_], 0, m_ineq_); //ni
+      wrk_ineq_->copy_from_starting_at(x + ni_st_ - col_partition_[rank_], 0, m_ineq_);  // ni
       wrk_d_->axpy(1.0, *wrk_ineq_);
     }
-    int ierr = MPI_Bcast(wrk_d_->local_data(), m_ineq_, MPI_DOUBLE, comm_size_-1, comm_); 
-    assert(ierr==MPI_SUCCESS);
+    int ierr = MPI_Bcast(wrk_d_->local_data(), m_ineq_, MPI_DOUBLE, comm_size_ - 1, comm_);
+    assert(ierr == MPI_SUCCESS);
   }
 #else
   // compute FR equality constratint body c-pe+ne
   if(m_eq_ > 0) {
-    wrk_eq_->copy_from_starting_at(x+pe_st_, 0, m_eq_);     //pe
+    wrk_eq_->copy_from_starting_at(x + pe_st_, 0, m_eq_);  // pe
     wrk_c_->axpy(-1.0, *wrk_eq_);
-    wrk_eq_->copy_from_starting_at(x+ne_st_, 0, m_eq_);     //ne
+    wrk_eq_->copy_from_starting_at(x + ne_st_, 0, m_eq_);  // ne
     wrk_c_->axpy(1.0, *wrk_eq_);
   }
 
   // compute FR equality constratint body d-pi+ni
   if(m_ineq_ > 0) {
-    wrk_ineq_->copy_from_starting_at(x+pi_st_, 0, m_ineq_); //pi
+    wrk_ineq_->copy_from_starting_at(x + pi_st_, 0, m_ineq_);  // pi
     wrk_d_->axpy(-1.0, *wrk_ineq_);
-    wrk_ineq_->copy_from_starting_at(x+ni_st_, 0, m_ineq_); //ni
+    wrk_ineq_->copy_from_starting_at(x + ni_st_, 0, m_ineq_);  // ni
     wrk_d_->axpy(1.0, *wrk_ineq_);
   }
 #endif
@@ -1719,14 +1703,10 @@ bool hiopFRProbDense::eval_cons(const size_type& n,
 }
 
 /// @pre assuming Jac of the original prob is sorted
-bool hiopFRProbDense::eval_Jac_cons(const size_type& n,
-                                    const size_type& m,
-                                    const double* x,
-                                    bool new_x,
-                                    double* Jac)
+bool hiopFRProbDense::eval_Jac_cons(const size_type& n, const size_type& m, const double* x, bool new_x, double* Jac)
 {
-  assert( n == n_);
-  assert( m == m_);
+  assert(n == n_);
+  assert(m == m_);
 
   hiopMatrixDense* Jac_c = dynamic_cast<hiopMatrixDense*>(solver_base_.get_Jac_c());
   hiopMatrixDense* Jac_d = dynamic_cast<hiopMatrixDense*>(solver_base_.get_Jac_d());
@@ -1739,12 +1719,12 @@ bool hiopFRProbDense::eval_Jac_cons(const size_type& n,
   wrk_x_->copy_from_starting_at(x, 0, n_x_);
 
   // get Jac_c and Jac_d for the x part --- use original Jac_c/Jac_d as buffers
-  nlp_base_->eval_Jac_c_d(*wrk_x_, new_x, *Jac_c, *Jac_d); 
-  
+  nlp_base_->eval_Jac_c_d(*wrk_x_, new_x, *Jac_c, *Jac_d);
+
   // FIXME add set_Jac_FR in hiopMatrixDense
   Jac_cd_->set_Jac_FR(*Jac_c, *Jac_d);
-  
-  Jac_cd_->copy_to(Jac); 
+
+  Jac_cd_->copy_to(Jac);
 
   return true;
 }
@@ -1752,15 +1732,15 @@ bool hiopFRProbDense::eval_Jac_cons(const size_type& n,
 bool hiopFRProbDense::get_warmstart_point(const size_type& n,
                                           const size_type& m,
                                           double* x0,
-                                          double* z_bndL0, 
+                                          double* z_bndL0,
                                           double* z_bndU0,
                                           double* lambda0,
                                           double* ineq_slack,
                                           double* vl0,
                                           double* vu0)
 {
-  assert( n == n_);
-  assert( m == m_);
+  assert(n == n_);
+  assert(m == m_);
 
   hiopVector* c = solver_base_.get_c();
   hiopVector* d = solver_base_.get_d();
@@ -1778,14 +1758,14 @@ bool hiopFRProbDense::get_warmstart_point(const size_type& n,
   s->copyTo(ineq_slack);
 
   /*
-  * compute pe (wrk_c_) and ne (wrk_eq_) rom equation (33)
-  */
+   * compute pe (wrk_c_) and ne (wrk_eq_) rom equation (33)
+   */
   // firstly use pe as a temp vec
-  double tmp_db = mu_/(2*rho_);
+  double tmp_db = mu_ / (2 * rho_);
   wrk_cbody_->copyFrom(*c);
-  wrk_cbody_->axpy(-1.0, crhs);     // wrk_cbody_ = (c-crhs)
+  wrk_cbody_->axpy(-1.0, crhs);  // wrk_cbody_ = (c-crhs)
   wrk_c_->setToConstant(tmp_db);
-  wrk_c_->axpy(-0.5, *wrk_cbody_);   // wrk_c_ = (mu-rho*(c-crhs))/(2*rho)
+  wrk_c_->axpy(-0.5, *wrk_cbody_);  // wrk_c_ = (mu-rho*(c-crhs))/(2*rho)
 
   // compute ne (wrk_eq_)
   wrk_eq_->copyFrom(*wrk_c_);
@@ -1799,13 +1779,13 @@ bool hiopFRProbDense::get_warmstart_point(const size_type& n,
   wrk_c_->axpy(1.0, *wrk_eq_);
 
   /*
-  * compute pi (wrk_d_) and ni (wrk_ineq_) rom equation (33)
-  */
+   * compute pi (wrk_d_) and ni (wrk_ineq_) rom equation (33)
+   */
   // firstly use pi as a temp vec
   wrk_dbody_->copyFrom(*d);
-  wrk_dbody_->axpy(-1.0, *s);        // wrk_dbody_ = (d-s)
+  wrk_dbody_->axpy(-1.0, *s);  // wrk_dbody_ = (d-s)
   wrk_d_->setToConstant(tmp_db);
-  wrk_d_->axpy(-0.5, *wrk_dbody_);   // wrk_c_ = (mu-rho*(d-s))/(2*rho)
+  wrk_d_->axpy(-0.5, *wrk_dbody_);  // wrk_c_ = (mu-rho*(d-s))/(2*rho)
 
   // compute ni (wrk_ineq_)
   wrk_ineq_->copyFrom(*wrk_d_);
@@ -1819,15 +1799,15 @@ bool hiopFRProbDense::get_warmstart_point(const size_type& n,
   wrk_d_->axpy(1.0, *wrk_ineq_);
 
   /*
-  * assemble x0
-  */
+   * assemble x0
+   */
   // FIXME; add global methed. now we only have local method
   wrk_primal_->setToConstant(0.0);
   wrk_x_->copyToStarting(*wrk_primal_, 0);
-  wrk_c_->copyToStarting(*wrk_primal_, n_x_);                         // pe
-  wrk_eq_->copyToStarting(*wrk_primal_, n_x_ + m_eq_);                // ne
-  wrk_d_->copyToStarting(*wrk_primal_, n_x_ + 2*m_eq_);               // pi
-  wrk_ineq_->copyToStarting(*wrk_primal_, n_x_ + 2*m_eq_ + m_ineq_);  // ni
+  wrk_c_->copyToStarting(*wrk_primal_, n_x_);                           // pe
+  wrk_eq_->copyToStarting(*wrk_primal_, n_x_ + m_eq_);                  // ne
+  wrk_d_->copyToStarting(*wrk_primal_, n_x_ + 2 * m_eq_);               // pi
+  wrk_ineq_->copyToStarting(*wrk_primal_, n_x_ + 2 * m_eq_ + m_ineq_);  // ni
 
   wrk_primal_->copyTo(x0);
 
@@ -1849,10 +1829,10 @@ bool hiopFRProbDense::get_warmstart_point(const size_type& n,
   // assemble zl
   // FIXME; add global methed. now we only have local method
   wrk_x_->copyToStarting(*wrk_primal_, 0);
-  wrk_c_->copyToStarting(*wrk_primal_, n_x_);                         // pe
-  wrk_eq_->copyToStarting(*wrk_primal_, n_x_ + m_eq_);                // ne
-  wrk_d_->copyToStarting(*wrk_primal_, n_x_ + 2*m_eq_);               // pi
-  wrk_ineq_->copyToStarting(*wrk_primal_, n_x_ + 2*m_eq_ + m_ineq_);  // ni
+  wrk_c_->copyToStarting(*wrk_primal_, n_x_);                           // pe
+  wrk_eq_->copyToStarting(*wrk_primal_, n_x_ + m_eq_);                  // ne
+  wrk_d_->copyToStarting(*wrk_primal_, n_x_ + 2 * m_eq_);               // pi
+  wrk_ineq_->copyToStarting(*wrk_primal_, n_x_ + 2 * m_eq_ + m_ineq_);  // ni
   wrk_primal_->copyTo(z_bndL0);
 
   // get zu
@@ -1910,8 +1890,8 @@ bool hiopFRProbDense::iterate_callback(int iter,
   nlp_base_->eval_c_d(*wrk_x_, true, *wrk_cbody_, *wrk_dbody_);
 
   // compute theta for base problem
-  wrk_cbody_->axpy(-1.0, crhs);           // wrk_cbody_ = (c-crhs)
-  wrk_dbody_->axpy(-1.0, *wrk_d_);        // wrk_dbody_ = (d-s)
+  wrk_cbody_->axpy(-1.0, crhs);     // wrk_cbody_ = (c-crhs)
+  wrk_dbody_->axpy(-1.0, *wrk_d_);  // wrk_dbody_ = (d-s)
 
   double theta_ori = 0.0;
   theta_ori += wrk_cbody_->onenorm();
@@ -1924,26 +1904,26 @@ bool hiopFRProbDense::iterate_callback(int iter,
   double max_nrmInf_feas = nlp_base_->options->GetNumeric("kappa_resto") * nrmInf_feas_ref_;
 
   // termination condition 1) theta_curr <= kappa_resto*theta_ref
-  if(nrmInf_feas_ori <= max_nrmInf_feas && iter>0) {
+  if(nrmInf_feas_ori <= max_nrmInf_feas && iter > 0) {
     // termination condition 2) (theta and logbar) are not in the original filter
     // check (original) filter condition
-    [[maybe_unused]] double trial_obj_ori = obj_base_; // obj_base_ has been updated in the FR loop when we evaluate obj
+    [[maybe_unused]] double trial_obj_ori = obj_base_;  // obj_base_ has been updated in the FR loop when we evaluate obj
 
     // compute the original logbar objective from the trial point given by the FR problem
     // Note that this function will updates the slack and dual variables
-    
-    // set original trial (x,d) to the soltion from FR problem 
+
+    // set original trial (x,d) to the soltion from FR problem
     hiopIterate* it_base_trial = solver_base_.get_it_trial_nonconst();
-    const hiopIterate* it_base_curr  = solver_base_.get_it_curr();
+    const hiopIterate* it_base_curr = solver_base_.get_it_curr();
     it_base_trial->get_x()->copyFrom(*wrk_x_);
     it_base_trial->get_d()->copyFrom(*wrk_d_);
 
     // compute other slacks in the base problem
     [[maybe_unused]] size_type n_adjusted_slacks = it_base_trial->compute_safe_slacks(*it_base_curr, solver_base_.get_mu());
 
-    // evaluate base problem log barr     
+    // evaluate base problem log barr
     solver_base_.get_logbar()->updateWithNlpInfo_trial_funcOnly(*it_base_trial, obj_base_, *wrk_cbody_, *wrk_dbody_);
-	  
+
     double trial_bar_obj_ori = solver_base_.get_logbar()->f_logbar_trial;
 
     if(!solver_base_.filter_contains(theta_ori, trial_bar_obj_ori)) {
@@ -1963,7 +1943,7 @@ bool hiopFRProbDense::iterate_callback(int iter,
 bool hiopFRProbDense::force_update_x(const int n, double* x)
 {
   // this function is used in FR in FR, see eq (33)
-  assert( n == n_);
+  assert(n == n_);
 
   hiopVector* c = solver_base_.get_c();
   hiopVector* d = solver_base_.get_d();
@@ -1975,14 +1955,14 @@ bool hiopFRProbDense::force_update_x(const int n, double* x)
   wrk_x_->copy_from_starting_at(x, 0, n_x_);
 
   /*
-  * compute pe (wrk_c_) and ne (wrk_eq_) rom equation (33)
-  */
+   * compute pe (wrk_c_) and ne (wrk_eq_) rom equation (33)
+   */
   // firstly use pe as a temp vec
-  double tmp_db = mu_/(2*rho_);
+  double tmp_db = mu_ / (2 * rho_);
   wrk_cbody_->copyFrom(*c);
-  wrk_cbody_->axpy(-1.0, crhs);     // wrk_cbody_ = (c-crhs)
+  wrk_cbody_->axpy(-1.0, crhs);  // wrk_cbody_ = (c-crhs)
   wrk_c_->setToConstant(tmp_db);
-  wrk_c_->axpy(-0.5, *wrk_cbody_);   // wrk_c_ = (mu-rho*(c-crhs))/(2*rho)
+  wrk_c_->axpy(-0.5, *wrk_cbody_);  // wrk_c_ = (mu-rho*(c-crhs))/(2*rho)
 
   // compute ne (wrk_eq_)
   wrk_eq_->copyFrom(*wrk_c_);
@@ -1996,13 +1976,13 @@ bool hiopFRProbDense::force_update_x(const int n, double* x)
   wrk_c_->axpy(1.0, *wrk_eq_);
 
   /*
-  * compute pi (wrk_d_) and ni (wrk_ineq_) rom equation (33)
-  */
+   * compute pi (wrk_d_) and ni (wrk_ineq_) rom equation (33)
+   */
   // firstly use pi as a temp vec
   wrk_dbody_->copyFrom(*d);
-  wrk_dbody_->axpy(-1.0, *s);        // wrk_dbody_ = (d-s)
+  wrk_dbody_->axpy(-1.0, *s);  // wrk_dbody_ = (d-s)
   wrk_d_->setToConstant(tmp_db);
-  wrk_d_->axpy(-0.5, *wrk_dbody_);   // wrk_c_ = (mu-rho*(d-s))/(2*rho)
+  wrk_d_->axpy(-0.5, *wrk_dbody_);  // wrk_c_ = (mu-rho*(d-s))/(2*rho)
 
   // compute ni (wrk_ineq_)
   wrk_ineq_->copyFrom(*wrk_d_);
@@ -2016,20 +1996,18 @@ bool hiopFRProbDense::force_update_x(const int n, double* x)
   wrk_d_->axpy(1.0, *wrk_ineq_);
 
   /*
-  * assemble x = [x pe ne pi ni]
-  */
+   * assemble x = [x pe ne pi ni]
+   */
   // FIXME; add global methed. now we only have local method
   wrk_x_->copyToStarting(*wrk_primal_, 0);
   wrk_c_->copyToStarting(*wrk_primal_, n_x_);
   wrk_eq_->copyToStarting(*wrk_primal_, n_x_ + m_eq_);
-  wrk_d_->copyToStarting(*wrk_primal_, n_x_ + 2*m_eq_);
-  wrk_ineq_->copyToStarting(*wrk_primal_, n_x_ + 2*m_eq_ + m_ineq_);
+  wrk_d_->copyToStarting(*wrk_primal_, n_x_ + 2 * m_eq_);
+  wrk_ineq_->copyToStarting(*wrk_primal_, n_x_ + 2 * m_eq_ + m_ineq_);
 
   wrk_primal_->copyTo(x);
 
   return true;
 }
 
-
-
-};
+};  // namespace hiop

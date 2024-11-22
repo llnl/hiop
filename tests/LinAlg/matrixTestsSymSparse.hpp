@@ -53,7 +53,7 @@
  * @author Slaven Peles <slaven.peles@pnnl.gov>, PNNL
  * @author Cameron Rutherford <robert.rutherford@pnnl.gov>, PNNL
  * @author Jake K. Ryan <jake.ryan@pnnl.gov>, PNNL
- * 
+ *
  */
 
 #pragma once
@@ -67,7 +67,10 @@
 #include <hiopVector.hpp>
 #include "testBase.hpp"
 
-namespace hiop { namespace tests {
+namespace hiop
+{
+namespace tests
+{
 
 /**
  * @brief Tests are re-implemented here if necessary for SparseTriplet Matrices,
@@ -75,27 +78,20 @@ namespace hiop { namespace tests {
  *
  * Any tests that would modify the sparsity pattern are not implemented.
  * Any tests that would make calls to non-implemented/needed functions are not implemented.
- * 
-*/
+ *
+ */
 class MatrixTestsSymSparse : public TestBase
 {
 public:
   MatrixTestsSymSparse() {}
-  virtual ~MatrixTestsSymSparse(){}
-  
+  virtual ~MatrixTestsSymSparse() {}
+
   /// @brief Test y <- beta * y + alpha * A * x
-  bool matrixTimesVec(
-      hiop::hiopMatrixSparse& A,
-      hiop::hiopVector& y,
-      hiop::hiopVector& x)
+  bool matrixTimesVec(hiop::hiopMatrixSparse& A, hiop::hiopVector& y, hiop::hiopVector& x)
   {
     assert(y.get_size() == A.m() && "Did you pass in vectors of the correct sizes?");
     assert(x.get_size() == A.n() && "Did you pass in vectors of the correct sizes?");
-    const real_type alpha = two,
-          beta  = half,
-          A_val = half,
-          y_val = two,
-          x_val = three;
+    const real_type alpha = two, beta = half, A_val = half, y_val = two, x_val = three;
     int fail = 0;
 
     y.setToConstant(y_val);
@@ -105,30 +101,26 @@ public:
 
     A.timesVec(beta, y, alpha, x);
 
-    fail += verifyAnswer(&y,
-      [=] (local_ordinal_type i)
-      {
-        const local_ordinal_type numValuesInRow = sparsity_pattern[i];
-        return (beta * y_val) + (alpha * A_val * x_val * numValuesInRow);
-      });
+    fail += verifyAnswer(&y, [=](local_ordinal_type i) {
+      const local_ordinal_type numValuesInRow = sparsity_pattern[i];
+      return (beta * y_val) + (alpha * A_val * x_val * numValuesInRow);
+    });
 
-    delete [] sparsity_pattern;
+    delete[] sparsity_pattern;
     printMessage(fail, __func__);
     return fail;
   }
-
 
   /**
    * Block of W += alpha*A
    *
    * @pre W is square
    * @pre A is symmetric sparse matrix
-   * 
+   *
    */
-  bool matrixAddUpperTriangleToSymDenseMatrixUpperTriangle(
-    hiop::hiopMatrixDense& W,
-    hiop::hiopMatrixSparse& A, // sym sparse matrix
-    const int rank=0)
+  bool matrixAddUpperTriangleToSymDenseMatrixUpperTriangle(hiop::hiopMatrixDense& W,
+                                                           hiop::hiopMatrixSparse& A,  // sym sparse matrix
+                                                           const int rank = 0)
   {
     const local_ordinal_type N_loc = W.get_local_size_n();
     const local_ordinal_type A_M = A.m();
@@ -139,51 +131,42 @@ public:
 
     // The offset must be on dense matrix diagonal
     const local_ordinal_type start_diag = N_loc - A_N_loc;
-    const real_type alpha = half,
-          A_val = half,
-          W_val = one;
+    const real_type alpha = half, A_val = half, W_val = one;
     int fail = 0;
 
     // Check with non-1 alpha
     A.setToConstant(A_val);
     W.setToConstant(W_val);
     A.addUpperTriangleToSymDenseMatrixUpperTriangle(start_diag, alpha, W);
-    
+
     // get sparsity pattern
     const auto* iRow = getRowIndices(&A);
     const auto* jCol = getColumnIndices(&A);
     auto nnz = A.numberOfNonzeros();
-    fail += verifyAnswer(&W,
-      [=] (local_ordinal_type i, local_ordinal_type j) -> real_type
-      {
-        // check if (i, j) within bounds of A
-        // then check if (i, j) within upper triangle of W
-        const bool isUpperTriangle = ( 
-          i>=start_diag && i<start_diag+A_M &&
-          j>=start_diag && j<start_diag+A_N_loc &&
-          j >= i);
+    fail += verifyAnswer(&W, [=](local_ordinal_type i, local_ordinal_type j) -> real_type {
+      // check if (i, j) within bounds of A
+      // then check if (i, j) within upper triangle of W
+      const bool isUpperTriangle =
+          (i >= start_diag && i < start_diag + A_M && j >= start_diag && j < start_diag + A_N_loc && j >= i);
 
-        int i_sp = i - start_diag;
-        int j_sp = j - start_diag;
-        // only nonzero entries in A will be added
-        const bool indexExists = (find_unsorted_pair(i_sp, j_sp, iRow, jCol, nnz) || find_unsorted_pair(j_sp, i_sp, iRow, jCol, nnz));
-        real_type ans = (isUpperTriangle && indexExists) ? W_val + A_val*alpha : W_val; // 1 + .5 * .5 = 1.25
-        return ans;
-      });
+      int i_sp = i - start_diag;
+      int j_sp = j - start_diag;
+      // only nonzero entries in A will be added
+      const bool indexExists =
+          (find_unsorted_pair(i_sp, j_sp, iRow, jCol, nnz) || find_unsorted_pair(j_sp, i_sp, iRow, jCol, nnz));
+      real_type ans = (isUpperTriangle && indexExists) ? W_val + A_val * alpha : W_val;  // 1 + .5 * .5 = 1.25
+      return ans;
+    });
 
     printMessage(fail, __func__, rank);
     return fail;
   }
 
-
   /// @todo Document this test for `startingAtAddSubDiagonalToStartingAt`
-  bool matrixStartingAtAddSubDiagonalToStartingAt(
-    hiop::hiopVector& W,
-    hiop::hiopMatrixSparse& A,
-    const int rank = 0)
+  bool matrixStartingAtAddSubDiagonalToStartingAt(hiop::hiopVector& W, hiop::hiopMatrixSparse& A, const int rank = 0)
   {
-    assert(W.get_size() == A.m()); // A is square matrix
-    
+    assert(W.get_size() == A.m());  // A is square matrix
+
     const auto start_src_idx = 0;
     const auto start_dest_idx = 0;
     const auto num_elems = W.get_size();
@@ -198,13 +181,11 @@ public:
     const auto* iRow = getRowIndices(&A);
     const auto* jCol = getColumnIndices(&A);
     auto nnz = A.numberOfNonzeros();
-    const auto fail = verifyAnswer(&W, 
-      [=](local_ordinal_type i) -> real_type
-      {
-        const bool indexExists = find_unsorted_pair(i, i, iRow, jCol, nnz);
-        return (indexExists) ? (W_val + A_val * alpha) : W_val;
-      });
-    
+    const auto fail = verifyAnswer(&W, [=](local_ordinal_type i) -> real_type {
+      const bool indexExists = find_unsorted_pair(i, i, iRow, jCol, nnz);
+      return (indexExists) ? (W_val + A_val * alpha) : W_val;
+    });
+
     printMessage(fail, __func__, rank);
     return fail;
   }
@@ -216,16 +197,16 @@ public:
                           hiop::hiopVector& diag,
                           const int rank = 0)
   {
-    assert(A.m() == A.n()); // A is square matrix
-    assert(diag.get_size() == B.m()); // B is square matrix
-    assert(A.m() >= B.m()); // A is larger or equal to B
-    assert(W.m() == W.n()); // W is square matrix
-    assert(W.m() == A.m()); // W has same dim as A
-  
+    assert(A.m() == A.n());            // A is square matrix
+    assert(diag.get_size() == B.m());  // B is square matrix
+    assert(A.m() >= B.m());            // A is larger or equal to B
+    assert(W.m() == W.n());            // W is square matrix
+    assert(W.m() == A.m());            // W has same dim as A
+
     const local_ordinal_type A_M = A.m();
     const local_ordinal_type A_N_loc = A.n();
     const local_ordinal_type B_M = B.m();
-    
+
     const auto B_val = one;
     const auto W_val = zero;
     const auto D_val = two;
@@ -235,69 +216,62 @@ public:
 
     B.setToConstant(B_val);
     diag.setToConstant(D_val);
-  
+
     A.set_Hess_FR(B, A.i_row(), A.j_col(), A.M(), diag);
 
     // copy to a dense matrix
     W.setToConstant(W_val);
     A.addUpperTriangleToSymDenseMatrixUpperTriangle(start_diag, alpha, W);
-    
+
     // get sparsity pattern
     const auto* iRowB = getRowIndices(&B);
     const auto* jColB = getColumnIndices(&B);
     auto nnzB = B.numberOfNonzeros();
-    fail += verifyAnswer(&W,
-      [=] (local_ordinal_type i, local_ordinal_type j) -> real_type
-      {
-        // check if (i, j) within bounds of A
-        // then check if (i, j) within upper triangle of W
-        const bool isUpperTriangle = ( 
-          i>=start_diag && i<start_diag+A_M &&
-          j>=start_diag && j<start_diag+A_N_loc &&
-          j >= i);
+    fail += verifyAnswer(&W, [=](local_ordinal_type i, local_ordinal_type j) -> real_type {
+      // check if (i, j) within bounds of A
+      // then check if (i, j) within upper triangle of W
+      const bool isUpperTriangle =
+          (i >= start_diag && i < start_diag + A_M && j >= start_diag && j < start_diag + A_N_loc && j >= i);
 
-        // only nonzero entries in A will be added to W
-        int i_sp = i - start_diag;
-        int j_sp = j - start_diag;
-        const bool sp_index_B = (i<B_M && j<B_M) && (find_unsorted_pair(i_sp, j_sp, iRowB, jColB, nnzB) || find_unsorted_pair(j_sp, i_sp, iRowB, jColB, nnzB));
-        const bool diag_index = (i<B_M && j<B_M) && (i==j);
+      // only nonzero entries in A will be added to W
+      int i_sp = i - start_diag;
+      int j_sp = j - start_diag;
+      const bool sp_index_B = (i < B_M && j < B_M) && (find_unsorted_pair(i_sp, j_sp, iRowB, jColB, nnzB) ||
+                                                       find_unsorted_pair(j_sp, i_sp, iRowB, jColB, nnzB));
+      const bool diag_index = (i < B_M && j < B_M) && (i == j);
 
-        real_type ans;
+      real_type ans;
 
-        if(isUpperTriangle && sp_index_B && diag_index) {
-          // found in sparse matirx B and it is a diagonal entry in B
-          ans = B_val + D_val;
-        } else if (isUpperTriangle && sp_index_B) {
-          // found in sparse matirx B
-          ans = B_val;
-        } else if (isUpperTriangle && diag_index) {
-          // NOT found in sparse matirx B. It comes from extra diag term
-          ans = D_val;
-        } else {
-          ans = W_val;
-        } 
-        return ans;
+      if(isUpperTriangle && sp_index_B && diag_index) {
+        // found in sparse matirx B and it is a diagonal entry in B
+        ans = B_val + D_val;
+      } else if(isUpperTriangle && sp_index_B) {
+        // found in sparse matirx B
+        ans = B_val;
+      } else if(isUpperTriangle && diag_index) {
+        // NOT found in sparse matirx B. It comes from extra diag term
+        ans = D_val;
+      } else {
+        ans = W_val;
       }
-    );
+      return ans;
+    });
 
     printMessage(fail, __func__, rank);
     return fail;
   }
 
 protected:
-  /// TODO: The sparse matrix is not distributed - all is local. 
+  /// TODO: The sparse matrix is not distributed - all is local.
   virtual real_type getLocalElement(const hiop::hiopMatrix* a, local_ordinal_type i, local_ordinal_type j) = 0;
   virtual real_type getLocalElement(const hiop::hiopVector* x, local_ordinal_type i) = 0;
   virtual real_type* getMatrixData(hiop::hiopMatrixSparse* a) = 0;
   virtual const local_ordinal_type* getRowIndices(const hiop::hiopMatrixSparse* a) = 0;
   virtual const local_ordinal_type* getColumnIndices(const hiop::hiopMatrixSparse* a) = 0;
   virtual local_ordinal_type getLocalSize(const hiop::hiopVector* x) = 0;
-  virtual int verifyAnswer(
-      hiop::hiopMatrixDense* A,
-      std::function<real_type(local_ordinal_type, local_ordinal_type)> expect) = 0;
-  virtual int verifyAnswer(
-      hiop::hiopVector* x,
-      std::function<real_type(local_ordinal_type)> expect) = 0;
+  virtual int verifyAnswer(hiop::hiopMatrixDense* A,
+                           std::function<real_type(local_ordinal_type, local_ordinal_type)> expect) = 0;
+  virtual int verifyAnswer(hiop::hiopVector* x, std::function<real_type(local_ordinal_type)> expect) = 0;
   virtual local_ordinal_type* numNonzerosPerRow(hiop::hiopMatrixSparse* mat) = 0;
   virtual local_ordinal_type* numNonzerosPerCol(hiop::hiopMatrixSparse* mat) = 0;
 
@@ -305,10 +279,8 @@ private:
   // linearly scans an unsorted array
   static bool find_unsorted_pair(int valA, int valB, const int* arrA, const int* arrB, size_t arrslen)
   {
-    for (int i = 0; i < static_cast<int>(arrslen); i++)
-    {
-      if (arrA[i] == valA && arrB[i] == valB)
-      {
+    for(int i = 0; i < static_cast<int>(arrslen); i++) {
+      if(arrA[i] == valA && arrB[i] == valB) {
         return true;
       }
     }
@@ -316,4 +288,5 @@ private:
   }
 };
 
-}} // namespace hiop::tests
+}  // namespace tests
+}  // namespace hiop

@@ -61,50 +61,45 @@
 #include <hiprand_kernel.h>
 #include "hiopCppStdUtils.hpp"
 
-__global__
-void array_random_uniform_hip(int n, double* d_array, unsigned long seed, double minv, double maxv)
+__global__ void array_random_uniform_hip(int n, double* d_array, unsigned long seed, double minv, double maxv)
 {
-    const int num_threads = blockDim.x * gridDim.x;
-    const int tid = blockIdx.x * blockDim.x + threadIdx.x;    
-    const double delta = maxv - minv;
-    hiprandState state;
-    hiprand_init(seed, tid, 0, &state);
-    for (int i = tid; i < n; i += num_threads) {
-      const double ranv = hiprand_uniform_double( &state ); // from 0 to 1
-      d_array[i] = ranv * delta + minv;	
-    }
+  const int num_threads = blockDim.x * gridDim.x;
+  const int tid = blockIdx.x * blockDim.x + threadIdx.x;
+  const double delta = maxv - minv;
+  hiprandState state;
+  hiprand_init(seed, tid, 0, &state);
+  for(int i = tid; i < n; i += num_threads) {
+    const double ranv = hiprand_uniform_double(&state);  // from 0 to 1
+    d_array[i] = ranv * delta + minv;
+  }
 }
 
-__global__ void set_to_constant_hip(int n, double *vec, double val)
+__global__ void set_to_constant_hip(int n, double* vec, double val)
 {
-
   const int num_threads = blockDim.x * gridDim.x;
-  const int tid = blockIdx.x * blockDim.x + threadIdx.x;    
-  for (int i = tid; i < n; i += num_threads) {
-    vec[i] = val;	
+  const int tid = blockIdx.x * blockDim.x + threadIdx.x;
+  for(int i = tid; i < n; i += num_threads) {
+    vec[i] = val;
   }
 }
 
 __global__ void copy_to_mapped_dest_hip(int n, const double* src, double* dest, const int* mapping)
 {
-
   const int num_threads = blockDim.x * gridDim.x;
-  const int tid = blockIdx.x * blockDim.x + threadIdx.x;    
-  for (int i = tid; i < n; i += num_threads) {
-    dest[mapping[i]] = src[i];	
+  const int tid = blockIdx.x * blockDim.x + threadIdx.x;
+  for(int i = tid; i < n; i += num_threads) {
+    dest[mapping[i]] = src[i];
   }
 }
 
 __global__ void copy_from_mapped_src_hip(int n, const double* src, double* dest, const int* mapping)
 {
-
   const int num_threads = blockDim.x * gridDim.x;
-  const int tid = blockIdx.x * blockDim.x + threadIdx.x;    
-  for (int i = tid; i < n; i += num_threads) {
-    dest[i] = src[mapping[i]];	
+  const int tid = blockIdx.x * blockDim.x + threadIdx.x;
+  for(int i = tid; i < n; i += num_threads) {
+    dest[i] = src[mapping[i]];
   }
 }
-
 
 namespace hiop
 {
@@ -113,24 +108,24 @@ namespace hip
 
 int array_random_uniform_kernel(int n, double* d_array, double minv, double maxv)
 {
-  int block_size=256;
-  int grid_size = (n+block_size-1)/block_size;
-  
+  int block_size = 256;
+  int grid_size = (n + block_size - 1) / block_size;
+
   unsigned long seed = generate_seed();
-  array_random_uniform_hip<<<grid_size,block_size>>>(n, d_array, seed, minv, maxv);
+  array_random_uniform_hip<<<grid_size, block_size>>>(n, d_array, seed, minv, maxv);
   hipDeviceSynchronize();
 
   return 1;
 }
 
 int array_random_uniform_kernel(int n, double* d_array)
-{  
+{
   unsigned long seed = generate_seed();
 
   hiprandGenerator_t generator;
   hiprandCreateGenerator(&generator, HIPRAND_RNG_PSEUDO_DEFAULT);
   hiprandSetPseudoRandomGeneratorSeed(generator, seed);
-  
+
   // generate random val from 0 to 1
   hiprandGenerateUniformDouble(generator, d_array, n);
 
@@ -141,25 +136,24 @@ int array_random_uniform_kernel(int n, double* d_array)
 
 void set_to_val_kernel(int n, double* values, double val)
 {
-  int block_size=256;
-  int num_blocks = (n+block_size-1)/block_size;
-  set_to_constant_hip<<<num_blocks,block_size>>>(n, values, val);
+  int block_size = 256;
+  int num_blocks = (n + block_size - 1) / block_size;
+  set_to_constant_hip<<<num_blocks, block_size>>>(n, values, val);
 }
 
 void copy_src_to_mapped_dest_kernel(int n, const double* src, double* dest, const int* mapping)
 {
-  int block_size=256;
-  int num_blocks = (n+block_size-1)/block_size;
-  copy_to_mapped_dest_hip<<<num_blocks,block_size>>>(n, src, dest, mapping);
+  int block_size = 256;
+  int num_blocks = (n + block_size - 1) / block_size;
+  copy_to_mapped_dest_hip<<<num_blocks, block_size>>>(n, src, dest, mapping);
 }
 
 void copy_mapped_src_to_dest_kernel(int n, const double* src, double* dest, const int* mapping)
 {
-  int block_size=256;
-  int num_blocks = (n+block_size-1)/block_size;
-  copy_from_mapped_src_hip<<<num_blocks,block_size>>>(n, src, dest, mapping);
+  int block_size = 256;
+  int num_blocks = (n + block_size - 1) / block_size;
+  copy_from_mapped_src_hip<<<num_blocks, block_size>>>(n, src, dest, mapping);
 }
 
-} //end of namespace hip
-} //end of namespace hiop
-
+}  // end of namespace hip
+}  // end of namespace hiop

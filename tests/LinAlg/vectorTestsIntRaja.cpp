@@ -57,9 +57,9 @@
 #include "vectorTestsIntRaja.hpp"
 #include <cassert>
 
-//TODO: this is a quick hack. Will need to modify this class to be aware of the instantiated
-// vector template. Likely a better approach would be to revise the `runTests` in testVector.cpp
-// to test multiple configurations of the memory backend and execution policies for RAJA vector.
+// TODO: this is a quick hack. Will need to modify this class to be aware of the instantiated
+//  vector template. Likely a better approach would be to revise the `runTests` in testVector.cpp
+//  to test multiple configurations of the memory backend and execution policies for RAJA vector.
 #if defined(HIOP_USE_CUDA)
 #include <ExecPoliciesRajaCudaImpl.hpp>
 using hiopVectorIntRajaT = hiop::hiopVectorIntRaja<hiop::MemBackendUmpire, hiop::ExecPolicyRajaCuda>;
@@ -67,12 +67,15 @@ using hiopVectorIntRajaT = hiop::hiopVectorIntRaja<hiop::MemBackendUmpire, hiop:
 #include <ExecPoliciesRajaHipImpl.hpp>
 using hiopVectorIntRajaT = hiop::hiopVectorIntRaja<hiop::MemBackendUmpire, hiop::ExecPolicyRajaHip>;
 #else
-//#if !defined(HIOP_USE_CUDA) && !defined(HIOP_USE_HIP)
+// #if !defined(HIOP_USE_CUDA) && !defined(HIOP_USE_HIP)
 #include <ExecPoliciesRajaOmpImpl.hpp>
 using hiopVectorIntRajaT = hiop::hiopVectorIntRaja<hiop::MemBackendUmpire, hiop::ExecPolicyRajaOmp>;
 #endif
 
-namespace hiop { namespace tests {
+namespace hiop
+{
+namespace tests
+{
 
 int VectorTestsIntRaja::getLocalElement(hiop::hiopVectorInt* xvec, int idx) const
 {
@@ -106,4 +109,5 @@ void VectorTestsIntRaja::setLocalElement(hiop::hiopVectorInt* xvec, int value) c
   }
 }
 
-}} // namespace hiop::tests
+}  // namespace tests
+}  // namespace hiop

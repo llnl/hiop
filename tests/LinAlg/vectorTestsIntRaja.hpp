@@ -57,7 +57,10 @@
 #include <hiopVectorInt.hpp>
 #include "vectorTestsInt.hpp"
 
-namespace hiop { namespace tests {
+namespace hiop
+{
+namespace tests
+{
 
 /**
  * @brief Collection of helper methods for hiopVectorIntRaja
@@ -68,12 +71,14 @@ namespace hiop { namespace tests {
 class VectorTestsIntRaja : public VectorTestsInt
 {
 public:
-  VectorTestsIntRaja(){}
-  virtual ~VectorTestsIntRaja(){}
+  VectorTestsIntRaja() {}
+  virtual ~VectorTestsIntRaja() {}
+
 private:
   virtual int getLocalElement(hiop::hiopVectorInt*, int) const;
   virtual void setLocalElement(hiop::hiopVectorInt*, int, int) const;
   virtual void setLocalElement(hiop::hiopVectorInt*, int) const;
 };
 
-}} // namespace hiop::tests
+}  // namespace tests
+}  // namespace hiop

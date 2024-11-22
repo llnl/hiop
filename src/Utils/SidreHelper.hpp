@@ -69,25 +69,25 @@ namespace hiop
 {
 /**
  * @brief Holder of functionality needed by HiOp for checkpointing based on axom::sidre
- */  
+ */
 class SidreHelper
 {
 public:
   /**
-   * @brief Copy raw array to sidre::View within specified sidre::Group. 
-   * 
+   * @brief Copy raw array to sidre::View within specified sidre::Group.
+   *
    * @params group contains the view where the copy should be made to.
-   * @params view_name is the name of the view where to copy 
+   * @params view_name is the name of the view where to copy
    * @params arr_src is the source double array
    * @params size is the number of elements of the array
    *
    * @exception std::runtime indicates the group contains a view with a number of elements
    * different than expected size.
-   * 
-   * @details A view with the specified name will be created if does not already exist. If 
+   *
+   * @details A view with the specified name will be created if does not already exist. If
    * exists, the view should have the same number of elements as the argument `size`.
    */
-  
+
   static void copy_array_to_view(::axom::sidre::Group& group,
                                  const ::std::string& view_name,
                                  const double* arr_src,
@@ -96,78 +96,75 @@ public:
     auto view = get_or_create_view(group, view_name, size);
     if(view->getNumElements() != size) {
       ::std::stringstream ss;
-      ss << "Size mismatch between HiOp state and existing sidre::view '" << view_name <<
-        "' when copying to view. HiOp state has " << size << " doubles, while the view " <<
-        "has " << view->getNumElements() << " double elements.\n";
+      ss << "Size mismatch between HiOp state and existing sidre::view '" << view_name
+         << "' when copying to view. HiOp state has " << size << " doubles, while the view " << "has "
+         << view->getNumElements() << " double elements.\n";
       throw ::std::runtime_error(ss.str());
     }
 
     const auto stride(view->getStride());
-    double *const arr_dest(view->getArray());
-    if(1==stride) {
-      ::std::copy(arr_src, arr_src+size, arr_dest);
+    double* const arr_dest(view->getArray());
+    if(1 == stride) {
+      ::std::copy(arr_src, arr_src + size, arr_dest);
     } else {
-      for(::axom::sidre::IndexType i=0; i<size; ++i) {
-        arr_dest[i*stride] = arr_src[i];
+      for(::axom::sidre::IndexType i = 0; i < size; ++i) {
+        arr_dest[i * stride] = arr_src[i];
       }
-    } 
+    }
   }
 
   /// Same as copy_array_to_view, but takes hiopVector as the source
-  static void copy_vec_to_view(::axom::sidre::Group& group,
-                               const ::std::string& view_name,
-                               const hiopVector& vec)
+  static void copy_vec_to_view(::axom::sidre::Group& group, const ::std::string& view_name, const hiopVector& vec)
   {
     const hiop::size_type size = vec.get_local_size();
     const double* arr = vec.local_data_host_const();
     copy_array_to_view(group, view_name, arr, size);
   }
-  
+
   /**
    * @brief Copy vectors of HiOp iterate to multiple sidre::View(s) in specified sidre::Group
    *
    * @params group contains the views where the vectors members of iterate will be copied to.
    * @params view_name_prefix is the string prefixing the views' names for each vector
-   * @params it is the HiOp iterate object 
+   * @params it is the HiOp iterate object
    *
    * @exception std::runtime indicates the group contains a view with a number of elements
    * different than size apparent from the iterate's vector.
-   * 
-   * @details For each vector member of the iterate, a view will be created if does not 
-   * already exist. If exists, the view should have the same number of elements as the 
-   * corresponding (HiOp) vector member of iterate passed as argument. The name of view 
+   *
+   * @details For each vector member of the iterate, a view will be created if does not
+   * already exist. If exists, the view should have the same number of elements as the
+   * corresponding (HiOp) vector member of iterate passed as argument. The name of view
    * is formed by appending the iterate's name ("x", "s", "y", etc.) to view_name_prefix.
    */
   static void copy_iterate_to_views(::axom::sidre::Group& group,
                                     const ::std::string& view_name_prefix,
                                     const hiopIterate& it)
   {
-    copy_vec_to_view(group, view_name_prefix+"x", *it.get_x());
-    copy_vec_to_view(group, view_name_prefix+"d", *it.get_d());
-    copy_vec_to_view(group, view_name_prefix+"sxl", *it.get_sxl());
-    copy_vec_to_view(group, view_name_prefix+"sxu", *it.get_sxu());
-    copy_vec_to_view(group, view_name_prefix+"sdl", *it.get_sdl());
-    copy_vec_to_view(group, view_name_prefix+"sdu", *it.get_sdu());
-    copy_vec_to_view(group, view_name_prefix+"yc", *it.get_yc());
-    copy_vec_to_view(group, view_name_prefix+"yd", *it.get_yd());
-    copy_vec_to_view(group, view_name_prefix+"zl", *it.get_zl());
-    copy_vec_to_view(group, view_name_prefix+"zu", *it.get_zu());
-    copy_vec_to_view(group, view_name_prefix+"vl", *it.get_vl());
-    copy_vec_to_view(group, view_name_prefix+"vu", *it.get_vu());
+    copy_vec_to_view(group, view_name_prefix + "x", *it.get_x());
+    copy_vec_to_view(group, view_name_prefix + "d", *it.get_d());
+    copy_vec_to_view(group, view_name_prefix + "sxl", *it.get_sxl());
+    copy_vec_to_view(group, view_name_prefix + "sxu", *it.get_sxu());
+    copy_vec_to_view(group, view_name_prefix + "sdl", *it.get_sdl());
+    copy_vec_to_view(group, view_name_prefix + "sdu", *it.get_sdu());
+    copy_vec_to_view(group, view_name_prefix + "yc", *it.get_yc());
+    copy_vec_to_view(group, view_name_prefix + "yd", *it.get_yd());
+    copy_vec_to_view(group, view_name_prefix + "zl", *it.get_zl());
+    copy_vec_to_view(group, view_name_prefix + "zu", *it.get_zu());
+    copy_vec_to_view(group, view_name_prefix + "vl", *it.get_vl());
+    copy_vec_to_view(group, view_name_prefix + "vu", *it.get_vu());
   }
-  
 
-   /**
-   * @brief Copy raw array from sidre::View within specified sidre::Group. 
-   * 
+  /**
+   * @brief Copy raw array from sidre::View within specified sidre::Group.
+   *
    * @params group contains the view that should be copied from
-   * @params view_name is the name of the view where to copy 
+   * @params view_name is the name of the view where to copy
    * @params arr_dest is the source double array
    * @params size is the number of elements of the array
    *
    * @exception std::runtime indicates the group contains a view with a number of elements
    * different than expected size or that a view with the specified name does not exist.
-   * 
+   *
    * @details A view with the specified name should exist and have a number of elements
    * identical to the argument `size`
    */
@@ -180,56 +177,52 @@ public:
     const ::axom::sidre::View* view_const = group.getView(view_name);
     if(!view_const) {
       ::std::stringstream ss;
-      ss << "Could not find view '" << view_name << " (to copy from) in the "<< 
-        "sidre::Group provided.\n";
+      ss << "Could not find view '" << view_name << " (to copy from) in the " << "sidre::Group provided.\n";
       throw ::std::runtime_error(ss.str());
     }
     if(view_const->getNumElements() != size) {
       ::std::stringstream ss;
-      ss << "Size mismatch between HiOp state and sidre::View '" << view_name <<
-        "' when copying from the view. HiOp state is " << size << " doubles, "<<
-        "while the view has " << view_const->getNumElements() << " double elements.\n";
+      ss << "Size mismatch between HiOp state and sidre::View '" << view_name
+         << "' when copying from the view. HiOp state is " << size << " doubles, " << "while the view has "
+         << view_const->getNumElements() << " double elements.\n";
       throw ::std::runtime_error(ss.str());
     }
 
     // const_cast becase View does not have a const getArray()
     auto view = const_cast<::axom::sidre::View*>(view_const);
     assert(view);
-    const double *const arr_src = view->getArray();
+    const double* const arr_src = view->getArray();
     const auto stride(view->getStride());
 
-    if(1==stride) {
-      ::std::copy(arr_src, arr_src+size, arr_dest);
+    if(1 == stride) {
+      ::std::copy(arr_src, arr_src + size, arr_dest);
     } else {
-      for(hiop::index_type i=0; i<size; ++i) {
-        arr_dest[i] = arr_src[i*stride];
+      for(hiop::index_type i = 0; i < size; ++i) {
+        arr_dest[i] = arr_src[i * stride];
       }
     }
   }
 
   /// Same as copy_array_from_view but with a hiopVector as destination
-  static void copy_vec_from_view(const ::axom::sidre::Group& group,
-                                 const ::std::string& view_name,
-                                 hiopVector& vec)
+  static void copy_vec_from_view(const ::axom::sidre::Group& group, const ::std::string& view_name, hiopVector& vec)
   {
     const hiop::size_type size = vec.get_local_size();
     double* arr = vec.local_data_host();
     copy_array_from_view(group, view_name, arr, size);
-    
   }
 
   /**
-   * @brief Copy iterate from multiple sidre::View(s) within specified sidre::Group. 
-   * 
+   * @brief Copy iterate from multiple sidre::View(s) within specified sidre::Group.
+   *
    * @params group contains the views where the copy should be made to.
    * @params view_name_prefix is a string prefixing the views' name
    * @params it is the HiOp iterate object where the views will be copied to.
    *
    * @exception std::runtime indicates the group contains a view with a number of elements
    * different than expected size or that a view with the expected name does not exist.
-   * 
+   *
    * @details All views must exist and have a number of elements identical to the size of
-   * corresponding vector from `it`. The views are located by their names, which are  
+   * corresponding vector from `it`. The views are located by their names, which are
    * expected to be view_name_prefix concatenated with the iterate's name, see method
    * copy_vec_to_views.
    */
@@ -238,48 +231,48 @@ public:
                                       const ::std::string& view_name_prefix,
                                       hiopIterate& it)
   {
-    copy_vec_from_view(group, view_name_prefix+"x", *it.get_x());
-    copy_vec_from_view(group, view_name_prefix+"d", *it.get_d());
-    copy_vec_from_view(group, view_name_prefix+"sxl", *it.get_sxl());
-    copy_vec_from_view(group, view_name_prefix+"sxu", *it.get_sxu());
-    copy_vec_from_view(group, view_name_prefix+"sdl", *it.get_sdl());
-    copy_vec_from_view(group, view_name_prefix+"sdu", *it.get_sdu());
-    copy_vec_from_view(group, view_name_prefix+"yc", *it.get_yc());
-    copy_vec_from_view(group, view_name_prefix+"yd", *it.get_yd());
-    copy_vec_from_view(group, view_name_prefix+"zl", *it.get_zl());
-    copy_vec_from_view(group, view_name_prefix+"zu", *it.get_zu());
-    copy_vec_from_view(group, view_name_prefix+"vl", *it.get_vl());
-    copy_vec_from_view(group, view_name_prefix+"vu", *it.get_vu());
+    copy_vec_from_view(group, view_name_prefix + "x", *it.get_x());
+    copy_vec_from_view(group, view_name_prefix + "d", *it.get_d());
+    copy_vec_from_view(group, view_name_prefix + "sxl", *it.get_sxl());
+    copy_vec_from_view(group, view_name_prefix + "sxu", *it.get_sxu());
+    copy_vec_from_view(group, view_name_prefix + "sdl", *it.get_sdl());
+    copy_vec_from_view(group, view_name_prefix + "sdu", *it.get_sdu());
+    copy_vec_from_view(group, view_name_prefix + "yc", *it.get_yc());
+    copy_vec_from_view(group, view_name_prefix + "yd", *it.get_yd());
+    copy_vec_from_view(group, view_name_prefix + "zl", *it.get_zl());
+    copy_vec_from_view(group, view_name_prefix + "zu", *it.get_zu());
+    copy_vec_from_view(group, view_name_prefix + "vl", *it.get_vl());
+    copy_vec_from_view(group, view_name_prefix + "vu", *it.get_vu());
   }
-  
+
   /// Add '.root' extension if path is not a valid file
   static ::std::string check_path(::std::string path)
   {
     ::std::ifstream f(path, ::std::ifstream::in);
-    //this hack is to trigger a failure (f.good() returns false) if 'path' exists but it
-    //is a directory.
+    // this hack is to trigger a failure (f.good() returns false) if 'path' exists but it
+    // is a directory.
     f.seekg(0, ::std::ios::end);
     return f.good() ? path : (path + ".root");
   }
+
 private:
   /**
    * @brief Get or create new view within a sidre::Group
    *
    * @details
-   * The argument size is not used if a view already exists within the group and NO error 
+   * The argument size is not used if a view already exists within the group and NO error
    * is reported if this view's number of elements is different than the expected size.
    */
   static ::axom::sidre::View* get_or_create_view(::axom::sidre::Group& group,
                                                  const ::std::string& name,
                                                  const hiop::size_type& size)
-{
-  auto view = group.getView(name);
-  if(!view) {
-    view = group.createViewAndAllocate(name, ::axom::sidre::DOUBLE_ID, size);
+  {
+    auto view = group.getView(name);
+    if(!view) {
+      view = group.createViewAndAllocate(name, ::axom::sidre::DOUBLE_ID, size);
+    }
+    return view;
   }
-  return view;
-}
-
 };
-} //namespace hiop
-#endif //HIOP_SIDRE_HELP
+}  // namespace hiop
+#endif  // HIOP_SIDRE_HELP

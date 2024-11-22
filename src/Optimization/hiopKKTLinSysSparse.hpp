@@ -79,26 +79,30 @@ public:
 
   virtual bool build_kkt_matrix(const hiopPDPerturbation& pdreg);
 
-  virtual bool solveCompressed(hiopVector& rx, hiopVector& ryc, hiopVector& ryd,
-                               hiopVector& dx, hiopVector& dyc, hiopVector& dyd);
+  virtual bool solveCompressed(hiopVector& rx,
+                               hiopVector& ryc,
+                               hiopVector& ryd,
+                               hiopVector& dx,
+                               hiopVector& dyc,
+                               hiopVector& dyd);
 
 protected:
-  hiopVector *rhs_; //[rx_tilde, ryc_tilde, ryd_tilde]
+  hiopVector* rhs_;  //[rx_tilde, ryc_tilde, ryd_tilde]
 
   //
-  //from the parent class we also use
+  // from the parent class we also use
   //
   //  hiopVectorPar *Dd_inv;
   //  hiopVectorPar *ryd_tilde;
 
-  //from the parent's parent class (hiopKKTLinSysCompressed) we also use
-  //  hiopVectorPar *Dx;
-  //  hiopVectorPar *rx_tilde;
+  // from the parent's parent class (hiopKKTLinSysCompressed) we also use
+  //   hiopVectorPar *Dx;
+  //   hiopVectorPar *rx_tilde;
 
   // Keeps Hx = HessSp_->sp_mat() + Dxs (Dx=log-barrier diagonal for x)
-  hiopVector *Hx_;
+  hiopVector* Hx_;
 
-  //just dynamic_cast-ed pointers
+  // just dynamic_cast-ed pointers
   hiopNlpSparse* nlpSp_;
   hiopMatrixSparse* HessSp_;
   const hiopMatrixSparse* Jac_cSp_;
@@ -110,10 +114,9 @@ protected:
   hiopCSR_IO csr_writer_;
 
 private:
-  //placeholder for the code that decides which linear solver to used based on safe_mode_
+  // placeholder for the code that decides which linear solver to used based on safe_mode_
   hiopLinSolverSymSparse* determineAndCreateLinsys(int nxd, int neq, int nineq, int nnz);
 };
-
 
 /*
  * Solves KKTLinSysCompressedXDYcYd by exploiting the sparse structure
@@ -138,27 +141,33 @@ public:
 
   virtual bool build_kkt_matrix(const hiopPDPerturbation& pdreg);
 
-  virtual bool solveCompressed(hiopVector& rx, hiopVector& rd, hiopVector& ryc, hiopVector& ryd,
-                               hiopVector& dx, hiopVector& dd, hiopVector& dyc, hiopVector& dyd);
+  virtual bool solveCompressed(hiopVector& rx,
+                               hiopVector& rd,
+                               hiopVector& ryc,
+                               hiopVector& ryd,
+                               hiopVector& dx,
+                               hiopVector& dd,
+                               hiopVector& dyc,
+                               hiopVector& dyd);
 
 protected:
-  hiopVector *rhs_; //[rx_tilde, rd_tilde, ryc, ryd]
+  hiopVector* rhs_;  //[rx_tilde, rd_tilde, ryc, ryd]
 
   //
-  //from the parent class we also use
+  // from the parent class we also use
   //
   //  hiopVectorPar *Dd;
   //  hiopVectorPar *ryd_tilde;
 
-  //from the parent's parent class (hiopKKTLinSysCompressed) we also use
-  //  hiopVectorPar *Dx;
-  //  hiopVectorPar *rx_tilde;
+  // from the parent's parent class (hiopKKTLinSysCompressed) we also use
+  //   hiopVectorPar *Dx;
+  //   hiopVectorPar *rx_tilde;
 
   // Keeps Hx = Dx (Dx=log-barrier diagonal for x) + regularization
   // Keeps Hd = Dd (Dd=log-barrier diagonal for slack variable) + regularization
   hiopVector *Hx_, *Hd_;
 
-  //just dynamic_cast-ed pointers
+  // just dynamic_cast-ed pointers
   hiopNlpSparse* nlpSp_;
   hiopMatrixSparse* HessSp_;
   const hiopMatrixSparse* Jac_cSp_;
@@ -170,10 +179,9 @@ protected:
   hiopCSR_IO csr_writer_;
 
 private:
-  //placeholder for the code that decides which linear solver to used based on safe_mode_
+  // placeholder for the code that decides which linear solver to used based on safe_mode_
   hiopLinSolverSymSparse* determineAndCreateLinsys(int nxd, int neq, int nineq, int nnz);
 };
-
 
 /*
  * Solves KKTLinSysCompressedXYcYd by exploiting the sparse structure
@@ -208,19 +216,37 @@ public:
 
   virtual bool build_kkt_matrix(const hiopPDPerturbation& pdreg);
 
-  bool solve(hiopVector& rx, hiopVector& ryc, hiopVector& ryd, hiopVector& rd,
-             hiopVector& rvl, hiopVector& rvu, hiopVector& rzl, hiopVector& rzu,
-             hiopVector& rsdl, hiopVector& rsdu, hiopVector& rsxl, hiopVector& rsxu,
-             hiopVector& dx, hiopVector& dyc, hiopVector& dyd, hiopVector& dd,
-             hiopVector& dvl, hiopVector& dvu, hiopVector& dzl, hiopVector& dzu,
-             hiopVector& dsdl, hiopVector& dsdu, hiopVector& dsxl, hiopVector& dsxu);
+  bool solve(hiopVector& rx,
+             hiopVector& ryc,
+             hiopVector& ryd,
+             hiopVector& rd,
+             hiopVector& rvl,
+             hiopVector& rvu,
+             hiopVector& rzl,
+             hiopVector& rzu,
+             hiopVector& rsdl,
+             hiopVector& rsdu,
+             hiopVector& rsxl,
+             hiopVector& rsxu,
+             hiopVector& dx,
+             hiopVector& dyc,
+             hiopVector& dyd,
+             hiopVector& dd,
+             hiopVector& dvl,
+             hiopVector& dvu,
+             hiopVector& dzl,
+             hiopVector& dzu,
+             hiopVector& dsdl,
+             hiopVector& dsdu,
+             hiopVector& dsxl,
+             hiopVector& dsxu);
 
 protected:
-  hiopVector *rhs_;
+  hiopVector* rhs_;
 
   hiopVector *Hx_, *Hd_;
 
-  //just dynamic_cast-ed pointers
+  // just dynamic_cast-ed pointers
   hiopNlpSparse* nlpSp_;
   hiopMatrixSparse* HessSp_;
   const hiopMatrixSparse* Jac_cSp_;
@@ -232,10 +258,10 @@ protected:
   hiopCSR_IO csr_writer_;
 
 private:
-  //placeholder for the code that decides which linear solver to used based on safe_mode_
-  hiopLinSolverNonSymSparse* determineAndCreateLinsys(const int &n, const int &n_con, const int &nnz);
+  // placeholder for the code that decides which linear solver to used based on safe_mode_
+  hiopLinSolverNonSymSparse* determineAndCreateLinsys(const int& n, const int& n_con, const int& nnz);
 };
 
-} // end of namespace
+}  // namespace hiop
 
 #endif

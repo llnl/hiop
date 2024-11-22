@@ -70,7 +70,7 @@ namespace hiop
 {
 
 /**
- * Abstract class specifying the linear solver interface needed by interior-point 
+ * Abstract class specifying the linear solver interface needed by interior-point
  * methods of HiOp. Implementations of this abstract class should be wrappers
  * of existing CPU and GPU libraries for solving linear systems.
  */
@@ -87,19 +87,19 @@ public:
    */
   virtual int matrixChanged() = 0;
 
-  /** 
-   * Method to solve the linear system once the factorization phase has been 
+  /**
+   * Method to solve the linear system once the factorization phase has been
    * completed by matrixChanged().
-   * 
-   * @param x is on entry the right-hand side of the system to be solved. On exit 
+   *
+   * @param x is on entry the right-hand side of the system to be solved. On exit
    * it contains the solution.
    */
   virtual bool solve(hiopVector& x) = 0;
-  
+
   /**
-   * Method to solve the linear system with multiple right-hand sides once the 
+   * Method to solve the linear system with multiple right-hand sides once the
    * factorization phase has been completed by matrixChanged().
-   * 
+   *
    * @param x contains on entry the right-hand side(s) of the system to be solved
    * and storesthe solutions on exit.
    */
@@ -108,6 +108,7 @@ public:
     assert(false && "not yet supported");
     return false;
   }
+
 public:
   hiopNlpFormulation* nlp_;
   bool perf_report_;
@@ -121,36 +122,33 @@ public:
   virtual ~hiopLinSolverSymDense();
 
   hiopMatrixDense& sysMatrix();
+
 protected:
   hiopMatrixDense* M_;
+
 protected:
   hiopLinSolverSymDense();
 };
 
-
-/** 
- * Base class for symmetric and non-symmetric sparse linear systems/solvers 
+/**
+ * Base class for symmetric and non-symmetric sparse linear systems/solvers
  */
 class hiopLinSolverSparseBase : public hiopLinSolver
 {
 public:
   hiopLinSolverSparseBase()
-    : M_(nullptr),
-      sys_mat_owned_(true)
-  {
-  }
-  
+      : M_(nullptr),
+        sys_mat_owned_(true)
+  {}
+
   virtual ~hiopLinSolverSparseBase()
   {
     if(sys_mat_owned_) {
       delete M_;
     }
   }
-  
-  inline hiopMatrixSparse* sys_matrix()
-  {
-    return M_;
-  }
+
+  inline hiopMatrixSparse* sys_matrix() { return M_; }
 
   inline void set_sys_matrix(hiopMatrixSparse* M)
   {
@@ -161,13 +159,14 @@ public:
     sys_mat_owned_ = false;
     M_ = M;
   }
+
 protected:
   hiopMatrixSparse* M_;
   bool sys_mat_owned_;
 };
 
-/** 
- * Base class for symmetric (indefinite or positive definite) sparse solvers 
+/**
+ * Base class for symmetric (indefinite or positive definite) sparse solvers
  */
 class hiopLinSolverSymSparse : public hiopLinSolverSparseBase
 {
@@ -176,44 +175,41 @@ public:
   hiopLinSolverSymSparse(size_type n, size_type nnz, hiopNlpFormulation* nlp);
 
   /**
-   * Constructor that uses the matrix passed as argument as internal system matrix. The system matrix will NOT be 
-   * managed by this class 
-   * 
+   * Constructor that uses the matrix passed as argument as internal system matrix. The system matrix will NOT be
+   * managed by this class
+   *
    * @note This constructor should set `sys_mat_owned_` to `false`.
    */
   hiopLinSolverSymSparse(hiopMatrixSparse* M, hiopNlpFormulation* nlp);
 
   /**
    * Barebone constructor that does not create or set internal system matrix. It should be used for cases when
-   * the system matrix is not available upon instantiation of this class. This system matrix should be subsequently 
+   * the system matrix is not available upon instantiation of this class. This system matrix should be subsequently
    * set by the calling code by invoking `set_sys_matrix`.
    *
    * @note This constructor should set `sys_mat_owned_` to false.
    */
   hiopLinSolverSymSparse(hiopNlpFormulation* nlp);
-  
-  virtual ~hiopLinSolverSymSparse()
-  {
-  }
+
+  virtual ~hiopLinSolverSymSparse() {}
+
 protected:
   hiopLinSolverSymSparse() {}
 };
 
-/** 
- * Base class for non-symmetric sparse solvers 
-*/
+/**
+ * Base class for non-symmetric sparse solvers
+ */
 class hiopLinSolverNonSymSparse : public hiopLinSolverSparseBase
 {
 public:
   hiopLinSolverNonSymSparse(size_type n, size_type nnz, hiopNlpFormulation* nlp);
-  virtual ~hiopLinSolverNonSymSparse()
-  {
-  }
-  
+  virtual ~hiopLinSolverNonSymSparse() {}
+
 protected:
   hiopLinSolverNonSymSparse() = delete;
 };
 
-} //end namespace
+}  // namespace hiop
 
 #endif
