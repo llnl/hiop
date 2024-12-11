@@ -70,3 +70,6 @@ SortIncludes: Never                               # Do not sort `#include` state
 #AllowShortFunctionsOnASingleLine: Empty          # Allow short functions to be on a single line, if empty
 #AllowShortIfStatementsOnASingleLine: Never       # Never allow if statements to be on a single line
 
+# Insert braces after control statements
+InsertBraces true				  # Insert braces after control statements (if, else, for, do, and while)
+

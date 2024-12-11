@@ -1,3 +1,6 @@
 [submodule "tpl/eigen"]
 	path = tpl/eigen
 	url = https://gitlab.com/libeigen/eigen.git
+[submodule "blt"]
+	path = blt
+	url = https://github.com/LLNL/blt.git
