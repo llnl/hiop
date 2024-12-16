@@ -148,6 +148,16 @@ Metis is usually detected automatically and needs not be specified under normal 
 
 UMFPACK (part of SuiteSparse) and METIS need to be provided as shown above.
 
+## Install with Spack
+
+If you would like to use our public [`package.py`](https://github.com/spack/spack/blob/develop/var/spack/repos/builtin/packages/hiop/package.py):
+
+```bash
+spack install hiop@develop
+```
+
+Additional information about using Spack can be found at [spack.readthedocs.io](https://spack.readthedocs.io/en/latest/) or within HiOp's [`package.py`]((https://github.com/spack/spack/blob/develop/var/spack/repos/builtin/packages/hiop/package.py)).
+
 # Interfacing with HiOp 
 
 HiOp supports three types of optimization problems, each with a separate input formats in the form of the C++ interfaces `hiopInterfaceDenseConstraints`,`hiopInterfaceSparse` and `hiopInterfaceMDS`. These interfaces are specified in [hiopInterface.hpp](src/Interface/hiopInterface.hpp) and documented and discussed as well in the [user manual](doc/hiop_usermanual.pdf).
