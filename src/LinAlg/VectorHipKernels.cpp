@@ -53,7 +53,7 @@
  */
 #include "VectorHipKernels.hpp"
 #include <hip/hip_runtime.h>
-#include <hipblas.h>
+#include <hipblas/hipblas.h>
 
 #include <thrust/device_ptr.h>
 #include <thrust/device_vector.h>

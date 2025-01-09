@@ -59,7 +59,7 @@
 #include "VectorHipKernels.hpp"
 #include "MathKernelsHip.hpp"
 #include <hip/hip_runtime.h>
-#include <hipblas.h>
+#include <hipblas/hipblas.h>
 
 #include "hiopVectorPar.hpp"
 

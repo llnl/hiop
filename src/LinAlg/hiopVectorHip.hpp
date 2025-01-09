@@ -65,7 +65,7 @@
 
 #include "hiopVector.hpp"
 
-#include <hipblas.h>
+#include <hipblas/hipblas.h>
 
 namespace hiop
 {
