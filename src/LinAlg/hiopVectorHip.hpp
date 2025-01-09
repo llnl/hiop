@@ -65,7 +65,11 @@
 
 #include "hiopVector.hpp"
 
+#if HIP_VERSION >= 50200000
 #include <hipblas/hipblas.h>
+#else
+#include <hipblas.h>
+#endif
 
 namespace hiop
 {
