@@ -10,15 +10,58 @@ jobs:
         os: [ubuntu-latest]
 
     steps:
-      - uses: actions/checkout@master
-      - uses: ashutoshvarma/action-cmake-build@master
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up CMake
+        uses: jwlawson/actions-setup-cmake@v2
         with:
-          source-dir: ${{ runner.workspace }}/hiop
-          build-dir: ${{ runner.workspace }}/hiop/build
-          cc: gcc
-          cxx: g++
-          build-type: Debug
-          configure-options: -DHIOP_USE_RAJA=OFF -DHIOP_USE_MPI=OFF -DCMAKE_BUILD_TYPE=Debug -DHIOP_BUILD_SHARED=ON -DHIOP_BUILD_STATIC=ON -DCMAKE_INSTALL_PREFIX=.. -DHIOP_WITH_KRON_REDUCTION=OFF -DHIOP_SPARSE=OFF
-          run-test: true
-          install-build: true
-          parallel: 4
+          cmake-version: '3.21.x'
+
+      - name: Set up GCC and G++
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libblas-dev liblapack-dev
+
+      - name: Use cmake
+        run: cmake --version
+
+      - name: Cache CMake build
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/CMake
+            ./hiop/build
+          key: ${{ runner.os }}-cmake-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-cmake-
+
+      - name: Configure CMake
+        run: |
+          mkdir -p ${{ runner.workspace }}/hiop/build
+          cd ${{ runner.workspace }}/hiop/build
+          cmake ${{ runner.workspace }}/hiop \
+            -DHIOP_USE_RAJA=OFF \
+            -DHIOP_USE_MPI=OFF \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DHIOP_BUILD_SHARED=ON \
+            -DHIOP_BUILD_STATIC=ON \
+            -DCMAKE_INSTALL_PREFIX=.. \
+            -DHIOP_WITH_KRON_REDUCTION=OFF \
+            -DHIOP_SPARSE=OFF
+
+      - name: Build hiop
+        run: |
+          cd ${{ runner.workspace }}/hiop/build
+          make -j4
+
+      - name: Install hiop
+        run: |
+          cd ${{ runner.workspace }}/hiop/build
+          make install
+
+      - name: Run Tests
+        run: |
+          cd ${{ runner.workspace }}/hiop/build
+          make test
+
