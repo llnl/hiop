@@ -39,7 +39,7 @@ target_include_directories(Hipblas INTERFACE ${HIPBLAS_INCLUDE_DIR})
 include(FindHiopMagma)
 target_link_libraries(Magma    INTERFACE Hipblas)
 
-target_include_directories(hiop_hip INTERFACE ${ROCM_PATH}/hipfft/include)
+target_include_directories(hiop_hip INTERFACE ${ROCM_PATH}/include/hipfft)
 target_link_libraries(hiop_hip INTERFACE
   hip::hiprand roc::rocrand
   hip::hipfft
