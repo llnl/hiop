@@ -59,7 +59,11 @@
 #include "VectorHipKernels.hpp"
 #include "MathKernelsHip.hpp"
 #include <hip/hip_runtime.h>
+#if HIP_VERSION >= 50200000
+#include <hipblas/hipblas.h>
+#else
 #include <hipblas.h>
+#endif
 
 #include "hiopVectorPar.hpp"
 
