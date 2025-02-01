@@ -1,0 +1,58 @@
+spack:
+  specs:
+  - hiop@develop+kron+mpi+raja+sparse+cuda+cusolver_lu cuda_arch=70
+  - raja@2024.07.0
+  - umpire@2024.07.0
+  - coinhsl@2015.06.23
+  
+  view: false
+  concretizer:
+    unify: true
+    reuse: false
+  packages:
+    all:
+      providers:
+        mpi: [spectrum-mpi]
+        blas: [openblas]
+        lapack: [openblas]
+    spectrum-mpi:
+      externals:
+      - spec: spectrum-mpi@rolling-release
+        modules: [spectrum-mpi/rolling-release]
+      buildable: false
+    coinnhsl:
+      variants: +blas+metis   
+    python:
+      externals:
+      - spec: python@3.8.2
+        modules: [python/3.8.2]
+      buildable: false
+    cuda:
+      externals:
+      - spec: cuda@11.7.0
+        modules:
+        - cuda/11.7.0
+      buildable: false
+    cmake:
+      externals:
+      - spec: cmake@3.23.1
+        modules: [cmake/3.23.1]
+      buildable: false
+  compilers:
+  - compiler:
+      spec: gcc@11.2.1
+      paths:
+        cc: /usr/tce/packages/gcc/gcc-11.2.1/bin/cc
+        cxx: /usr/tce/packages/gcc/gcc-11.2.1/bin/g++
+        f77: /usr/tce/packages/gcc/gcc-11.2.1/bin/gfortran
+        fc: /usr/tce/packages/gcc/gcc-11.2.1/bin/gfortran
+      flags: {}
+      operating_system: rhel7
+      target: ppc64le
+      modules: []
+      environment: {}
+      extra_rpaths: []
+  develop:
+    hiop:
+      path: /usr/workspace/hiop/lassen/hiop_from_spack
+      spec: hiop@develop

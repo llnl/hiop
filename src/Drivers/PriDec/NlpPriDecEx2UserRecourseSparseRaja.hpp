@@ -211,7 +211,7 @@ public:
           }
         });
 
-    RAJA::forall<RAJA::loop_exec>(RAJA::RangeSegment(0, n), [=](RAJA::Index_type i) { type[i] = hiopNonlinear; });
+    RAJA::forall<RAJA::seq_exec>(RAJA::RangeSegment(0, n), [=](RAJA::Index_type i) { type[i] = hiopNonlinear; });
     return true;
   }
 

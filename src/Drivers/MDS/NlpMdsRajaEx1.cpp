@@ -240,7 +240,7 @@ bool MdsEx1::get_vars_info(const size_type& n, double* xlow, double* xupp, Nonli
       });
 
   // Use a sequential policy for host computations for now
-  RAJA::forall<RAJA::loop_exec>(RAJA::RangeSegment(0, n), [=](RAJA::Index_type i) { type[i] = hiopNonlinear; });
+  RAJA::forall<RAJA::seq_exec>(RAJA::RangeSegment(0, n), [=](RAJA::Index_type i) { type[i] = hiopNonlinear; });
   return true;
 }
 
@@ -277,7 +277,7 @@ bool MdsEx1::get_cons_info(const size_type& m, double* clow, double* cupp, Nonli
       });
 
   // Must be a sequential host policy for now
-  RAJA::forall<RAJA::loop_exec>(RAJA::RangeSegment(0, m), [=](RAJA::Index_type i) { type[i] = hiopNonlinear; });
+  RAJA::forall<RAJA::seq_exec>(RAJA::RangeSegment(0, m), [=](RAJA::Index_type i) { type[i] = hiopNonlinear; });
   return true;
 }
 
