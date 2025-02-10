@@ -30,7 +30,6 @@ author = {Cosmin G. Petra},
 and when using the the PriDec solver please cite:
 ```
 @article{wang2023,
-  archivePrefix = {arXiv},
   author = {J. Wang and C. G. Petra},
   title = {A Sequential Quadratic Programming Algorithm for Nonsmooth Problems with Upper-$\mathcal{C}^2$ Objective},
   journal = {SIAM Journal on Optimization},
@@ -184,13 +183,9 @@ or, if you are using C-shell, as
 $ setenv NVBLAS_CONFIG_FILE <hiop install dir>/lib/nvblas.conf
 ```
 
-## Existing issues
-Users are highly encouraged to report any issues they found from using HiOp.
-One known issue is that there is some minor inconsistence between HiOp and linear package STRUMPACK.
-When STRUMPACK is compiled with MPI (and Scalapack), user must set flag `HIOP_USE_MPI` to `ON` when compiling HiOp.
-Otherwise HiOp won't load MPI module and will return an error when links to STRUMPACK, since the later one requires a valid MPI module. 
-Similarly, if both Magma and STRUMPACK are linked to HiOp, user must guarantee the all the packages are compiled by the same CUDA compiler.
-User can check other issues and their existing status from https://github.com/LLNL/hiop 
+## Issues
+Users are highly encouraged to report any issues they found when using HiOp.
+
 
 
 ## Acknowledgments
@@ -203,7 +198,7 @@ HiOp has been developed under the financial support of:
 
 # Contributors
 
-HiOp is written by Cosmin G. Petra (petra1@llnl.gov), Nai-Yuan Chiang (chiang7@llnl.gov), and Jingyi "Frank" Wang (wang125@llnl.gov) from LLNL and has received important contributions from Asher Mancinelli (PNNL), Slaven Peles (ORNL), Cameron Rutherford (PNNL), Jake K. Ryan (PNNL), and Michel Schanen (ANL).
+HiOp is written by Cosmin G. Petra (petra1@llnl.gov), Nai-Yuan Chiang (chiang7@llnl.gov), Jingyi "Frank" Wang (wang125@llnl.gov), and Tucker Hartland (hartland1@llnl.gov) from LLNL and has received important contributions from Asher Mancinelli (PNNL), Slaven Peles (ORNL), Cameron Rutherford (PNNL), Jake K. Ryan (PNNL), and Michel Schanen (ANL).
 
 # Copyright
 
