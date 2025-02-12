@@ -671,6 +671,7 @@ bool hiopNlpFormulation::apply_scaling(hiopVector& c, hiopVector& d, hiopVector&
 {
   // check if we need to do scaling
   if("none" == options->GetString("scaling_type")) {
+    log->printf(hovScalars, "NLP scaling is disabled.\n");
     return false;
   }
 
@@ -686,8 +687,13 @@ bool hiopNlpFormulation::apply_scaling(hiopVector& c, hiopVector& d, hiopVector&
     con_grad_target = max_con_grad;
   }
 
-  if(gradf.infnorm() < obj_grad_target && Jac_c.max_abs_value() < con_grad_target &&
-     Jac_d.max_abs_value() < con_grad_target) {
+  const auto gmax = gradf.infnorm();
+  const auto Jcmax = Jac_c.max_abs_value();
+  const auto Jdmax =  Jac_d.max_abs_value();
+  if(gmax < obj_grad_target && Jcmax < con_grad_target && Jdmax < con_grad_target) {
+    log->printf(hovScalars, "No NLP scaling is performed:\n");
+    log->printf(hovScalars, "\tgrad target %12.5e   NLP inf grad %12.5e\n", obj_grad_target, gmax);
+    log->printf(hovScalars, "\tJac  target %12.5e   NLP inf/max Jc %12.5e  Jd %12.5e\n/", con_grad_target, Jcmax, Jdmax);
     return false;
   }
 

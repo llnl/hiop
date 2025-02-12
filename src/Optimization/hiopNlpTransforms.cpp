@@ -448,21 +448,35 @@ hiopNLPObjGradScaling::hiopNLPObjGradScaling(hiopNlpFormulation* nlp,
   const double max_obj_grad = nlp_->options->GetNumeric("scaling_max_obj_grad");
   const double max_con_grad = nlp_->options->GetNumeric("scaling_max_con_grad");
 
+  std::stringstream ss_obj;
+  
   const double gradf_infnorm = gradf.infnorm();
   scale_factor_obj = 1.;
   if(max_obj_grad == 0.) {
     if(gradf_infnorm > max_grad) {
       scale_factor_obj = max_grad / gradf.infnorm();
+      ss_obj << "NLPObjGradScaling: NLP objective scaling due to option scaling_max_grad="
+             << max_grad << " ";
     }
   } else {
     if(gradf_infnorm > 0.) {
+      ss_obj << "NLPObjGradScaling: NLP objective scaling due to option scaling_max_obj_grad="
+             << max_obj_grad << " ";
       scale_factor_obj = max_obj_grad / gradf.infnorm();
     }
   }
   if(min_grad > 0.0 && scale_factor_obj < min_grad) {
     scale_factor_obj = min_grad;
+    ss_obj << "NLPObjGradScaling: NLP objective scaling overwritten by option scaling_min_grad="
+           << min_grad << std::endl;
   }
-
+  if(ss_obj.str().size()>0) {
+    nlp->log->printf(hovScalars, "%s: scale factor obj %12.5e.\n", ss_obj.str().c_str(), scale_factor_obj);
+  } else {
+    nlp->log->printf(hovScalars,
+                     "NLPObjGradScaling: No NLP objective scaling performed due to combination of options.\n");
+  }
+  
   scale_factor_c = c.new_copy();
   scale_factor_d = d.new_copy();
   scale_factor_cd = LinearAlgebraFactory::create_vector(nlp_->options->GetString("mem_space"), n_eq + n_ineq);
@@ -478,7 +492,7 @@ hiopNLPObjGradScaling::hiopNLPObjGradScaling(hiopNlpFormulation* nlp,
   scale_factor_d->invert();
 
   scale_factor_cd->copy_from_two_vec_w_pattern(*scale_factor_c, cons_eq_mapping, *scale_factor_d, cons_ineq_mapping);
-
+  std::stringstream ss_cons;
   Jac_c.row_max_abs_value(*scale_factor_c);
   Jac_d.row_max_abs_value(*scale_factor_d);
   if(max_con_grad == 0.) {
@@ -486,6 +500,8 @@ hiopNLPObjGradScaling::hiopNLPObjGradScaling(hiopNlpFormulation* nlp,
       scale_factor_c->scale(1. / max_grad);
       scale_factor_c->component_max(1.0);
       scale_factor_c->invert();
+      ss_cons << "NLPObjGradScaling: NLP constraints (c) scaling due to option scaling_max_grad="
+              << max_grad << std::endl;
     } else {
       scale_factor_c->setToConstant(1.0);
     }
@@ -494,24 +510,36 @@ hiopNLPObjGradScaling::hiopNLPObjGradScaling(hiopNlpFormulation* nlp,
       scale_factor_d->scale(1. / max_grad);
       scale_factor_d->component_max(1.0);
       scale_factor_d->invert();
+      ss_cons << "NLPObjGradScaling: NLP constraints (d) scaling due to option scaling_max_grad="
+              << max_grad << std::endl;
     } else {
       scale_factor_d->setToConstant(1.0);
     }
   } else {
     scale_factor_c->setToConstant(max_con_grad / scale_factor_c->infnorm());
     scale_factor_d->setToConstant(max_con_grad / scale_factor_d->infnorm());
+    ss_cons << "NLPObjGradScaling: NLP constraints (c&d) scaling due to option scaling_max_con_grad="
+            << "max_con_grad" << std::endl;
   }
   if(min_grad > 0.0) {
     scale_factor_c->component_max(min_grad);
     scale_factor_d->component_max(min_grad);
+    ss_cons << "NLPObjGradScaling: scaling for some constraints may have changed "
+            << "due to option scaling_min_grad option=" << min_grad;
+  }
+  if(ss_cons.str().size()>0) {
+    nlp->log->printf(hovScalars, "%s\n", ss_cons.str().c_str());
+  } else {
+    nlp->log->printf(hovScalars,
+                     "NLPObjGradScaling: No NLP constraints scaling performed due to combination of options.\n");
   }
 }
 
 hiopNLPObjGradScaling::~hiopNLPObjGradScaling()
 {
-  if(scale_factor_c) delete scale_factor_c;
-  if(scale_factor_d) delete scale_factor_d;
-  if(scale_factor_cd) delete scale_factor_cd;
+  delete scale_factor_c;
+  delete scale_factor_d;
+  delete scale_factor_cd;
 }
 
 }  // namespace hiop
