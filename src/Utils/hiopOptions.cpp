@@ -800,9 +800,8 @@ void hiopOptionsNLP::register_options()
                         1e-8,
                         0.0,
                         1e+20,
-                        "a positive value for this option will be used as a lower bound for (and will overwrite) "
-                        "the scaling factors computed as instructed by options scaling_max_grad, scaling_max_obj_grad and "
-                        "scaling_max_con_grad.");
+                        "Any scaling factors (computed due to any of the scaling_max_grad, scaling_max_obj_grad, "
+                        "and scaling_max_con_grad options) smaller than this option will be set to it.");
   }
 
   // outer iterative refinement
