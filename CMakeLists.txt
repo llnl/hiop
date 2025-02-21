@@ -242,6 +242,8 @@ if(HIOP_USE_GPU)
     enable_language(CUDA)
     check_language(CUDA)
 
+    set(CMAKE_CUDA_HOST_COMPILER g++)
+
     if(NOT DEFINED CMAKE_CUDA_STANDARD)
       set(CMAKE_CUDA_STANDARD 17)
       set(CMAKE_CUDA_STANDARD_REQUIRED ON)

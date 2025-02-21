@@ -1,6 +1,6 @@
 spack:
   specs:
-  - hiop@develop+kron+mpi+raja+sparse+cuda+ginkgo+deepchecking+cusolver cuda_arch=70
+  - hiop@develop+kron+mpi+raja+sparse+cuda+ginkgo+deepchecking+cusolver_lu cuda_arch=70
   - raja@0.14.0
   - umpire@6.0.0
   - coinhsl@2019.05.21
