@@ -280,6 +280,78 @@ public:
   }
 
   /**
+   * Computes action y of the mass matrix on a vector x, namely y=M*x
+   *
+   * The mass matrix is generally the weight matrix associated with L^2 finite element 
+   * discretizations. This matrix is used internally to build and maintain Riesz-like 
+   * representations of the dual variables (associated with bound constraints) to ensure
+   * mesh independent performance of the algorithm.
+   *
+   * @note If the variables are not coming from L^2 discretizations, this method should 
+   * return false on its first call. HiOp will use internally the identity as the mass 
+   * matrix in this case. Otherwise should return true on its first call; subsequent 
+   * errors in matrix apply can be flagged with false return values.
+   *
+   * @param[in] n the (global) number of variables
+   * @param[in] x the array to which mass action is applied
+   * @param[out] y the result of apply
+   * @return true if successful, false otherwise (also see note above).
+   */
+  virtual bool applyM(const size_type& n, const double* x, double* y)
+  {
+    //the default impl. instructs HiOp to use Euclidean/l^2 variables (M=I) internally
+    return false;
+  }
+  
+  /**
+   * Computes action y of the inner product weight matrix H on a vector x, namely y=H*x
+   *
+   * The weight matrix H is generally associated with L^2 or H^1 finite element 
+   * discretizations and corresponding weighted inner products: <u_h,v_h> = u^T H v. For L^2, 
+   * H is the mass matrix, while for H^1 is the mass plus stiffness. This matrix is applied 
+   * internally to obtain termination criteria and derive Hessian representations that are 
+   * mesh independent and consistent with the function space nature of the problem.
+   *
+   * Additional info: C. G. Petra et. al., On the implementation of a quasi-Newton 
+   * interior-point method for PDE-constrained optimization using finite element 
+   * discretizations, Optimiz. Meth. and Software, Vol. 38, 2023.
+   *
+   * @note If the variables are not coming from L^2 discretizations, this method should 
+   * return false on its first call. HiOp will use internally H=I in this case. Otherwise 
+   * should return true on its first call; subsequent errors in matrix apply can be flagged 
+   * with false return values.
+   *
+   * @param[in] n the (global) number of variables
+   * @param[in] x the array to which the H matrix is applied
+   * @param[out] y the result of apply
+   * @return true if successful, false otherwise (also see note above)
+   */
+  virtual bool applyH(const size_type& n, const double* x, double* y)
+  {
+    //the default impl. instructs HiOp to use Euclidean/l^2 variables (H=I) internally
+    return false;
+  }
+
+  /**
+   * Computes action y of the inverse of H on a vector x, namely y=H^{-1}*x
+   *
+   * See @applyH for a discussion of H and additional notes. The inverse of H plays an
+   * important role in computing the "dual" norms and, in turn, to ensure mesh
+   * independent behavior of the IPM solver(s). The inverse apply is also needed by the
+   * specialized solves HiOp performs when the quasi-Newton solver is used. 
+   *
+   * @param[in] n the (global) number of variables
+   * @param[in] x the array to which the inverse is applied
+   * @param[out] y the result of apply
+   * @return see return of @applyH
+   */
+  virtual bool applyHinv(const size_type& n, const double* x, double* y)
+  {
+    //the default impl. instructs HiOp to use Euclidean/l^2 variables (H=I) internally
+    return false;
+  }
+
+  /**
    * Method provides a primal or starting point. This point is subject to internal adjustments.
    *
    * @note Avoid using this method since it will be removed in a future release and replaced with
