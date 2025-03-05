@@ -80,7 +80,8 @@ namespace hiop
 
 // some forward decls
 class hiopDualsLsqUpdate;
-
+class InnerProduct;
+  
 /** Class for a general NlpFormulation with general constraints and bounds on the variables.
  * This class also  acts as a factory for linear algebra objects (derivative
  * matrices, KKT system) whose types are decided based on the hiopInterfaceXXX object passed in the
@@ -117,6 +118,17 @@ public:
   virtual bool eval_Jac_c(hiopVector& x, bool new_x, hiopMatrix& Jac_c) = 0;
   virtual bool eval_Jac_d(hiopVector& x, bool new_x, hiopMatrix& Jac_d) = 0;
   virtual bool eval_Jac_c_d(hiopVector& x, bool new_x, hiopMatrix& Jac_c, hiopMatrix& Jac_d);
+
+  inline bool useWeightedInnerProd()
+  {
+    return interface_base.useWeightedInnerProducts();
+  }
+  /* Wrapper over user-defined M apply that also applies the NLP transformations. */
+  bool eval_M(const hiopVector& x, hiopVector& y);
+  /* Wrapper over user-defined H apply that also applies the NLP transformations. */
+  bool eval_H(const hiopVector& x, hiopVector& y); 
+  /* Wrapper over user-defined inverse of H apply that also applies the NLP transformations. */
+  bool eval_H_inv(const hiopVector& x, hiopVector& y); 
 
 protected:
   // calls specific hiopInterfaceXXX::eval_Jac_cons and deals with specializations of hiopMatrix arguments
@@ -353,6 +365,9 @@ protected:
   /* User provided interface */
   hiopInterfaceBase& interface_base;
 
+  /* Inner product wrapper */
+  InnerProduct* inner_prod_;
+  
   /**
    * Flag to indicate whether to use evaluate all constraints once or separately for equalities
    * or inequalities. Possible values

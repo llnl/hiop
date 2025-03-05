@@ -54,6 +54,7 @@
  */
 
 #include "hiopNlpFormulation.hpp"
+#include "InnerProduct.hpp"
 #include "HessianDiagPlusRowRank.hpp"
 #include "hiopVector.hpp"
 #include "LinAlgFactory.hpp"
@@ -79,6 +80,7 @@ hiopNlpFormulation::hiopNlpFormulation(hiopInterfaceBase& interface_, const char
       nlp_transformations_(this),
       interface_base(interface_)
 {
+//  inner_prod_ = new InnerProduct(this);
   strFixedVars_ = "";    // uninitialized
   dFixedVarsTol_ = -1.;  // uninitialized
   bool bret;
@@ -143,6 +145,8 @@ hiopNlpFormulation::hiopNlpFormulation(hiopInterfaceBase& interface_, const char
   temp_x_ = nullptr;
   nlp_scaling_ = nullptr;
   relax_bounds_ = nullptr;
+
+  inner_prod_ = new InnerProduct(this);
 }
 
 hiopNlpFormulation::~hiopNlpFormulation()
@@ -184,6 +188,8 @@ hiopNlpFormulation::~hiopNlpFormulation()
   delete temp_ineq_;
   delete temp_x_;
   /// nlp_scaling_ and relax_bounds_ are deleted inside nlp_transformations_
+
+  delete inner_prod_;
 }
 
 bool hiopNlpFormulation::finalizeInitialization()
@@ -756,6 +762,54 @@ bool hiopNlpFormulation::eval_grad_f(hiopVector& x, bool new_x, hiopVector& grad
 
   return bret;
 }
+
+bool hiopNlpFormulation::eval_M(const hiopVector& x, hiopVector& y)
+{
+  //x is in the reduced space used by HiOp
+  //x_full is x in the full/untransformed/user space
+  hiopVector* x_full = nlp_transformations_.apply_inv_to_x(const_cast<hiopVector&>(x), true/*new_x*/);
+
+  // We need to also transform y to a y_full, pass it to user apply, and then the reverse, y_full back to y.
+  // The following works, unless a "remove fixed variables" NLP transformation is present.
+  // TO DO: Either add functionality in hiopFixedVarRemovers to allow apply_inv_to_x for more than one vector
+  // simultaneously, or create y_full here use apply_inv_to_x with copying from the return to y_full
+  hiopVector* y_full = &y;
+  assert(x_full->get_size() == y.get_size() &&
+         "weighted inner products not supported when fixed variables are removed");
+  
+  runStats.tm_eval_M_apply.start();
+  bool bret = interface_base.applyM(nlp_transformations_.n_pre(),
+                                    x_full->local_data_const(),
+                                    y_full->local_data());
+  runStats.tm_eval_M_apply.stop();
+  runStats.n_eval_M_apply++;
+
+  // TODO: copy back to y from y_full
+  
+  return bret;  
+}
+
+bool hiopNlpFormulation::eval_H(const hiopVector& x, hiopVector& y)
+{
+  //x is in the reduced space used by HiOp
+  //x_full is x in the full/untransformed/user space
+  hiopVector* x_full = nlp_transformations_.apply_inv_to_x(const_cast<hiopVector&>(x), true/*new_x*/);
+
+  // TODO: see notes from eval_M
+  hiopVector* y_full = &y;
+  assert(x_full->get_size() == y.get_size() &&
+         "weighted inner products not supported when fixed variables are removed");
+
+  runStats.tm_eval_H_apply.start();
+  bool bret = interface_base.applyH(nlp_transformations_.n_pre(),
+                                    x_full->local_data_const(),
+                                    y_full->local_data());
+  runStats.tm_eval_H_apply.stop();
+  runStats.n_eval_H_apply++;
+  
+  return bret;  
+}
+
 
 bool hiopNlpFormulation::get_starting_point(hiopVector& x0_for_hiop,
                                             bool& duals_avail,

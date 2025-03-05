@@ -287,15 +287,15 @@ public:
    * representations of the dual variables (associated with bound constraints) to ensure
    * mesh independent performance of the algorithm.
    *
-   * @note If the variables are not coming from L^2 discretizations, this method should 
-   * return false on its first call. HiOp will use internally the identity as the mass 
-   * matrix in this case. Otherwise should return true on its first call; subsequent 
-   * errors in matrix apply can be flagged with false return values.
+   * @note If the variables are not coming from discretizations (specified by a false 
+   * value returned by @useWeightedInnerProducts), the methods should return false. HiOp 
+   * will use internally M=I. Otherwise, should return true or false depending on whether 
+   * the user code succesfully applied M. 
    *
    * @param[in] n the (global) number of variables
    * @param[in] x the array to which mass action is applied
    * @param[out] y the result of apply
-   * @return true if successful, false otherwise (also see note above).
+   * @return see note above.
    */
   virtual bool applyM(const size_type& n, const double* x, double* y)
   {
@@ -316,15 +316,15 @@ public:
    * interior-point method for PDE-constrained optimization using finite element 
    * discretizations, Optimiz. Meth. and Software, Vol. 38, 2023.
    *
-   * @note If the variables are not coming from L^2 discretizations, this method should 
-   * return false on its first call. HiOp will use internally H=I in this case. Otherwise 
-   * should return true on its first call; subsequent errors in matrix apply can be flagged 
-   * with false return values.
+   * @note If the variables are not coming from discretizations (specified by a false 
+   * value returned by @useWeightedInnerProducts), the methods should return false. HiOp 
+   * will use internally H=I. Otherwise, should return true or false depending on whether 
+   * the user code succesfully applied M.
    *
    * @param[in] n the (global) number of variables
    * @param[in] x the array to which the H matrix is applied
    * @param[out] y the result of apply
-   * @return true if successful, false otherwise (also see note above)
+   * @return see note above
    */
   virtual bool applyH(const size_type& n, const double* x, double* y)
   {
@@ -351,6 +351,18 @@ public:
     return false;
   }
 
+  /**
+   * Enables the use of weighted inner products via @applyM, @applyH, and @applyHinv
+   *
+   * See also notes for @applyM, @applyH, and @applyHinv.
+   *
+   * @return true if enabled, false to default to Euclidean space with <u,v>=u^T*v
+   */
+  virtual bool useWeightedInnerProducts()
+  {
+    return false;
+  }
+  
   /**
    * Method provides a primal or starting point. This point is subject to internal adjustments.
    *
