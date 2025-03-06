@@ -376,10 +376,10 @@ public:
        << (tmEvalObj.getElapsedTime() + tmEvalGrad_f.getElapsedTime() + tmEvalCons.getElapsedTime() +
            tmEvalJac_con.getElapsedTime() + tmEvalHessL.getElapsedTime())
        << "s  "
-       << "( obj=" << tmEvalObj.getElapsedTime() << " grad=" << tmEvalGrad_f.getElapsedTime()
+       << "(obj=" << tmEvalObj.getElapsedTime() << " grad=" << tmEvalGrad_f.getElapsedTime()
        << " cons=" << tmEvalCons.getElapsedTime() << " Jac=" << tmEvalJac_con.getElapsedTime()
        << " Hess=" << tmEvalHessL.getElapsedTime() << ") " 
-       << " WeigInProd=(" << tm_eval_M_apply.getElapsedTime() << " " << tm_eval_H_apply.getElapsedTime() << " "
+       << " WIProd=(" << tm_eval_M_apply.getElapsedTime() << " " << tm_eval_H_apply.getElapsedTime() << " "
        << tm_eval_Hinv_apply.getElapsedTime() << ")" << std::endl;
 
 #ifdef HIOP_USE_MPI
@@ -402,7 +402,7 @@ public:
 #endif
     ss << "Fcn/deriv #: obj " << nEvalObj << " grad " << nEvalGrad_f << " eq cons " << nEvalCons_eq << " ineq cons "
        << nEvalCons_ineq << " eq Jac " << nEvalJac_con_eq << " ineq Jac " << nEvalJac_con_ineq
-       << "WeigInProd (" << n_eval_M_apply << " " << n_eval_H_apply << " " << n_eval_Hinv_apply << ")" << std::endl;
+       << "  WIProd (" << n_eval_M_apply << " " << n_eval_H_apply << " " << n_eval_Hinv_apply << ")" << std::endl;
 
     return ss.str();
   }
