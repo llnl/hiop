@@ -715,6 +715,94 @@ bool hiopAlgFilterIPMBase::evalNlpAndLogErrors(const hiopIterate& it,
   return true;
 }
 
+bool hiopAlgFilterIPMBase::evalNlpAndLogErrors2(const hiopIterate& it,
+                                               const hiopResidual& resid,
+                                               const double& mu,
+                                               double& nlpoptim,
+                                               double& nlpfeas,
+                                               double& nlpcomplem,
+                                               double& nlpoverall,
+                                               double& logoptim,
+                                               double& logfeas,
+                                               double& logcomplem,
+                                               double& logoverall,
+                                               double& cons_violation)
+{
+  nlp->runStats.tmSolverInternal.start();
+
+  size_type n = nlp->n_complem(), m = nlp->m();
+  // the one norms
+  // double nrmDualBou=it.normOneOfBoundDuals();
+  // double nrmDualEqu=it.normOneOfEqualityDuals();
+  double nrmDualBou, nrmDualEqu;
+  it.normOneOfDuals(nrmDualEqu, nrmDualBou);
+
+  nlp->log->printf(hovScalars, "nrmOneDualEqu %g   nrmOneDualBo %g\n", nrmDualEqu, nrmDualBou);
+  if(nrmDualBou > 1e+10) {
+    nlp->log->printf(hovWarning,
+                     "Unusually large bound dual variables (norm1=%g) occured, "
+                     "which may cause numerical instabilities if it persists. Convergence "
+                     " issues or inacurate optimal solutions may be experienced. Possible causes: "
+                     " tight bounds or bad scaling of the optimization variables.\n",
+                     nrmDualBou);
+    if(nlp->options->GetString("fixed_var") == "remove") {
+      nlp->log->printf(hovWarning,
+                       "For example, increase 'fixed_var_tolerance' to remove "
+                       "additional variables.\n");
+    } else if(nlp->options->GetString("fixed_var") == "relax") {
+      nlp->log->printf(hovWarning,
+                       "For example, increase 'fixed_var_tolerance' to relax "
+                       "aditional (tight) variables and/or increase 'fixed_var_perturb' "
+                       "to decrease the tightness.\n");
+    } else {
+      nlp->log->printf(hovWarning,
+                       "Potential fixes: fix or relax variables with tight bounds "
+                       "(see 'fixed_var' option) or rescale variables.\n");
+    }
+  }
+
+  // scaling factors
+  //sd = max { p_smax, ||zl||_H + ||zu||_H + (||vl||_1 + ||vu||_1)/m } /p_smax
+  //sc = max { p_smax, ||zl||_H + ||zu||_H } /p_smax
+  //nlpoptim = ||gradf + Jc'*yc + Jd'*Jd - M*zl - M*zu||_Hinv
+  //           ||yd+vl-vu||_inf
+  //nlpfeas = ||crhs- c||_inf
+  //          ||drs- d||_inf
+  //          ||x-sxl-xl||_H
+  //          ||x-sxu+xu||_H
+  //          ||d-sdl-dl||
+  //          
+  double sd = fmax(p_smax, (nrmDualBou + nrmDualEqu) / (n + m)) / p_smax;
+  double sc = n == 0 ? 0 : fmax(p_smax, nrmDualBou / n) / p_smax;
+
+  sd = fmin(sd, 1e+8);
+  sc = fmin(sc, 1e+8);
+
+  // actual nlp errors
+  resid.getNlpErrors(nlpoptim, nlpfeas, nlpcomplem, cons_violation);
+
+  // finally, the scaled nlp error
+  nlpoverall = fmax(nlpoptim / sd, fmax(cons_violation, nlpcomplem / sc));
+
+  nlp->log->printf(hovScalars,
+                   "nlpoverall %g  nloptim %g  sd %g  nlpfeas %g  nlpcomplem %g  sc %g cons_violation %g\n",
+                   nlpoverall,
+                   nlpoptim,
+                   sd,
+                   nlpfeas,
+                   nlpcomplem,
+                   cons_violation,
+                   sc);
+
+  // actual log errors
+  resid.getBarrierErrors(logoptim, logfeas, logcomplem);
+
+  // finally, the scaled barrier error
+  logoverall = fmax(logoptim / sd, fmax(cons_violation, logcomplem / sc));
+  nlp->runStats.tmSolverInternal.stop();
+  return true;
+}
+
 bool hiopAlgFilterIPMBase::evalNlp_funcOnly(hiopIterate& iter, double& f, hiopVector& c, hiopVector& d)
 {
   bool new_x = true;
