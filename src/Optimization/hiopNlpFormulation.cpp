@@ -80,7 +80,6 @@ hiopNlpFormulation::hiopNlpFormulation(hiopInterfaceBase& interface_, const char
       nlp_transformations_(this),
       interface_base(interface_)
 {
-//  inner_prod_ = new InnerProduct(this);
   strFixedVars_ = "";    // uninitialized
   dFixedVarsTol_ = -1.;  // uninitialized
   bool bret;
@@ -806,6 +805,27 @@ bool hiopNlpFormulation::eval_H(const hiopVector& x, hiopVector& y)
                                     y_full->local_data());
   runStats.tm_eval_H_apply.stop();
   runStats.n_eval_H_apply++;
+  
+  return bret;  
+}
+
+bool hiopNlpFormulation::eval_H_inv(const hiopVector& x, hiopVector& y)
+{
+  //x is in the reduced space used by HiOp
+  //x_full is x in the full/untransformed/user space
+  hiopVector* x_full = nlp_transformations_.apply_inv_to_x(const_cast<hiopVector&>(x), true/*new_x*/);
+
+  // TODO: see notes from eval_M
+  hiopVector* y_full = &y;
+  assert(x_full->get_size() == y.get_size() &&
+         "weighted inner products not supported when fixed variables are removed");
+
+  runStats.tm_eval_Hinv_apply.start();
+  bool bret = interface_base.applyHinv(nlp_transformations_.n_pre(),
+                                       x_full->local_data_const(),
+                                       y_full->local_data());
+  runStats.tm_eval_Hinv_apply.stop();
+  runStats.n_eval_Hinv_apply++;
   
   return bret;  
 }

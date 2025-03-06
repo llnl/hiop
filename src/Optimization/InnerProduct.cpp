@@ -52,66 +52,98 @@
  *
  */
 
-#ifndef HIOP_NLP_INNERPROD
-#define HIOP_NLP_INNERPROD
 
-#include "hiopVector.hpp"
+#include "InnerProduct.hpp"
+#include "hiopNlpFormulation.hpp"
 
 namespace hiop
 {
 
-// some forward decls
-class hiopNlpFormulation;
-
-/** 
- * Provides functionality required for using (weighted) inner products within the IPM algorithm(s). 
- *
- * These weighted inner products appear when optimizing over (discretization of) function spaces,
- * such as PDE-constrained optimization. It wraps around user-provided methods for computing the 
- * mass matrix M and the weight matrix H generally associated with L^2 or H^1 finite element 
- * discretizations and corresponding weighted inner products: <u_h,v_h> = u^T H v. For L^2, 
- * H is the mass matrix, while for H^1 is the mass plus stiffness. These user methods are called
- * to perform various operations associated with Hilbert spaces, such as inner products and norms. 
- *
- * Additional info: C. G. Petra et. al., On the implementation of a quasi-Newton 
- * interior-point method for PDE-constrained optimization using finite element 
- * discretizations, Optimiz. Meth. and Software, Vol. 38, 2023.
- *
- * This class also covers Euclidean (i.e., non-weighted) inner products, for which M=H=I.
- */
-class InnerProduct
+InnerProduct::InnerProduct(hiopNlpFormulation* nlp)
+  : nlp_(nlp)
 {
-public:
-  InnerProduct(hiopNlpFormulation* nlp);
+  if(nlp->useWeightedInnerProd()) {
+    vec_n_ = nlp_->alloc_primal_vec();
+    vec_n2_ = nlp_->alloc_primal_vec();
+  } else {
+    vec_n_ = nullptr;
+    vec_n2_ = nullptr;
+  }
+}
   
-  virtual ~InnerProduct();
+InnerProduct::~InnerProduct()
+{
+  delete vec_n2_;
+  delete vec_n_;
+}
 
-  // Compute y=M*x
-  bool apply_M(const hiopVector& x, hiopVector& y);
+bool InnerProduct::apply_M(const hiopVector& x, hiopVector& y)
+{
+  if(nlp_->useWeightedInnerProd()) {
+    return nlp_->eval_M(x, y);
+  } else {
+    y.copyFrom(x);
+    return true;
+  }
+}
   
-  // Computes ||x||_M
-  double norm_M(const hiopVector& x);
-
+// Computes ||x||_M
+double InnerProduct::norm_M(const hiopVector& x)
+{
+  if(nlp_->useWeightedInnerProd()) {
+    nlp_->eval_M(x, *vec_n_);
+    auto dp = x.dotProductWith(*vec_n_);
+    return ::std::sqrt(dp);
+  } else {
+    return x.twonorm();
+  }
+}
   // Computes H primal norm
-  double norm_H_primal(const hiopVector& x);
-  
-  // Computes H dual norm
-  double norm_H_dual(const hiopVector& x);
+  double InnerProduct::norm_H_primal(const hiopVector& x)
+  {
+    if(nlp_->useWeightedInnerProd()) {      
+      nlp_->eval_H(x, *vec_n_);
+      auto dp = x.dotProductWith(*vec_n_);
+      return ::std::sqrt(dp);
+    } else {
+      return x.twonorm();
+    }
+  }
+// Computes H dual norm
+double InnerProduct::norm_H_dual(const hiopVector& x)
+{
+  if(nlp_->useWeightedInnerProd()) {      
+    nlp_->eval_H_inv(x, *vec_n_);
+    auto dp = x.dotProductWith(*vec_n_);
+    return ::std::sqrt(dp);
+  } else {
+    return x.twonorm();
+  }
+}
 
-  // Computes norm of stationarity residual, using inf-norm for Euclidean spaces, H-inverse norm for Hilbert spaces
-  double norm_stationarity(const hiopVector& x);
+double InnerProduct::norm_stationarity(const hiopVector& x)
+{
+  if(nlp_->useWeightedInnerProd()) {
+    nlp_->eval_H_inv(x, *vec_n_);
+    auto dp = x.dotProductWith(*vec_n_);
+    return ::std::sqrt(dp);
+  } else {
+    return x.infnorm();
+  }
+}
 
-  // Compute norm one weighted by M, i.e., 1^T*M*|x|
-  double norm_M_one(const hiopVector&x);
-private:
-  // Pointer to "client" NLP
-  hiopNlpFormulation* nlp_;
+// Compute norm one weighted by M, i.e., 1^T*M*|x|
+double InnerProduct::norm_M_one(const hiopVector&x)
+{
+  if(nlp_->useWeightedInnerProd()) {
+    vec_n_->copyFrom(x);
+    vec_n_->component_abs();
+    nlp_->eval_M(*vec_n_, *vec_n2_);
+    vec_n_->setToConstant(1.);
+    return vec_n_->dotProductWith(*vec_n2_);
+  } else {
+    return x.onenorm();
+  }
+}
 
-  // Working vector in the size n of the variables, allocated only when for the weighted case
-  hiopVector* vec_n_;
-  // Working vector in the size n of the variables, allocated only when for the weighted case
-  hiopVector* vec_n2_;
-};
-
-} //end namespace
-#endif
+} // end namespace

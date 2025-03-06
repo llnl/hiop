@@ -177,19 +177,32 @@ int hiopResidual::update(const hiopIterate& it,
   assert(it.sxu->matchesPattern(nlp->get_ixu()));
 #endif
   // rx = -grad_f - J_c^t*x - J_d^t*x+zl-zu - linear damping term in x
-  rx->copyFrom(grad);
+  //rx->copyFrom(grad);
+  //jac_c.transTimesVec(1.0, *rx, 1.0, *it.yc);
+  //jac_d.transTimesVec(1.0, *rx, 1.0, *it.yd);
+  //rx->axpy(-1.0, *it.zl);
+  //rx->axpy(1.0, *it.zu);
+
+  //using rxl as auxiliary variable to compute -M*zl+M*zu
+  rxl->copyFrom(*it.zu);
+  rxl->axpy(-1.0, *it.zl);
+  nlp->inner_prod()->apply_M(*rxl, *rx);
+  //continue adding to rx
   jac_c.transTimesVec(1.0, *rx, 1.0, *it.yc);
   jac_d.transTimesVec(1.0, *rx, 1.0, *it.yd);
-  rx->axpy(-1.0, *it.zl);
-  rx->axpy(1.0, *it.zu);
-  buf = rx->infnorm_local();
+  rx->axpy(1.0, grad);
+
+  //buf = rx->infnorm_local();
+  buf = nlp->inner_prod()->norm_stationarity(*rx);
   nrmInf_nlp_optim = fmax(nrmInf_nlp_optim, buf);
-  nrmOne_nlp_optim += rx->onenorm();
+  //nrmOne_nlp_optim += rx->onenorm();
+  nrmOne_nlp_optim += nlp->inner_prod()->norm_M_one(*rx);
   nlp->log->printf(hovScalars, "NLP resid [update]: inf norm rx=%22.17e\n", buf);
   logprob.addNonLogBarTermsToGrad_x(1.0, *rx);
   rx->negate();
   nrmInf_bar_optim = fmax(nrmInf_bar_optim, rx->infnorm_local());
   nrmOne_bar_optim += rx->onenorm();
+
   //~ done with rx
   // rd
   rd->copyFrom(*it.yd);
