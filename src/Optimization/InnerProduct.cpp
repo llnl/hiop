@@ -62,6 +62,8 @@ namespace hiop
 InnerProduct::InnerProduct(hiopNlpFormulation* nlp)
   : nlp_(nlp)
 {
+  printf("InnerProduct::InnerProduct begin\n"); fflush(stdout);
+  assert(nlp);
   if(nlp->useWeightedInnerProd()) {
     vec_n_ = nlp_->alloc_primal_vec();
     vec_n2_ = nlp_->alloc_primal_vec();
@@ -69,6 +71,7 @@ InnerProduct::InnerProduct(hiopNlpFormulation* nlp)
     vec_n_ = nullptr;
     vec_n2_ = nullptr;
   }
+  printf("InnerProduct::InnerProduct end\n"); fflush(stdout);
 }
   
 InnerProduct::~InnerProduct()

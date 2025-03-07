@@ -257,6 +257,41 @@ public:
                         double alpha_du,
                         double alpha_pr,
                         int ls_trials);
+  
+  bool applyM(const size_type& n, const double* x_in, double* y_out)
+  {
+    x->copyFrom(x_in);
+    x->copyTo(y_out);
+    return true;
+  }
+  
+  /**
+   * Computes action y of the inner product weight matrix H on a vector x, namely y=H*x
+   */
+  virtual bool applyH(const size_type& n, const double* x_in, double* y_out)
+  {
+    x->copyFrom(x_in);
+    x->copyTo(y_out);
+    return true;
+  }
+
+  /**
+   * Computes action y of the inverse of H on a vector x, namely y=H^{-1}*x
+   */
+  virtual bool applyHinv(const size_type& n, const double* x_in, double* y_out)
+  {
+    x->copyFrom(x_in);
+    x->copyTo(y_out);
+    return true;
+  }
+
+  /**
+   * Enables the use of weighted inner products via @applyM, @applyH, and @applyHinv
+   */
+  virtual bool useWeightedInnerProducts()
+  {
+    return false;
+  }
 
 private:
   int n_vars;

@@ -182,20 +182,6 @@ protected:
                                    double& logcomplem,
                                    double& logoverall,
                                    double& cons_violation);
-
-  virtual bool evalNlpAndLogErrors2(const hiopIterate& it,
-                                    const hiopResidual& resid,
-                                    const double& mu,
-                                    double& nlpoptim,
-                                    double& nlpfeas,
-                                    double& nlpcomplem,
-                                    double& nlpoverall,
-                                    double& logoptim,
-                                    double& logfeas,
-                                    double& logcomplem,
-                                    double& logoverall,
-                                    double& cons_violation);
-
   
   virtual double thetaLogBarrier(const hiopIterate& it, const hiopResidual& resid, const double& mu);
 

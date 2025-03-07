@@ -78,7 +78,8 @@ hiopNlpFormulation::hiopNlpFormulation(hiopInterfaceBase& interface_, const char
       prob_type_(hiopInterfaceBase::hiopNonlinear),
       nlp_evaluated_(false),
       nlp_transformations_(this),
-      interface_base(interface_)
+      interface_base(interface_),
+      inner_prod_(nullptr)
 {
   strFixedVars_ = "";    // uninitialized
   dFixedVarsTol_ = -1.;  // uninitialized
@@ -144,8 +145,6 @@ hiopNlpFormulation::hiopNlpFormulation(hiopInterfaceBase& interface_, const char
   temp_x_ = nullptr;
   nlp_scaling_ = nullptr;
   relax_bounds_ = nullptr;
-
-  inner_prod_ = new InnerProduct(this);
 }
 
 hiopNlpFormulation::~hiopNlpFormulation()
@@ -259,6 +258,10 @@ bool hiopNlpFormulation::finalizeInitialization()
   ixl_ = xu_->alloc_clone();
   ixu_ = xu_->alloc_clone();
 
+  // create NLP space (H-weighted or Euclidean)
+  delete inner_prod_;
+  inner_prod_ = new InnerProduct(this);
+  
   //
   // preprocess variables bounds - this is curently done on the CPU
   //
