@@ -656,10 +656,15 @@ bool hiopAlgFilterIPMBase::evalNlpAndLogErrors(const hiopIterate& it,
   // the one norms
   // double nrmDualBou=it.normOneOfBoundDuals();
   // double nrmDualEqu=it.normOneOfEqualityDuals();
-  double nrmDualBou, nrmDualEqu;
-  it.normOneOfDuals(nrmDualEqu, nrmDualBou);
+  double sc;
+  double sd;
+  double nrmDualBou;
+  double nrmDualEqu;
+  if(!it.compute_sc_sd(sc, sd, nrmDualEqu, nrmDualBou)) {
+    return false;
+  }
 
-  nlp->log->printf(hovScalars, "nrmOneDualEqu %g   nrmOneDualBo %g\n", nrmDualEqu, nrmDualBou);
+  nlp->log->printf(hovWarning, "nrmOneDualEqu %g   nrmOneDualBo %g\n", nrmDualEqu, nrmDualBou);
   if(nrmDualBou > 1e+10) {
     nlp->log->printf(hovWarning,
                      "Unusually large bound dual variables (norm1=%g) occured, "
@@ -684,8 +689,11 @@ bool hiopAlgFilterIPMBase::evalNlpAndLogErrors(const hiopIterate& it,
   }
 
   // scaling factors
-  double sd = fmax(p_smax, (nrmDualBou + nrmDualEqu) / (n + m)) / p_smax;
-  double sc = n == 0 ? 0 : fmax(p_smax, nrmDualBou / n) / p_smax;
+  //double sd = fmax(p_smax, (nrmDualBou + nrmDualEqu) / (n + m)) / p_smax;
+  //double sc = n == 0 ? 0 : fmax(p_smax, nrmDualBou / n) / p_smax;
+  
+  sd = fmax(p_smax, sd) / p_smax;
+  sc = n == 0 ? 0 : fmax(p_smax, sc) / p_smax;
 
   sd = fmin(sd, 1e+8);
   sc = fmin(sc, 1e+8);
@@ -696,7 +704,7 @@ bool hiopAlgFilterIPMBase::evalNlpAndLogErrors(const hiopIterate& it,
   // finally, the scaled nlp error
   nlpoverall = fmax(nlpoptim / sd, fmax(cons_violation, nlpcomplem / sc));
 
-  nlp->log->printf(hovScalars,
+  nlp->log->printf(hovWarning,
                    "nlpoverall %g  nloptim %g  sd %g  nlpfeas %g  nlpcomplem %g  sc %g cons_violation %g\n",
                    nlpoverall,
                    nlpoptim,
@@ -731,13 +739,15 @@ bool hiopAlgFilterIPMBase::evalNlpAndLogErrors2(const hiopIterate& it,
   nlp->runStats.tmSolverInternal.start();
 
   size_type n = nlp->n_complem(), m = nlp->m();
-  // the one norms
-  // double nrmDualBou=it.normOneOfBoundDuals();
-  // double nrmDualEqu=it.normOneOfEqualityDuals();
-  double nrmDualBou, nrmDualEqu;
-  it.normOneOfDuals(nrmDualEqu, nrmDualBou);
+  double sc;
+  double sd;
+  double nrmDualBou;
+  double nrmDualEqu;
+  if(!it.compute_sc_sd(sc, sd, nrmDualEqu, nrmDualBou)) {
+    return false;
+  }
 
-  nlp->log->printf(hovScalars, "nrmOneDualEqu %g   nrmOneDualBo %g\n", nrmDualEqu, nrmDualBou);
+  nlp->log->printf(hovWarning, "nrmOneDualEqu %g   nrmOneDualBo %g\n", nrmDualEqu, nrmDualBou);
   if(nrmDualBou > 1e+10) {
     nlp->log->printf(hovWarning,
                      "Unusually large bound dual variables (norm1=%g) occured, "
@@ -762,18 +772,21 @@ bool hiopAlgFilterIPMBase::evalNlpAndLogErrors2(const hiopIterate& it,
   }
 
   // scaling factors
-  //sd = max { p_smax, ||zl||_H + ||zu||_H + (||vl||_1 + ||vu||_1)/m } /p_smax
-  //sc = max { p_smax, ||zl||_H + ||zu||_H } /p_smax
+  //sd = max { p_smax, ||zl||_M + ||zu||_M + (||vl||_1 + ||vu||_1)/m } /p_smax
+  //sc = max { p_smax, ||zl||_M + ||zu||_M } /p_smax
   //nlpoptim = ||gradf + Jc'*yc + Jd'*Jd - M*zl - M*zu||_Hinv
   //           ||yd+vl-vu||_inf
   //nlpfeas = ||crhs- c||_inf
   //          ||drs- d||_inf
-  //          ||x-sxl-xl||_H
-  //          ||x-sxu+xu||_H
+  //          ||x-sxl-xl||_inf
+  //          ||x-sxu+xu||_inf
   //          ||d-sdl-dl||
   //          
-  double sd = fmax(p_smax, (nrmDualBou + nrmDualEqu) / (n + m)) / p_smax;
-  double sc = n == 0 ? 0 : fmax(p_smax, nrmDualBou / n) / p_smax;
+  //double sd = fmax(p_smax, (nrmDualBou + nrmDualEqu) / (n + m)) / p_smax;
+  //double sc = n == 0 ? 0 : fmax(p_smax, nrmDualBou / n) / p_smax;
+
+  sd = fmax(p_smax, sd) / p_smax;
+  sc = n == 0 ? 0 : fmax(p_smax, sc) / p_smax;
 
   sd = fmin(sd, 1e+8);
   sc = fmin(sc, 1e+8);
@@ -784,7 +797,7 @@ bool hiopAlgFilterIPMBase::evalNlpAndLogErrors2(const hiopIterate& it,
   // finally, the scaled nlp error
   nlpoverall = fmax(nlpoptim / sd, fmax(cons_violation, nlpcomplem / sc));
 
-  nlp->log->printf(hovScalars,
+  nlp->log->printf(hovWarning,
                    "nlpoverall %g  nloptim %g  sd %g  nlpfeas %g  nlpcomplem %g  sc %g cons_violation %g\n",
                    nlpoverall,
                    nlpoptim,
@@ -1159,7 +1172,7 @@ hiopSolveStatus hiopAlgFilterIPMQuasiNewton::run()
   solver_status_ = NlpSolve_Pending;
 
   while(true) {
-    bret = evalNlpAndLogErrors(*it_curr,
+    bret = evalNlpAndLogErrors2(*it_curr,
                                *resid,
                                _mu,
                                _err_nlp_optim,
@@ -1252,7 +1265,7 @@ hiopSolveStatus hiopAlgFilterIPMQuasiNewton::run()
 
       //! should perform only a partial update since NLP didn't change
       resid->update(*it_curr, _f_nlp, *_c, *_d, *_grad_f, *_Jac_c, *_Jac_d, *logbar);
-      bret = evalNlpAndLogErrors(*it_curr,
+      bret = evalNlpAndLogErrors2(*it_curr,
                                  *resid,
                                  _mu,
                                  _err_nlp_optim,

@@ -77,7 +77,7 @@ InnerProduct::~InnerProduct()
   delete vec_n_;
 }
 
-bool InnerProduct::apply_M(const hiopVector& x, hiopVector& y)
+bool InnerProduct::apply_M(const hiopVector& x, hiopVector& y) const
 {
   if(nlp_->useWeightedInnerProd()) {
     return nlp_->eval_M(x, y);
@@ -88,7 +88,7 @@ bool InnerProduct::apply_M(const hiopVector& x, hiopVector& y)
 }
   
 // Computes ||x||_M
-double InnerProduct::norm_M(const hiopVector& x)
+double InnerProduct::norm_M(const hiopVector& x) const
 {
   if(nlp_->useWeightedInnerProd()) {
     nlp_->eval_M(x, *vec_n_);
@@ -98,19 +98,19 @@ double InnerProduct::norm_M(const hiopVector& x)
     return x.twonorm();
   }
 }
-  // Computes H primal norm
-  double InnerProduct::norm_H_primal(const hiopVector& x)
-  {
-    if(nlp_->useWeightedInnerProd()) {      
-      nlp_->eval_H(x, *vec_n_);
-      auto dp = x.dotProductWith(*vec_n_);
+// Computes H primal norm
+double InnerProduct::norm_H_primal(const hiopVector& x) const
+{
+  if(nlp_->useWeightedInnerProd()) {      
+    nlp_->eval_H(x, *vec_n_);
+    auto dp = x.dotProductWith(*vec_n_);
       return ::std::sqrt(dp);
-    } else {
-      return x.twonorm();
-    }
+  } else {
+    return x.twonorm();
   }
+}
 // Computes H dual norm
-double InnerProduct::norm_H_dual(const hiopVector& x)
+double InnerProduct::norm_H_dual(const hiopVector& x) const
 {
   if(nlp_->useWeightedInnerProd()) {      
     nlp_->eval_H_inv(x, *vec_n_);
@@ -121,7 +121,7 @@ double InnerProduct::norm_H_dual(const hiopVector& x)
   }
 }
 
-double InnerProduct::norm_stationarity(const hiopVector& x)
+double InnerProduct::norm_stationarity(const hiopVector& x) const
 {
   if(nlp_->useWeightedInnerProd()) {
     nlp_->eval_H_inv(x, *vec_n_);
@@ -133,9 +133,10 @@ double InnerProduct::norm_stationarity(const hiopVector& x)
 }
 
 // Compute norm one weighted by M, i.e., 1^T*M*|x|
-double InnerProduct::norm_M_one(const hiopVector&x)
+double InnerProduct::norm_M_one(const hiopVector&x) const
 {
   if(nlp_->useWeightedInnerProd()) {
+    //opt! pre-compute M*1
     vec_n_->copyFrom(x);
     vec_n_->component_abs();
     nlp_->eval_M(*vec_n_, *vec_n2_);
@@ -143,6 +144,33 @@ double InnerProduct::norm_M_one(const hiopVector&x)
     return vec_n_->dotProductWith(*vec_n2_);
   } else {
     return x.onenorm();
+  }
+}
+
+double InnerProduct::norm_complementarity(const hiopVector& x) const
+{
+  if(nlp_->useWeightedInnerProd()) {
+    //opt! pre-compute M*1
+    vec_n_->copyFrom(x);
+    vec_n_->component_abs();
+    nlp_->eval_M(*vec_n_, *vec_n2_);
+    vec_n_->setToConstant(1.);
+    return vec_n_->dotProductWith(*vec_n2_);
+  } else {
+    return x.infnorm();
+  }
+}
+
+// Computes the "volume" of the space, 1^T M*1 
+double InnerProduct::volume() const
+{
+  if(nlp_->useWeightedInnerProd()) {
+    //opt! pre-compute M*1
+    vec_n_->setToConstant(1.);
+    nlp_->eval_M(*vec_n_, *vec_n2_);
+    return vec_n2_->dotProductWith(*vec_n_);
+  } else {
+    return nlp_->n_complem();
   }
 }
 

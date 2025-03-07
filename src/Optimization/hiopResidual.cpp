@@ -200,8 +200,10 @@ int hiopResidual::update(const hiopIterate& it,
   nlp->log->printf(hovScalars, "NLP resid [update]: inf norm rx=%22.17e\n", buf);
   logprob.addNonLogBarTermsToGrad_x(1.0, *rx);
   rx->negate();
-  nrmInf_bar_optim = fmax(nrmInf_bar_optim, rx->infnorm_local());
-  nrmOne_bar_optim += rx->onenorm();
+  //nrmInf_bar_optim = fmax(nrmInf_bar_optim, rx->infnorm_local());
+  //nrmOne_bar_optim += rx->onenorm();
+  nrmInf_bar_optim = fmax(nrmInf_bar_optim, nlp->inner_prod()->norm_stationarity(*rx));
+  nrmOne_bar_optim += nlp->inner_prod()->norm_M_one(*rx);
 
   //~ done with rx
   // rd
@@ -256,7 +258,7 @@ int hiopResidual::update(const hiopIterate& it,
     if(nlp->n_low_local() < nx_loc) {
       rxl->selectPattern(nlp->get_ixl());
     }
-    buf = rxl->infnorm_local();
+    buf = rxl->infnorm_local();   
     // nrmInf_nlp_feasib = fmax(nrmInf_nlp_feasib, buf);
     nlp->log->printf(hovScalars, "NLP resid [update]: inf norm rxl=%22.17e\n", buf);
   }
@@ -307,10 +309,13 @@ int hiopResidual::update(const hiopIterate& it,
     if(nlp->n_low_local() < nx_loc) {
       rszl->selectPattern(nlp->get_ixl());
     }
-    nrmInf_nlp_complem = fmax(nrmInf_nlp_complem, rszl->infnorm_local());
-
+    // nrmInf_nlp_complem = fmax(nrmInf_nlp_complem, rszl->infnorm_local());
+    buf = nlp->inner_prod()->norm_complementarity(*rszl);
+    nrmInf_nlp_complem = fmax(nrmInf_nlp_complem, buf);
+    
     rszl->addConstant_w_patternSelect(mu, nlp->get_ixl());
-    buf = rszl->infnorm_local();
+    //buf = rszl->infnorm_local();
+    buf = nlp->inner_prod()->norm_complementarity(*rszl);
     nrmInf_bar_complem = fmax(nrmInf_bar_complem, buf);
     nlp->log->printf(hovScalars, "NLP resid [update]: inf norm rszl=%22.17e\n", buf);
   }
@@ -322,11 +327,13 @@ int hiopResidual::update(const hiopIterate& it,
       rszu->selectPattern(nlp->get_ixu());
     }
 
-    buf = rszu->infnorm_local();
+    //buf = rszu->infnorm_local();
+    buf = nlp->inner_prod()->norm_complementarity(*rszu);
     nrmInf_nlp_complem = fmax(nrmInf_nlp_complem, buf);
 
     rszu->addConstant_w_patternSelect(mu, nlp->get_ixu());
-    buf = rszu->infnorm_local();
+    //buf = rszu->infnorm_local();
+    buf = nlp->inner_prod()->norm_complementarity(*rszu);
     nrmInf_bar_complem = fmax(nrmInf_bar_complem, buf);
     nlp->log->printf(hovScalars, "NLP resid [update]: inf norm rszu=%22.17e\n", buf);
   }
@@ -364,6 +371,21 @@ int hiopResidual::update(const hiopIterate& it,
     nlp->log->printf(hovScalars, "NLP resid [update]: inf norm rsvu=%22.17e\n", buf);
   }
 
+// #ifdef HIOP_USE_MPI
+//   // here we reduce each of the norm together for a total cost of 1 Allreduce of 3 doubles
+//   // otherwise, if calling infnorm() for each vector, there will be 12 Allreduce's, each of 1 double
+//   double aux[6] =
+//       {nrmInf_nlp_optim, nrmInf_nlp_feasib, nrmInf_nlp_complem, nrmInf_bar_optim, nrmInf_bar_feasib, nrmInf_bar_complem};
+//   double aux_g[6];
+//   int ierr = MPI_Allreduce(aux, aux_g, 6, MPI_DOUBLE, MPI_MAX, nlp->get_comm());
+//   assert(MPI_SUCCESS == ierr);
+//   nrmInf_nlp_optim = aux_g[0];
+//   nrmInf_nlp_feasib = aux_g[1];
+//   nrmInf_nlp_complem = aux_g[2];
+//   nrmInf_bar_optim = aux_g[3];
+//   nrmInf_bar_feasib = aux_g[4];
+//   nrmInf_bar_complem = aux_g[5];
+// #endif
 #ifdef HIOP_USE_MPI
   // here we reduce each of the norm together for a total cost of 1 Allreduce of 3 doubles
   // otherwise, if calling infnorm() for each vector, there will be 12 Allreduce's, each of 1 double
@@ -379,6 +401,7 @@ int hiopResidual::update(const hiopIterate& it,
   nrmInf_bar_feasib = aux_g[4];
   nrmInf_bar_complem = aux_g[5];
 #endif
+
   nlp->runStats.tmSolverInternal.stop();
   return true;
 }

@@ -129,10 +129,11 @@ public:
   /* Wrapper over user-defined inverse of H apply that also applies the NLP transformations. */
   bool eval_H_inv(const hiopVector& x, hiopVector& y); 
 
-  InnerProduct* inner_prod()
+  InnerProduct const* inner_prod() const
   {
     return inner_prod_;
   }
+
 protected:
   // calls specific hiopInterfaceXXX::eval_Jac_cons and deals with specializations of hiopMatrix arguments
   virtual bool eval_Jac_c_d_interface_impl(hiopVector& x, bool new_x, hiopMatrix& Jac_c, hiopMatrix& Jac_d) = 0;

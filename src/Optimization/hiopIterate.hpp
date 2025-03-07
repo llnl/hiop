@@ -142,7 +142,10 @@ public:
   virtual double normOneOfBoundDuals() const;
   virtual double normOneOfEqualityDuals() const;
   /* same as above but computed in one shot to save on communication and computation */
-  virtual void normOneOfDuals(double& nrm1Eq, double& nrm1Bnd) const;
+  //virtual void normOneOfDuals(double& nrm1Eq, double& nrm1Bnd) const;
+
+  /// @brief Computes scaling factors sc and sd; also returns the "norms" of duals
+  bool compute_sc_sd(double& sc, double& sd, double& nrmDualsEq, double& nrmDualsBou) const;
 
   /// @brief Entries corresponding to zeros in ix are set to zero
   virtual void selectPattern();

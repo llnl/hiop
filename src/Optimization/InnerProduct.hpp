@@ -87,30 +87,36 @@ public:
   virtual ~InnerProduct();
 
   // Compute y=M*x
-  bool apply_M(const hiopVector& x, hiopVector& y);
+  bool apply_M(const hiopVector& x, hiopVector& y) const;
   
   // Computes ||x||_M
-  double norm_M(const hiopVector& x);
+  double norm_M(const hiopVector& x) const;
 
   // Computes H primal norm
-  double norm_H_primal(const hiopVector& x);
+  double norm_H_primal(const hiopVector& x) const;
   
   // Computes H dual norm
-  double norm_H_dual(const hiopVector& x);
+  double norm_H_dual(const hiopVector& x) const;
 
   // Computes norm of stationarity residual, using inf-norm for Euclidean spaces, H-inverse norm for Hilbert spaces
-  double norm_stationarity(const hiopVector& x);
+  double norm_stationarity(const hiopVector& x) const;
 
-  // Compute norm one weighted by M, i.e., 1^T*M*|x|
-  double norm_M_one(const hiopVector&x);
+  // Computes norm of complementarity, using inf-norm for Euclidean spaces, 1M norm for Hilbert spaces
+  double norm_complementarity(const hiopVector& x) const;
+  
+  // Computes 1M norm, i.e., ||x|| =  1^T*M*|x|
+  double norm_M_one(const hiopVector&x) const;
+
+  // Computes the "volume" of the space, norm of 1 function
+  double volume() const;
 private:
   // Pointer to "client" NLP
   hiopNlpFormulation* nlp_;
 
   // Working vector in the size n of the variables, allocated only when for the weighted case
-  hiopVector* vec_n_;
+  mutable hiopVector* vec_n_;
   // Working vector in the size n of the variables, allocated only when for the weighted case
-  hiopVector* vec_n2_;
+  mutable hiopVector* vec_n2_;
 };
 
 } //end namespace
