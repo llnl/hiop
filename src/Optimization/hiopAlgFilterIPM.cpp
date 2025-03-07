@@ -652,10 +652,7 @@ bool hiopAlgFilterIPMBase::evalNlpAndLogErrors(const hiopIterate& it,
 {
   nlp->runStats.tmSolverInternal.start();
 
-  size_type n = nlp->n_complem(), m = nlp->m();
-  // the one norms
-  // double nrmDualBou=it.normOneOfBoundDuals();
-  // double nrmDualEqu=it.normOneOfEqualityDuals();
+  size_type n = nlp->n_complem();
   double sc;
   double sd;
   double nrmDualBou;
@@ -738,7 +735,7 @@ bool hiopAlgFilterIPMBase::evalNlpAndLogErrors2(const hiopIterate& it,
 {
   nlp->runStats.tmSolverInternal.start();
 
-  size_type n = nlp->n_complem(), m = nlp->m();
+  size_type n = nlp->n_complem();
   double sc;
   double sd;
   double nrmDualBou;

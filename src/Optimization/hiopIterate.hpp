@@ -139,8 +139,8 @@ public:
                                             hiopVector& grad_d) const;
 
   /** norms for individual parts of the iterate (on demand computation) */
-  virtual double normOneOfBoundDuals() const;
-  virtual double normOneOfEqualityDuals() const;
+  //virtual double normOneOfBoundDuals() const;
+  //virtual double normOneOfEqualityDuals() const;
   /* same as above but computed in one shot to save on communication and computation */
   //virtual void normOneOfDuals(double& nrm1Eq, double& nrm1Bnd) const;
 
