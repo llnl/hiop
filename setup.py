@@ -22,8 +22,8 @@ metadata = dict(
         install_requires=["smt"],
         python_requires=">=3.9",
         zip_safe=False,
-        url="https://lc.llnl.gov/gitlab/ai4sci/hiopBBpy", #not public (for now)
-        download_url="https://lc.llnl.gov/gitlab/ai4sci/hiopBBpy", # not a public url (for now)
+        url="https://github.com/LLNL/hiop",
+        download_url="https://github.com/LLNL/hiop",
 )
 
 setup(**metadata)
