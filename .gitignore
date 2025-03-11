@@ -5,5 +5,5 @@ build_*
 .DS_Store
 _dist-default-build
 _dist-DEBUG
-*hiopbb.egg-info
+*hiopbbpy.egg-info
 *__pycache__
