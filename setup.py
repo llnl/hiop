@@ -1,5 +1,5 @@
 '''
-This is the setup file for installing HiOpBB
+This is the setup file for installing hiopbbpy
 
 Authors:    Tucker Hartland <hartland1@llnl.gov>
             Nai-Yuan Chiang <chiang7@llnl.gov>
@@ -7,23 +7,18 @@ Authors:    Tucker Hartland <hartland1@llnl.gov>
 
 import sys
 import numpy as np
-from setuptools import setup
+from setuptools import setup, find_packages
 
-from hiopbb import __version__
 
 metadata = dict(
-        name="hiopbb",
-        version=__version__,
-        description="HiOp black box optimization (hiopbb)",
+        name="hiopbbpy",
+        version="0.0.1",
+        description="HiOp black box optimization (hiopbbpy)",
         author="Tucker hartland et al.",
         author_email="hartland1@llnl.gov",
         license="BSD-3",
-        packages=[
-            "hiopbb",
-            "hiopbb.problems",
-            "hiopbb.surrogate_modeling",
-            "hiopbb.opt"
-            ],
+        packages=find_packages(where="src"),
+        package_dir={"": "src"},
         install_requires=["smt"],
         python_requires=">=3.9",
         zip_safe=False,

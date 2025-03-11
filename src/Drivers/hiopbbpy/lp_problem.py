@@ -5,7 +5,7 @@ Authors:    Tucker Hartland <hartland1@llnl.gov>
             Nai-Yuan Chiang <chiang7@llnl.gov>
 """
 import numpy as np
-from .problem import Problem
+from hiopbbpy.problems.problem import Problem
 
 class LpProblem(Problem):
     def __init__(self, ndim, xlimits, p=2.0):

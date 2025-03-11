@@ -2,6 +2,3 @@
 	path = tpl/eigen
 	url = https://gitlab.com/libeigen/eigen.git
 
-[submodule "smt"]
-	path = smt
-	url = https://github.com/SMTorg/smt.git
