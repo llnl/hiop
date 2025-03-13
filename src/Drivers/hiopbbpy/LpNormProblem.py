@@ -1,5 +1,5 @@
 """
-Implementation of the LP problem class
+Implementation of the LPNorm problem class f(x) = || x ||_p
 
 Authors:    Tucker Hartland <hartland1@llnl.gov>
             Nai-Yuan Chiang <chiang7@llnl.gov>
@@ -7,9 +7,9 @@ Authors:    Tucker Hartland <hartland1@llnl.gov>
 import numpy as np
 from hiopbbpy.problems.problem import Problem
 
-class LpProblem(Problem):
+class LpNormProblem(Problem):
     def __init__(self, ndim, xlimits, p=2.0):
-        name = "LpProblem"
+        name = "LpNormProblem"
         super().__init__(ndim, xlimits, name=name)
         self.p = p
 

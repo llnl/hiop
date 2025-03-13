@@ -1,36 +1,29 @@
 """
   Code description:
-     for a 1-D example problem
-     randomly sample training points
-     define a Kriging-based Gaussian-process (smt backend)
-     trained on said data
-     define an LCB acquisition function (not smt backend)
-     plot the acquisition function and determine
-     the minimizer so as to test some of the infastructure
-     from BOAlgorithm
-
+     for a 2D example LpNormProblem
+        1) randomly sample training points
+        2) define a Kriging-based Gaussian-process (smt backend)
+           trained on said data
+        3) determine the minimizer via BOAlgorithm
 """
 
 import numpy as np
 import matplotlib.pyplot as plt
 import warnings
 warnings.filterwarnings("ignore")
-from lp_problem import LpProblem
+from LpNormProblem import LpNormProblem
 from hiopbbpy.surrogate_modeling import smtKRG
-from hiopbbpy.opt import LCBacquisition
 from hiopbbpy.opt import BOAlgorithm
 
 
 ### parameters
-n_samples = 5 # number of the samples
+n_samples = 5 # number of the initial samples to train GP
 theta = 1.e-2 # hyperparameter for GP kernel
 
-nx = 1 # dimension of the problem
-xlimits = np.array([[-1. ,1.]])
-nx = 2
-xlimits = np.array([[-5, 5], [-5, 5]])
+nx = 2 # dimension of the problem
+xlimits = np.array([[-5, 5], [-5, 5]]) # bounds on optimization variable
 
-problem = LpProblem(nx, xlimits)
+problem = LpNormProblem(nx, xlimits)
 print(problem.name, " problem")
 
 ### initial training set
@@ -47,4 +40,3 @@ bo.optimize(problem)
 
 # Retrieve optimal point
 x_opt, y_opt = bo.getOptimalPoint()
-print(f"Optimal x: {x_opt}, Optimal y: {y_opt}")
