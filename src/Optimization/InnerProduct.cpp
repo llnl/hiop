@@ -64,6 +64,7 @@ InnerProduct::InnerProduct(hiopNlpFormulation* nlp)
 {
   printf("InnerProduct::InnerProduct begin\n"); fflush(stdout);
   assert(nlp);
+  M_lump_ = nullptr;
   if(nlp->useWeightedInnerProd()) {
     vec_n_ = nlp_->alloc_primal_vec();
     vec_n2_ = nlp_->alloc_primal_vec();
@@ -71,6 +72,7 @@ InnerProduct::InnerProduct(hiopNlpFormulation* nlp)
     vec_n_ = nullptr;
     vec_n2_ = nullptr;
   }
+
   printf("InnerProduct::InnerProduct end\n"); fflush(stdout);
 }
   
@@ -78,6 +80,7 @@ InnerProduct::~InnerProduct()
 {
   delete vec_n2_;
   delete vec_n_;
+  delete M_lump_;
 }
 
 bool InnerProduct::apply_M(const hiopVector& x, hiopVector& y) const
@@ -153,12 +156,13 @@ double InnerProduct::norm_M_one(const hiopVector&x) const
 double InnerProduct::norm_complementarity(const hiopVector& x) const
 {
   if(nlp_->useWeightedInnerProd()) {
-    //opt! pre-compute M*1
-    vec_n_->copyFrom(x);
-    vec_n_->component_abs();
-    nlp_->eval_M(*vec_n_, *vec_n2_);
-    vec_n_->setToConstant(1.);
-    return vec_n_->dotProductWith(*vec_n2_);
+    // //opt! pre-compute M*1
+    // vec_n_->copyFrom(x);
+    // vec_n_->component_abs();
+    // nlp_->eval_M(*vec_n_, *vec_n2_);
+    // vec_n_->setToConstant(1.);
+    // return vec_n_->dotProductWith(*vec_n2_);
+    return x.infnorm();
   } else {
     return x.infnorm();
   }
@@ -168,13 +172,53 @@ double InnerProduct::norm_complementarity(const hiopVector& x) const
 double InnerProduct::volume() const
 {
   if(nlp_->useWeightedInnerProd()) {
-    //opt! pre-compute M*1
-    vec_n_->setToConstant(1.);
-    nlp_->eval_M(*vec_n_, *vec_n2_);
-    return vec_n2_->dotProductWith(*vec_n_);
+    double vol_total = nlp_->m_ineq_low() + nlp_->m_ineq_upp();
+    if(nlp_->n_low() > 0 || nlp_->n_upp() > 0) {
+      //compute ||1||_M
+      //vec_n_->setToConstant(1.);      
+      const double vol_mult_bnds = M_lumped()->onenorm();
+      if(nlp_->n_low() > 0) {
+        //For weighted Hilbert spaces we assume that if lower bounds are present, they are for all vars
+        vol_total += vol_mult_bnds;
+      }
+      if(nlp_->n_upp() > 0) {
+        //For weighted Hilbert spaces we assume that if lower bounds are present, they are for all vars
+        vol_total += vol_mult_bnds;
+      }      
+    }
+    return vol_total;
   } else {
     return nlp_->n_complem();
   }
 }
 
+// Return vector containing the diagonals of the lumped mass matrix, possibly creating the internal object
+const hiopVector* InnerProduct::M_lumped() const
+{
+  if(M_lump_ == nullptr) {
+    M_lump_ = nlp_->alloc_primal_vec();
+    if(nlp_->useWeightedInnerProd()) {    
+      vec_n_->setToConstant(1.);
+      apply_M(*vec_n_, *M_lump_);
+    } else {
+      M_lump_->setToConstant(1.);
+    }
+  }
+  return M_lump_;
+}
+
+void InnerProduct::
+add_linear_damping_term(const hiopVector& ixl, const hiopVector& ixu, const double& ct, hiopVector& x) const
+{
+  if(nlp_->useWeightedInnerProd()) {
+    vec_n_->copyFrom(ixl);
+    vec_n_->axpy(-1.0, ixu);
+    vec_n_->componentMult(*M_lumped());
+    x.axpy(ct, *vec_n_);
+  } else {
+    x.addLinearDampingTerm(ixl, ixu, 1.0, ct);
+  }
+}
+
+  
 } // end namespace

@@ -109,6 +109,16 @@ public:
 
   // Computes the "volume" of the space, norm of 1 function
   double volume() const;
+
+  // Return vector containing the diagonals of the lumped mass matrix, possibly creating the internal object
+  const hiopVector* M_lumped() const;
+
+  /*
+   * @brief add linear damping term
+   * Performs `this[i] = alpha*this[i] + sign[i]*ct*M_lumped[i]` where sign[i]=1 when EXACTLY one of
+   * ixleft[i] and ixright[i] is 1.0 and sign=0 otherwise.
+   */
+  void add_linear_damping_term(const hiopVector& ixl, const hiopVector& ixu, const double& ct, hiopVector& x) const; 
 private:
   // Pointer to "client" NLP
   hiopNlpFormulation* nlp_;
@@ -117,6 +127,8 @@ private:
   mutable hiopVector* vec_n_;
   // Working vector in the size n of the variables, allocated only when for the weighted case
   mutable hiopVector* vec_n2_;
+  // Lumped mass matrix
+  mutable hiopVector* M_lump_;
 };
 
 } //end namespace
