@@ -568,7 +568,7 @@ bool hiopKKTLinSysCompressedXYcYd::update(const hiopIterate* iter,
   Dx_->axdzpy_w_pattern(1.0, *iter_->zl, *iter_->sxl, nlp_->get_ixl());
   Dx_->axdzpy_w_pattern(1.0, *iter_->zu, *iter_->sxu, nlp_->get_ixu());
   nlp_->log->write("Dx in KKT", *Dx_, hovMatrices);
-
+  assert(false);
   // Dd=(Sdl)^{-1}Vu + (Sdu)^{-1}Vu
   Dd_->setToZero();
   Dd_->axdzpy_w_pattern(1.0, *iter_->vl, *iter_->sdl, nlp_->get_idl());
@@ -595,7 +595,7 @@ bool hiopKKTLinSysCompressedXYcYd::computeDirections(const hiopResidual* resid, 
 
   /***********************************************************************
    * perform the reduction to the compressed linear system
-   * rx_tilde  = rx+Sxl^{-1}*[rszl-Zl*rxl] - Sxu^{-1}*(rszu-Zu*rxu)
+   * rx_tilde  = rx+ M_lumped* Sxl^{-1}*[rszl-Zl*rxl] - M_lumped* Sxu^{-1}*(rszu-Zu*rxu)
    * ryd_tilde = ryd + [(Sdl^{-1}Vl+Sdu^{-1}Vu)]^{-1}*
    *                     [rd + Sdl^{-1}*(rsvl-Vl*rdl)-Sdu^{-1}(rsvu-Vu*rdu)]
    * rd_tilde = rd + Sdl^{-1}*(rsvl-Vl*rdl)-Sdu^{-1}(rsvu-Vu*rdu)
@@ -603,23 +603,50 @@ bool hiopKKTLinSysCompressedXYcYd::computeDirections(const hiopResidual* resid, 
    * yd_tilde = ryd + Dd_inv*rd_tilde
    */
   rx_tilde_->copyFrom(*r.rx);
+  
+  // if(nlp_->n_low_local() > 0) {
+  //   // rl:=rszl-Zl*rxl (using dir->x as working buffer)
+  //   hiopVector& rl = *(dir->x);  // temporary working buffer
+  //   rl.copyFrom(*r.rszl);
+  //   rl.axzpy(-1.0, *iter_->zl, *r.rxl);
+  //   // rx_tilde = rx+Sxl^{-1}*rl
+  //   rx_tilde_->axdzpy_w_pattern(1.0, rl, *iter_->sxl, nlp_->get_ixl());
+  // }
+  // if(nlp_->n_upp_local() > 0) {
+  //   // ru:=rszu-Zu*rxu (using dir->x as working buffer)
+  //   hiopVector& ru = *(dir->x);  // temporary working buffer
+  //   ru.copyFrom(*r.rszu);
+  //   ru.axzpy(-1.0, *iter_->zu, *r.rxu);
+  //   // rx_tilde = rx_tilde - Sxu^{-1}*ru
+  //   rx_tilde_->axdzpy_w_pattern(-1.0, ru, *iter_->sxu, nlp_->get_ixu());
+  // }
+
+  hiopVector& rx2 = *(dir->sxl);  // temporary working buffer
+  rx2.setToZero();
   if(nlp_->n_low_local() > 0) {
-    // rl:=rszl-Zl*rxl (using dir->x as working buffer)
     hiopVector& rl = *(dir->x);  // temporary working buffer
     rl.copyFrom(*r.rszl);
     rl.axzpy(-1.0, *iter_->zl, *r.rxl);
-    // rx_tilde = rx+Sxl^{-1}*rl
-    rx_tilde_->axdzpy_w_pattern(1.0, rl, *iter_->sxl, nlp_->get_ixl());
+    //// rx_tilde = rx+Sxl^{-1}*rl
+    //rx_tilde_->axdzpy_w_pattern(1.0, rl, *iter_->sxl, nlp_->get_ixl());
+    rx2.axdzpy_w_pattern(1.0, rl, *iter_->sxl, nlp_->get_ixl()); 
   }
+  
   if(nlp_->n_upp_local() > 0) {
-    // ru:=rszu-Zu*rxu (using dir->x as working buffer)
-    hiopVector& ru = *(dir->x);  // temporary working buffer
+    // ru:=rszu-Zu*rxu
+    hiopVector& ru = *(dir->x);
     ru.copyFrom(*r.rszu);
     ru.axzpy(-1.0, *iter_->zu, *r.rxu);
-    // rx_tilde = rx_tilde - Sxu^{-1}*ru
-    rx_tilde_->axdzpy_w_pattern(-1.0, ru, *iter_->sxu, nlp_->get_ixu());
+    //// rx_tilde = rx_tilde - Sxu^{-1}*ru
+    ////rx_tilde_->axdzpy_w_pattern(-1.0, ru, *iter_->sxu, nlp_->get_ixu());
+    rx2.axdzpy_w_pattern(-1.0, ru, *iter_->sxu, nlp_->get_ixu());
+  }
+  if(nlp_->n_low_local() > 0 || nlp_->n_upp_local() > 0) {
+    rx2.componentMult(*nlp_->inner_prod()->M_lumped());
+    rx_tilde_->axpy(1.0, rx2);
   }
 
+  
   // for ryd_tilde:
   ryd_tilde_->copyFrom(*r.ryd);
   // 1. the diag (Sdl^{-1}Vl+Sdu^{-1}Vu)^{-1} has already computed in Dd_inv in 'update'

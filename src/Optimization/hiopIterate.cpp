@@ -621,7 +621,8 @@ void hiopIterate::addLinearDampingTermToGrad_x(const double& mu,
   assert(x->get_local_size() == grad_x.get_local_size());
 
   const double ct = kappa_d * mu * beta;
-  grad_x.addLinearDampingTerm(nlp->get_ixl(), nlp->get_ixu(), 1.0, ct);
+  //grad_x.addLinearDampingTerm(nlp->get_ixl(), nlp->get_ixu(), 1.0, ct);
+  nlp->inner_prod()->add_linear_damping_term(nlp->get_ixl(), nlp->get_ixu(), ct, grad_x);
 }
 
 void hiopIterate::addLinearDampingTermToGrad_d(const double& mu,

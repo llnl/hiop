@@ -100,6 +100,7 @@ bool KktLinSysLowRank::update(const hiopIterate* iter,
   Dx_->setToZero();
   Dx_->axdzpy_w_pattern(1.0, *iter_->zl, *iter_->sxl, nlp_->get_ixl());
   Dx_->axdzpy_w_pattern(1.0, *iter_->zu, *iter_->sxu, nlp_->get_ixu());
+  Dx_->componentMult(*nlp_->inner_prod()->M_lumped());
   nlp_->log->write("Dx in KKT", *Dx_, hovMatrices);
 
   hess_low_rank->update_logbar_diag(*Dx_);
@@ -218,7 +219,7 @@ bool KktLinSysLowRank::solveCompressed(hiopVector& rx,
   // some outputing
   nlp_->log->write("KKT Low rank: solve compressed SOL", hovIteration);
   nlp_->log->write("  dx: ", dx, hovIteration);
-  nlp_->log->write(" dyc: ", dyc, hovIteration);
+  nlp_->log->write(" dyc: ", dyc, hovWarning);
   nlp_->log->write(" dyd: ", dyd, hovIteration);
   delete r;
 #endif

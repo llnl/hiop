@@ -146,7 +146,7 @@ double hiopResidual::compute_nlp_infeasib_onenorm(const hiopIterate& it, const h
     rdu->axpy(-1.0, *it.d);
     rdu->selectPattern(nlp->get_idu());
   }
-
+  //! the ifs above seem to do nothing for the return value
   nlp->runStats.tmSolverInternal.stop();
   return nrmOne_infeasib;
 }
@@ -192,6 +192,8 @@ int hiopResidual::update(const hiopIterate& it,
   jac_d.transTimesVec(1.0, *rx, 1.0, *it.yd);
   rx->axpy(1.0, grad);
 
+  //nlp->log->write("rx w/o log terms:", *rx, hovWarning);
+  
   //buf = rx->infnorm_local();
   buf = nlp->inner_prod()->norm_stationarity(*rx);
   nrmInf_nlp_optim = fmax(nrmInf_nlp_optim, buf);
@@ -205,6 +207,8 @@ int hiopResidual::update(const hiopIterate& it,
   nrmInf_bar_optim = fmax(nrmInf_bar_optim, nlp->inner_prod()->norm_stationarity(*rx));
   nrmOne_bar_optim += nlp->inner_prod()->norm_M_one(*rx);
 
+  //nlp->log->write("rx with log terms:", *rx, hovWarning);
+  
   //~ done with rx
   // rd
   rd->copyFrom(*it.yd);
@@ -470,7 +474,7 @@ void hiopResidual::update_soc(const hiopIterate& it,
   nrmInf_bar_optim = nrmInf_bar_feasib = nrmInf_bar_complem = 0;
   nrmOne_nlp_feasib = nrmOne_bar_feasib = 0.;
   nrmOne_nlp_optim = nrmOne_bar_optim = 0.;
-
+  assert(false);
   size_type nx_loc = rx->get_local_size();
   const double& mu = logprob.mu;
   double buf;
