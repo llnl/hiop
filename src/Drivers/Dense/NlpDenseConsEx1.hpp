@@ -68,8 +68,8 @@ public:
   index_type* get_col_partition() const { return col_partition; }
   MPI_Comm get_comm() const { return comm; }
 
-  virtual void applyM(DiscretizedFunction& f);
-
+  void applyM(DiscretizedFunction& f);
+  void applyMinv(DiscretizedFunction& f);
 protected:
   hiop::hiopVector* _mass;  // the length or the mass of the elements
   double _a, _b;            // end points
@@ -261,6 +261,7 @@ public:
   bool applyM(const size_type& n, const double* x_in, double* y_out)
   {
     x->copyFrom(x_in);
+    _mesh->applyM(*x);
     x->copyTo(y_out);
     return true;
   }
@@ -271,6 +272,7 @@ public:
   virtual bool applyH(const size_type& n, const double* x_in, double* y_out)
   {
     x->copyFrom(x_in);
+    _mesh->applyM(*x);
     x->copyTo(y_out);
     return true;
   }
@@ -281,6 +283,7 @@ public:
   virtual bool applyHinv(const size_type& n, const double* x_in, double* y_out)
   {
     x->copyFrom(x_in);
+    _mesh->applyMinv(*x);
     x->copyTo(y_out);
     return true;
   }
@@ -290,7 +293,7 @@ public:
    */
   virtual bool useWeightedInnerProducts()
   {
-    return false;
+    return false;//true;
   }
 
 private:
