@@ -1394,7 +1394,7 @@ double hiopVectorRaja<MEM, POL>::logBarrierWeighted_local(const hiopVector& sele
   const hiopVectorRaja& sel = dynamic_cast<const hiopVectorRaja<MEM, POL>&>(select);
   const hiopVectorRaja& wei = dynamic_cast<const hiopVectorRaja<MEM, POL>&>(weights);
   assert(this->n_local_ == sel.n_local_);
-  assert(this->n_local_ == wei.n_local_);`
+  assert(this->n_local_ == wei.n_local_);
 
   double* data = data_dev_;
   const double* id = sel.local_data_const();
