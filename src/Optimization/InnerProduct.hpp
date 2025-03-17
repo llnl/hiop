@@ -88,6 +88,9 @@ public:
 
   // Compute y=M*x
   bool apply_M(const hiopVector& x, hiopVector& y) const;
+
+  // Appply lumped mass matrix, y=M_lumped*x
+  bool apply_M_lumped(const hiopVector& x, hiopVector& y) const;
   
   // Computes ||x||_M
   double norm_M(const hiopVector& x) const;

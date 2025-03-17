@@ -186,7 +186,7 @@ int hiopResidual::update(const hiopIterate& it,
   //using rxl as auxiliary variable to compute -M*zl+M*zu
   rxl->copyFrom(*it.zu);
   rxl->axpy(-1.0, *it.zl);
-  nlp->inner_prod()->apply_M(*rxl, *rx);
+  nlp->inner_prod()->apply_M_lumped(*rxl, *rx);
   //continue adding to rx
   jac_c.transTimesVec(1.0, *rx, 1.0, *it.yc);
   jac_d.transTimesVec(1.0, *rx, 1.0, *it.yd);
@@ -258,7 +258,7 @@ int hiopResidual::update(const hiopIterate& it,
   nlp->log->printf(hovScalars, "NLP resid [update]: inf norm ryd=%22.17e\n", buf);
 
   // rxl=x-sxl-xl
-  if(nlp->n_low_local() > 0) {
+  if(nlp->n_low() > 0) {
     rxl->copyFrom(*it.x);
     rxl->axpy(-1.0, *it.sxl);
     rxl->axpy(-1.0, nlp->get_xl());
@@ -266,20 +266,20 @@ int hiopResidual::update(const hiopIterate& it,
     if(nlp->n_low_local() < nx_loc) {
       rxl->selectPattern(nlp->get_ixl());
     }
-    buf = rxl->infnorm_local();   
+    buf = rxl->infnorm();   
     // nrmInf_nlp_feasib = fmax(nrmInf_nlp_feasib, buf);
     nlp->log->printf(hovScalars, "NLP resid [update]: inf norm rxl=%22.17e\n", buf);
   }
   // printf("  %10.4e (xl)", nrmInf_nlp_feasib);
   // rxu=-x-sxu+xu
-  if(nlp->n_upp_local() > 0) {
+  if(nlp->n_upp() > 0) {
     rxu->copyFrom(nlp->get_xu());
     rxu->axpy(-1.0, *it.x);
     rxu->axpy(-1.0, *it.sxu);
     if(nlp->n_upp_local() < nx_loc) {
       rxu->selectPattern(nlp->get_ixu());
     }
-    buf = rxu->infnorm_local();
+    buf = rxu->infnorm();
     // nrmInf_nlp_feasib = fmax(nrmInf_nlp_feasib, buf);
     nlp->log->printf(hovScalars, "NLP resid [update]: inf norm rxu=%22.17e\n", buf);
   }
@@ -311,7 +311,7 @@ int hiopResidual::update(const hiopIterate& it,
   nrmOne_bar_feasib = nrmOne_nlp_feasib;
 
   // rszl = \mu e - sxl * zl
-  if(nlp->n_low_local() > 0) { //! n_low()
+  if(nlp->n_low() > 0) { //! n_low()
     rszl->setToZero();
     rszl->axzpy(-1.0, *it.sxl, *it.zl);
     if(nlp->n_low_local() < nx_loc) {
@@ -328,7 +328,7 @@ int hiopResidual::update(const hiopIterate& it,
     nlp->log->printf(hovScalars, "NLP resid [update]: inf norm rszl=%22.17e\n", buf);
   }
   // rszu = \mu e - sxu * zu
-  if(nlp->n_upp_local() > 0) { //!
+  if(nlp->n_upp() > 0) {
     rszu->setToZero();
     rszu->axzpy(-1.0, *it.sxu, *it.zu);
     if(nlp->n_upp_local() < nx_loc) {
@@ -474,7 +474,7 @@ void hiopResidual::update_soc(const hiopIterate& it,
   nrmInf_bar_optim = nrmInf_bar_feasib = nrmInf_bar_complem = 0;
   nrmOne_nlp_feasib = nrmOne_bar_feasib = 0.;
   nrmOne_nlp_optim = nrmOne_bar_optim = 0.;
-  assert(false);
+
   size_type nx_loc = rx->get_local_size();
   const double& mu = logprob.mu;
   double buf;

@@ -92,7 +92,15 @@ bool InnerProduct::apply_M(const hiopVector& x, hiopVector& y) const
     return true;
   }
 }
-  
+
+// Applies lumped mass matrix;
+bool InnerProduct::apply_M_lumped(const hiopVector& x, hiopVector& y) const
+{
+  y.copyFrom(x);
+  y.componentMult(*M_lumped());
+  return true;
+}
+
 // Computes ||x||_M
 double InnerProduct::norm_M(const hiopVector& x) const
 {
@@ -130,9 +138,12 @@ double InnerProduct::norm_H_dual(const hiopVector& x) const
 double InnerProduct::norm_stationarity(const hiopVector& x) const
 {
   if(nlp_->useWeightedInnerProd()) {
-    nlp_->eval_H_inv(x, *vec_n_);
-    auto dp = x.dotProductWith(*vec_n_);
-    return ::std::sqrt(dp);
+    //nlp_->eval_H_inv(x, *vec_n_);
+    //auto dp = x.dotProductWith(*vec_n_);
+    //return ::std::sqrt(dp);
+    vec_n_->copyFrom(x);
+    vec_n_->componentDiv(*M_lumped());
+    return vec_n_->infnorm();
   } else {
     return x.infnorm();
   }
