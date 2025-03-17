@@ -1042,6 +1042,35 @@ double log_barr_obj_kernel(int n, double* d1, const double* id)
   return sum;
 }
 
+/** @brief compute sum(w[i]*log(d1[i])) forall i where id[i]=1*/
+double log_barr_wei_obj_kernel(int n, double* d1, const double* id, const double* w)
+{
+  thrust::device_ptr<double> dev_v = thrust::device_pointer_cast(d1);
+  thrust::device_ptr<const double> id_v = thrust::device_pointer_cast(id);
+  thrust::device_ptr<const double> wei_v = thrust::device_pointer_cast(w);
+
+  // wrap raw pointer with a device_ptr 
+  thrust_log_select<double> log_select_op;
+  thrust::plus<double> plus_op;
+  thrust::multiplies<double> mult_op;
+  
+  // TODO: how to avoid this temp vec?
+  thrust::device_ptr<double> v_temp = thrust::device_malloc(n*sizeof(double));
+
+  // compute v=x*id
+  thrust::transform(thrust::device, dev_v, dev_v+n, id_v, v_temp, mult_op);
+  // compute v[i] = ( log(v[i]) if v[i]>0, otherwise 0 )
+  thrust::transform(thrust::device, v_temp, v_temp+n, v_temp, log_select_op); 
+  // compute v[i] = w[i]*v[i] 
+  thrust::transform(thrust::device, v_temp, v_temp+n, v_temp, mult_op); 
+  // sum up
+  const double sum = thrust::reduce(thrust::device, v_temp, v_temp+n, 0.0, plus_op);
+
+  thrust::device_free(v_temp);
+
+  return sum;
+}
+
 /** @brief compute sum(d1[i]) */
 double thrust_sum_kernel(int n, double* d1)
 {

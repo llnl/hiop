@@ -642,6 +642,16 @@ double hiopVectorCuda::logBarrier_local(const hiopVector& select) const
   return hiop::cuda::log_barr_obj_kernel(n_local_, data_, id);
 }
 
+double hiopVectorCuda::logBarrierWeighted_local(const hiopVector& select, const hiopVector& weights) const
+{
+  assert(n_local_ == select.get_local_size());
+  assert(n_local_ == weights.get_local_size());
+  const double* id = select.local_data_const();
+  const double* w = weights.local_data_const();
+
+  return hiop::cuda::log_barr_wei_obj_kernel(n_local_, data_, id, w);
+}
+
 /* @brief adds the gradient of the log barrier, namely this=this+alpha*1/select(x) */
 void hiopVectorCuda::addLogBarrierGrad(double alpha, const hiopVector& xvec, const hiopVector& select)
 {
