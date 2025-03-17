@@ -569,8 +569,10 @@ bool hiopIterate::adjustDuals_primalLogHessian(const double& mu, const double& k
 double hiopIterate::evalLogBarrier() const
 {
   double barrier;
-  barrier = sxl->logBarrier_local(nlp->get_ixl());
-  barrier += sxu->logBarrier_local(nlp->get_ixu());
+  //barrier = sxl->logBarrier_local(nlp->get_ixl());
+  //barrier += sxu->logBarrier_local(nlp->get_ixu());
+  barrier = nlp->inner_prod()->log_barrier_eval_local(*sxl, nlp->get_ixl());
+  barrier += nlp->inner_prod()->log_barrier_eval_local(*sxu, nlp->get_ixu());
 #ifdef HIOP_USE_MPI
   double res;
   int ierr = MPI_Allreduce(&barrier, &res, 1, MPI_DOUBLE, MPI_SUM, nlp->get_comm());
@@ -586,8 +588,10 @@ double hiopIterate::evalLogBarrier() const
 void hiopIterate::addLogBarGrad_x(const double& mu, hiopVector& gradx) const
 {
   // gradx = grad - mu / sxl = grad - mu * select/sxl
-  gradx.addLogBarrierGrad(-mu, *sxl, nlp->get_ixl());
-  gradx.addLogBarrierGrad(mu, *sxu, nlp->get_ixu());
+  //gradx.addLogBarrierGrad(-mu, *sxl, nlp->get_ixl());
+  //gradx.addLogBarrierGrad(mu, *sxu, nlp->get_ixu());
+  nlp->inner_prod()->log_barrier_grad_add(-mu, *sxl, nlp->get_ixl(), gradx);
+  nlp->inner_prod()->log_barrier_grad_add( mu, *sxu, nlp->get_ixu(), gradx);
 }
 
 void hiopIterate::addLogBarGrad_d(const double& mu, hiopVector& gradd) const
@@ -598,9 +602,11 @@ void hiopIterate::addLogBarGrad_d(const double& mu, hiopVector& gradd) const
 
 double hiopIterate::linearDampingTerm(const double& mu, const double& kappa_d) const
 {
-  double term;
-  term = sxl->linearDampingTerm_local(nlp->get_ixl(), nlp->get_ixu(), mu, kappa_d);
-  term += sxu->linearDampingTerm_local(nlp->get_ixu(), nlp->get_ixl(), mu, kappa_d);
+  //double term;
+  //term = sxl->linearDampingTerm_local(nlp->get_ixl(), nlp->get_ixu(), mu, kappa_d);
+  //term += sxu->linearDampingTerm_local(nlp->get_ixu(), nlp->get_ixl(), mu, kappa_d);
+  double term = nlp->inner_prod()->linear_damping_term_local(*sxl, nlp->get_ixl(), nlp->get_ixu(), mu, kappa_d);
+  term += nlp->inner_prod()->linear_damping_term_local(*sxu, nlp->get_ixu(), nlp->get_ixl(), mu, kappa_d);
 #ifdef HIOP_USE_MPI
   double res;
   int ierr = MPI_Allreduce(&term, &res, 1, MPI_DOUBLE, MPI_SUM, nlp->get_comm());

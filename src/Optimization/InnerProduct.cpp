@@ -220,5 +220,43 @@ add_linear_damping_term(const hiopVector& ixl, const hiopVector& ixu, const doub
   }
 }
 
+double InnerProduct::log_barrier_eval_local(const hiopVector& x, const hiopVector& ix) const
+{
+  if(nlp_->useWeightedInnerProd()) {
+    return x.logBarrierWeighted_local(ix, *M_lumped());
+  } else {
+    return x.logBarrier_local(ix);
+  }
+}
+
+// Adds (to `gradx`) the gradient of the weighted log, namely gradx = gradx - mu * M_lumped * ix/s
+void InnerProduct::log_barrier_grad_add(const double& mu, const hiopVector& s, const hiopVector& ix, hiopVector& gradx) const
+{
+  if(nlp_->useWeightedInnerProd()) {
+    vec_n_->copyFrom(ix);
+    vec_n_->componentDiv(s);
+    vec_n_->componentMult(*M_lumped());
+    gradx.axpy(mu, *vec_n_);
+  } else {
+    gradx.addLogBarrierGrad(mu, s, ix);
+  }
+}
+
+double InnerProduct::linear_damping_term_local(const hiopVector& s,
+                                               const hiopVector& ixl,
+                                               const hiopVector& ixr,
+                                               const double& mu,
+                                               const double& kappa_d) const
+{
+  if(nlp_->useWeightedInnerProd()) {
+    vec_n_->copyFrom(s);
+    vec_n_->componentMult(*M_lumped());
+    return vec_n_->linearDampingTerm_local(ixl, ixr, mu, kappa_d);
+  } else {
+    return s.linearDampingTerm_local(ixl, ixr, mu, kappa_d);
+  }
   
+}
+
+
 } // end namespace

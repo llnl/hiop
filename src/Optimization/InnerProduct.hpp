@@ -113,12 +113,28 @@ public:
   // Return vector containing the diagonals of the lumped mass matrix, possibly creating the internal object
   const hiopVector* M_lumped() const;
 
-  /*
-   * @brief add linear damping term
+  /**
+   * Compute linear damping terms required by the weighted log barrier subproblem 
+   * 
+   * Essentially computes kappa_d*mu* \sum { this[i] | ixl[i]==1 and ixr[i]==0 }
+   */
+  double linear_damping_term_local(const hiopVector& s,
+                                   const hiopVector& ixl,
+                                   const hiopVector& ixr,
+                                   const double& mu,
+                                   const double& kappa_d) const;
+  /**
+   * @brief Add linear damping term
    * Performs `this[i] = alpha*this[i] + sign[i]*ct*M_lumped[i]` where sign[i]=1 when EXACTLY one of
    * ixleft[i] and ixright[i] is 1.0 and sign=0 otherwise.
    */
-  void add_linear_damping_term(const hiopVector& ixl, const hiopVector& ixu, const double& ct, hiopVector& x) const; 
+  void add_linear_damping_term(const hiopVector& ixl, const hiopVector& ixu, const double& ct, hiopVector& x) const;
+
+  // Computes weighted (by the lumped matrix) sum of log of selected (by `ix`) entries of `x`
+  double log_barrier_eval_local(const hiopVector& x, const hiopVector& ix) const;
+
+  // Adds (to `gradx`) the gradient of the weighted log, namely gradx = gradx - mu * M_lumped * ix/s
+  void log_barrier_grad_add(const double& mu, const hiopVector& s, const hiopVector& ix, hiopVector& gradx) const;
 private:
   // Pointer to "client" NLP
   hiopNlpFormulation* nlp_;
