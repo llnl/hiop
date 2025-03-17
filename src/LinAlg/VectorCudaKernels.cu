@@ -1062,7 +1062,7 @@ double log_barr_wei_obj_kernel(int n, double* d1, const double* id, const double
   // compute v[i] = ( log(v[i]) if v[i]>0, otherwise 0 )
   thrust::transform(thrust::device, v_temp, v_temp+n, v_temp, log_select_op); 
   // compute v[i] = w[i]*v[i] 
-  thrust::transform(thrust::device, v_temp, v_temp+n, v_temp, mult_op); 
+  thrust::transform(thrust::device, v_temp, v_temp+n, wei_v, v_temp, mult_op); 
   // sum up
   const double sum = thrust::reduce(thrust::device, v_temp, v_temp+n, 0.0, plus_op);
 

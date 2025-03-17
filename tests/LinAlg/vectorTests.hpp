@@ -1240,8 +1240,8 @@ public:
     setLocalElement(&weight, N-1, 100);
     
     real_type expected = (N - 1) * std::log(x_val) / N;
-    real_type result = x.logBarrier_local(pattern);
-
+    real_type result = x.logBarrierWeighted_local(pattern, weight);
+    
     int fail = !isEqual(result, expected);
 
     // Make sure pattern eliminates the correct elements
@@ -1253,7 +1253,7 @@ public:
     setLocalElement(&weight, N - 1, w_val);
     
     expected = std::log(x_val)*w_val;
-    result = x.logBarrier_local(pattern);
+    result = x.logBarrierWeighted_local(pattern, weight);
     fail += !isEqual(result, expected);
 
     printMessage(fail, __func__, rank);
