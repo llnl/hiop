@@ -1247,9 +1247,9 @@ public:
     // Make sure pattern eliminates the correct elements
     pattern.setToConstant(zero);
     setLocalElement(&pattern, N - 1, one);
-    x.setToConstant(zero);
+    x.setToConstant(three);
     setLocalElement(&x, N - 1, x_val);
-    weight.setToConstant(zero);
+    weight.setToConstant(three);
     setLocalElement(&weight, N - 1, w_val);
     
     expected = std::log(x_val)*w_val;
