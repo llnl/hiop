@@ -237,6 +237,8 @@ public:
   virtual void invert();
   /// @brief compute log barrier term, that is sum{ln(x_i):i=1,..,n}
   virtual double logBarrier_local(const hiopVector& select) const;
+  /// @brief compute weighted log barrier term, that is sum{w[i]*ln(x_i): select[i]==1}
+  virtual double logBarrierWeighted_local(const hiopVector& select, const hiopVector& w) const;  
   /// @brief adds the gradient of the log barrier, namely this=this+alpha*1/select(x)
   virtual void addLogBarrierGrad(double alpha, const hiopVector& xvec, const hiopVector& select);
   /// @brief compute sum{(x_i):i=1,..,n}
