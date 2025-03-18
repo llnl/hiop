@@ -1406,7 +1406,9 @@ double hiopVectorRaja<MEM, POL>::logBarrierWeighted_local(const hiopVector& sele
 #ifdef HIOP_DEEPCHECKS
         assert(id[i] == one || id[i] == zero);
 #endif
-        sum += id[i]*w[i]*std::log(data[i]);
+        if(one == id[i]) {
+          sum += w[i]*std::log(data[i]);
+        }
       });
 
   return sum.get();
