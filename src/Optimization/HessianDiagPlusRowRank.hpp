@@ -161,10 +161,18 @@ protected:
 private:
   // Vector for (B0+Dk)^{-1}
   hiopVector* DhInv_;
-  // Dx_ is needed in times_vec (for residual checking in solveCompressed). Can be recomputed from DhInv, but I decided to
-  // store it instead to avoid round-off errors
+
+  /** @brief Log-barrier diagonal term
+   *
+   * `Dx_` is needed in times_vec (for residual checking in solveCompressed). While it can be recomputed on the fly,
+   * for example from DhInv, I decided to store it to avoid round-off errors.
+   */
   hiopVector* Dx_;
 
+  //// The initial B0 Hessian approximation
+  //hiopVector* B0_;
+  
+  // Flags recomputation of the internal inverse representation
   bool matrix_changed_;
 
   // These are matrices from the compact representation; they are updated at each iteration.
@@ -178,7 +186,7 @@ private:
   hiopMatrixDense* L_;
   /// Diagonal matrix from the compact representation
   hiopVector* D_;
-  // Matrix V from the representation of the inverse
+  // Matrix V from the representation of the inverse, or its factors
   hiopMatrixDense* V_;
 #ifdef HIOP_DEEPCHECKS
   // copy of the V matrix - needed to check the residual

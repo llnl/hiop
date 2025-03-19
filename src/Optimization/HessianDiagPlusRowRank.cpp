@@ -160,6 +160,7 @@ HessianDiagPlusRowRank::HessianDiagPlusRowRank(hiopNlpDenseConstraints* nlp_in, 
                     sigma_strategy.c_str());
 
   Dx_ = DhInv_->alloc_clone();
+  //B0_ = Dx_->alloc_clone();
 #ifdef HIOP_DEEPCHECKS
   Vmat_ = V_->alloc_clone();
 #endif
@@ -172,6 +173,7 @@ HessianDiagPlusRowRank::~HessianDiagPlusRowRank()
 {
   delete DhInv_;
   delete Dx_;
+  //delete B0_;
 
   delete St_;
   delete Yt_;
@@ -238,7 +240,11 @@ void HessianDiagPlusRowRank::alloc_for_limited_mem(const size_type& mem_length)
 
 bool HessianDiagPlusRowRank::update_logbar_diag(const hiopVector& Dx)
 {
-  DhInv_->setToConstant(sigma_);
+  // DhInv = (B0+Dx)^{-1}
+  //DhInv_->setToConstant(sigma_);
+  const hiopVector& B0 = *nlp_->inner_prod()->M_lumped();
+  DhInv_->copyFrom(B0);
+  DhInv_->scale(sigma_);
   DhInv_->axpy(1.0, Dx);
   Dx_->copyFrom(Dx);
 #ifdef HIOP_DEEPCHECKS
@@ -256,8 +262,6 @@ void HessianDiagPlusRowRank::print(FILE* f, hiopOutVerbosity v, const char* msg)
   fprintf(f, "%s\n", msg);
 #ifdef HIOP_DEEPCHECKS
   nlp_->log->write("Dx", *Dx_, v);
-#else
-  fprintf(f, "Dx is not stored in this class, but it can be computed from Dx=DhInv^(1)-sigma");
 #endif
   nlp_->log->printf(v, "sigma=%22.16f;\n", sigma_);
   nlp_->log->write("DhInv", *DhInv_, v);
@@ -269,7 +273,7 @@ void HessianDiagPlusRowRank::print(FILE* f, hiopOutVerbosity v, const char* msg)
   nlp_->log->write("V", *Vmat_, v);
 #else
   fprintf(f,
-          "V matrix is available at this point (only its LAPACK factorization). Print it in "
+          "V matrix is not available at this point (only its LAPACK factorization). Print it in "
           "updateInternalBFGSRepresentation() instead, before factorizeV()\n");
 #endif
   nlp_->log->write("L", *L_, v);
@@ -383,9 +387,9 @@ bool HessianDiagPlusRowRank::update(const hiopIterate& it_curr,
         }  // else of the switch
         // safe guard it
         sigma_ = fmax(fmin(sigma_safe_max_, sigma_), sigma_safe_min_);
-        nlp_->log->printf(hovLinAlgScalars, "HessianDiagPlusRowRank: sigma was updated to %22.16e\n", sigma_);
+        nlp_->log->printf(hovScalars, "HessianDiagPlusRowRank: sigma was updated to %22.16e\n", sigma_);
       } else {  // sTy is too small or negative -> skip
-        nlp_->log->printf(hovLinAlgScalars,
+        nlp_->log->printf(hovScalars,
                           "HessianDiagPlusRowRank: s^T*y=%12.6e not positive enough... skipping the Hessian update\n",
                           sTy);
       }
@@ -422,7 +426,7 @@ bool HessianDiagPlusRowRank::update(const hiopIterate& it_curr,
  * Namely it computes V, a symmetric 2lx2l given by
  *  V =  [S'*B0*(DhInv*B0-I)*S    -L+S'*B0*DhInv*Y ]
  *       [-L'+Y'*Dhinv*B0*S       +D+Y'*Dhinv*Y    ]
- * In this function V is factorized and it will hold the factors at the end of the function
+ * Also, the method factorizes V. V will contain the factors at the end of this method.
  * Note that L, D, S, and Y are from the BFGS secant representation and are updated/computed in 'update'
  */
 void HessianDiagPlusRowRank::updateInternalBFGSRepresentation()
@@ -457,9 +461,11 @@ void HessianDiagPlusRowRank::updateInternalBFGSRepresentation()
 
   //-- block (1,2)
   hiopMatrixDense& StB0DhInvYmL = DpYtDhInvY;  // just a rename
+  const hiopVector& B0 = *nlp_->inner_prod()->M_lumped();
   hiopVector& B0DhInv = new_n_vec1(n);
   B0DhInv.copyFrom(*DhInv_);
-  B0DhInv.scale(sigma_);
+  //B0DhInv.scale(sigma_);
+  B0DhInv.axpy(sigma_, B0);
   mat_times_diag_times_mattrans_local(StB0DhInvYmL, *St_, B0DhInv, *Yt_);
 #ifdef HIOP_USE_MPI
   memcpy(buff1_lxlx3_ + l * l, StB0DhInvYmL.local_data(), buffsize);
@@ -470,10 +476,14 @@ void HessianDiagPlusRowRank::updateInternalBFGSRepresentation()
   V_->copyBlockFromMatrix(0, l, StB0DhInvYmL);
 #endif
 
-  //-- block (2,2)
+  //-- block (1,1)
   hiopVector& theDiag = B0DhInv;  // just a rename, also reuses values
   theDiag.addConstant(-1.0);      // at this point theDiag=DhInv*B0-I
+
+  //multiply with sigma*I
   theDiag.scale(sigma_);
+  theDiag.componentMult(B0);
+  
   hiopMatrixDense& StDS = DpYtDhInvY;  // a rename
   sym_mat_times_diag_times_mattrans_local(0.0, StDS, 1.0, *St_, theDiag);
 #ifdef HIOP_USE_MPI
@@ -550,6 +560,9 @@ void HessianDiagPlusRowRank::solve(const hiopVector& rhsx, hiopVector& x)
   hiopVector& B0DhInvx = new_n_vec1(n);
   B0DhInvx.copyFrom(x);    // it contains DhInv*res
   B0DhInvx.scale(sigma_);  // B0*(DhInv*res)
+  const hiopVector& B0 = *nlp_->inner_prod()->M_lumped();
+  B0DhInvx.componentMult(B0);
+    
   St_->timesVec(0.0, stx, 1.0, B0DhInvx);
 
   // 3. solve with V
@@ -562,6 +575,7 @@ void HessianDiagPlusRowRank::solve(const hiopVector& rhsx, hiopVector& x)
   hiopVector& result = new_n_vec1(n);
   St_->transTimesVec(0.0, result, 1.0, spart);
   result.scale(sigma_);
+  result.componentMult(B0);
   Yt_->transTimesVec(1.0, result, 1.0, ypart);
   result.componentMult(*DhInv_);
 
@@ -613,7 +627,9 @@ void HessianDiagPlusRowRank::sym_mat_times_inverse_times_mattrans(double beta,
   auto& Y1 = new_Y1(X, *Yt_);  // both are kxl
   hiopVector& B0DhInv = new_n_vec1(n);
   B0DhInv.copyFrom(*DhInv_);
+  const hiopVector& B0 = *nlp_->inner_prod()->M_lumped();
   B0DhInv.scale(sigma_);
+  B0DhInv.componentMult(B0);
   mat_times_diag_times_mattrans_local(S1, X, B0DhInv, *St_);
   mat_times_diag_times_mattrans_local(Y1, X, *DhInv_, *Yt_);
 
@@ -1060,7 +1076,8 @@ void HessianDiagPlusRowRank::times_vec_common(double beta,
 
   // we have B+=B-B*s*B*s'/(s'*B*s)+yy'/(y'*s)
   // B0 is sigma*I. There is an additional diagonal log-barrier term Dx_
-
+  const hiopVector& B0 = *nlp_->inner_prod()->M_lumped();
+  
   bool print = false;
   if(print) {
     nlp_->log->printf(hovMatrices, "---HessianDiagPlusRowRank::times_vec \n");
@@ -1106,6 +1123,7 @@ void HessianDiagPlusRowRank::times_vec_common(double beta,
     // compute ak by an inner loop
     a[k]->copyFrom(*sk);
     a[k]->scale(sigma_);
+    a[k]->componentMult(B0);
 
     for(int i = 0; i < k; i++) {
       double biTsk = b[i]->dotProductWith(*sk);
@@ -1125,8 +1143,12 @@ void HessianDiagPlusRowRank::times_vec_common(double beta,
     y.axzpy(alpha, x, *Dx_);
   }
 
-  y.axpy(alpha * sigma_, x);
+  hiopVector* aux = B0.new_copy();
+  aux->componentMult(x);
 
+  y.axpy(alpha * sigma_, *aux);
+  delete aux;
+  
   for(int k = 0; k < l_curr_; k++) {
     double bkTx = b[k]->dotProductWith(x);
     double akTx = a[k]->dotProductWith(x);
