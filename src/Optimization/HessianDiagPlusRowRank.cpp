@@ -160,7 +160,7 @@ HessianDiagPlusRowRank::HessianDiagPlusRowRank(hiopNlpDenseConstraints* nlp_in, 
                     sigma_strategy.c_str());
 
   Dx_ = DhInv_->alloc_clone();
-  //B0_ = Dx_->alloc_clone();
+
 #ifdef HIOP_DEEPCHECKS
   Vmat_ = V_->alloc_clone();
 #endif
@@ -173,7 +173,6 @@ HessianDiagPlusRowRank::~HessianDiagPlusRowRank()
 {
   delete DhInv_;
   delete Dx_;
-  //delete B0_;
 
   delete St_;
   delete Yt_;
@@ -464,8 +463,8 @@ void HessianDiagPlusRowRank::updateInternalBFGSRepresentation()
   const hiopVector& B0 = *nlp_->inner_prod()->M_lumped();
   hiopVector& B0DhInv = new_n_vec1(n);
   B0DhInv.copyFrom(*DhInv_);
-  //B0DhInv.scale(sigma_);
-  B0DhInv.axpy(sigma_, B0);
+  B0DhInv.scale(sigma_);
+  B0DhInv.componentMult(B0);
   mat_times_diag_times_mattrans_local(StB0DhInvYmL, *St_, B0DhInv, *Yt_);
 #ifdef HIOP_USE_MPI
   memcpy(buff1_lxlx3_ + l * l, StB0DhInvYmL.local_data(), buffsize);
@@ -1143,11 +1142,13 @@ void HessianDiagPlusRowRank::times_vec_common(double beta,
     y.axzpy(alpha, x, *Dx_);
   }
 
-  hiopVector* aux = B0.new_copy();
-  aux->componentMult(x);
+  //y.axpy(alpha * sigma_, x);
+  assert(n_vec1_ != nullptr);
 
-  y.axpy(alpha * sigma_, *aux);
-  delete aux;
+  hiopVector& aux = *n_vec1_;
+  aux.copyFrom(B0);
+  aux.componentMult(x);
+  y.axpy(alpha*sigma_, aux);
   
   for(int k = 0; k < l_curr_; k++) {
     double bkTx = b[k]->dotProductWith(x);

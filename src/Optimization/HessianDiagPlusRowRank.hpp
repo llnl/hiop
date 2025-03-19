@@ -168,9 +168,6 @@ private:
    * for example from DhInv, I decided to store it to avoid round-off errors.
    */
   hiopVector* Dx_;
-
-  //// The initial B0 Hessian approximation
-  //hiopVector* B0_;
   
   // Flags recomputation of the internal inverse representation
   bool matrix_changed_;
@@ -244,7 +241,7 @@ private:
 
   hiopVector* l_vec1_;
   hiopVector* l_vec2_;
-  hiopVector* n_vec1_;
+  mutable hiopVector* n_vec1_;
   hiopVector* n_vec2_;
   hiopVector* twol_vec1_;
   hiopVector& new_l_vec1(int l);
