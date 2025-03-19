@@ -14,6 +14,7 @@ warnings.filterwarnings("ignore")
 from LpNormProblem import LpNormProblem
 from hiopbbpy.surrogate_modeling import smtKRG
 from hiopbbpy.opt import BOAlgorithm
+from hiopbbpy.problems import BraninProblem
 
 
 ### parameters
@@ -24,6 +25,8 @@ nx = 2 # dimension of the problem
 xlimits = np.array([[-5, 5], [-5, 5]]) # bounds on optimization variable
 
 problem = LpNormProblem(nx, xlimits)
+problem = BraninProblem()
+
 print(problem.name, " problem")
 
 ### initial training set
@@ -34,8 +37,11 @@ y_train = problem.evaluate(x_train)
 gp_model = smtKRG(theta, xlimits, nx)
 gp_model.train(x_train, y_train)
 
+acquisition_type = "LCB"
+print("acquisition type: ", acquisition_type)
+
 # Instantiate and run Bayesian Optimization
-bo = BOAlgorithm(gp_model, x_train, y_train)
+bo = BOAlgorithm(gp_model, x_train, y_train, acquisition_type = "LCB") #EI or LCB
 bo.optimize(problem)
 
 # Retrieve optimal point

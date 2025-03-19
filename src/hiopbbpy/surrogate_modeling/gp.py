@@ -12,6 +12,9 @@ class GaussianProcess:
     def __init__(self, ndim, xlimits=None):
         self.ndim = ndim
         self.xlimits = xlimits
+        self.training_x = []
+        self.training_y = []
+        self.trained = False
     
     # Abstract method for computing the mean of the GP at a given input x
     def mean(self, x: np.ndarray) -> np.ndarray:
@@ -72,3 +75,15 @@ class GaussianProcess:
         else:
             return [(self.xlimits[i][0], self.xlimits[i][1]) for i in range(self.ndim)]
 
+    # Abstract method for training the GP
+    def train(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
+        """
+        train the GP model
+
+        Parameters
+        ---------
+        x : ndarray[n, nx]
+        y : ndarray[n, 1]
+
+        """
+        NotImplementedError("Child class of GaussianProcess should implement method train")

@@ -9,7 +9,7 @@ import numpy as np
 from numpy.random import uniform
 from scipy.optimize import minimize
 from ..surrogate_modeling.gp import GaussianProcess
-from .acquisition import LCBacquisition
+from .acquisition import LCBacquisition, EIacquisition
 from ..problems.problem import Problem
 
 # A base class defining a general framework for Bayesian Optimization
@@ -59,7 +59,7 @@ class BOAlgorithm(BOAlgorithmBase):
     def __init__(self, gpsurrogate, xtrain, ytrain, acquisition_type = "LCB"):
         super().__init__()
         assert isinstance(gpsurrogate, GaussianProcess)
-        assert acquisition_type in ["LCB"]
+        assert acquisition_type in ["LCB", "EI"]
         self.setTrainingData(xtrain, ytrain)
         self.setAcquisitionType(acquisition_type)
         self.gpsurrogate = gpsurrogate
@@ -84,6 +84,8 @@ class BOAlgorithm(BOAlgorithmBase):
 
         if self.acquisition_type == "LCB":
             acqf = LCBacquisition(self.gpsurrogate)
+        elif self.acquisition_type == "EI":
+            acqf = EIacquisition(self.gpsurrogate)
         else:
             raise NotImplementedError("No implemented acquisition_type associated to"+self.acquisition_type)
 

@@ -41,6 +41,8 @@ class smtKRG(GaussianProcess):
         return self.surrogatesmt.predict_variances(x)
 
     def train(self, x, y):
+        self.training_x = x
+        self.training_y = y
         self.surrogatesmt.set_training_values(x, y)
         self.surrogatesmt.train()
         self.trained = True
