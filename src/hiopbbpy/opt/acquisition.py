@@ -49,6 +49,7 @@ class EIacquisition(acquisition):
         if sig.size == 1 and np.abs(sig) > 1e-12:
             arg0 = (y_min - pred) / sig
             retval = (y_min - pred) * norm.cdf(arg0) + sig * norm.pdf(arg0)
+            retval *= -1.
         elif sig.size == 1 and np.abs(sig) <= 1e-12:
             retval = 0.0
         elif sig.size > 1:
