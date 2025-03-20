@@ -47,3 +47,4 @@ for acquisition_type in acquisition_types:
     
     # Retrieve optimal point
     x_opt, y_opt = bo.getOptimalPoint()
+    print()
