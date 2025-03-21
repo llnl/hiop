@@ -12,7 +12,7 @@ from setuptools import setup, find_packages
 
 metadata = dict(
         name="hiopbbpy",
-        version="0.0.2",
+        version="0.0.3",
         description="HiOp black box optimization (hiopbbpy)",
         author="Tucker hartland et al.",
         author_email="hartland1@llnl.gov",

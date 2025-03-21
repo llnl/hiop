@@ -26,7 +26,7 @@ jobs:
 
       - name: Run Tests
         run: |
-          python src/Drivers/hiopbbpy/BODriver.py
+          python src/Drivers/hiopbbpy/BODriver.py 20
         continue-on-error: false
           
 
