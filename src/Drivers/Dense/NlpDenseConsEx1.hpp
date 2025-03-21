@@ -112,9 +112,10 @@ protected:
 class DenseConsEx1 : public hiop::hiopInterfaceDenseConstraints
 {
 public:
-  DenseConsEx1(int n_mesh_elem = 100, double mesh_ratio = 1.0)
+  DenseConsEx1(int n_mesh_elem, double mesh_ratio=1.0, bool use_weighted_vars=false)
       : n_vars(n_mesh_elem),
         comm(MPI_COMM_WORLD),
+        use_weighted_space_(use_weighted_vars),
         solver_(nullptr)
   {
     // create the members
@@ -293,12 +294,13 @@ public:
    */
   virtual bool useWeightedInnerProducts()
   {
-    return false;//true;
+    return use_weighted_space_;
   }
 
 private:
   int n_vars;
   MPI_Comm comm;
+  bool use_weighted_space_;
   Ex1Meshing1D* _mesh;
 
   int n_local;
