@@ -19,7 +19,7 @@ metadata = dict(
         license="BSD-3",
         packages=find_packages(where="src"),
         package_dir={"": "src"},
-        install_requires=["smt", "cyipopt"],
+        install_requires=["smt"],
         python_requires=">=3.9",
         zip_safe=False,
         url="https://github.com/LLNL/hiop",
