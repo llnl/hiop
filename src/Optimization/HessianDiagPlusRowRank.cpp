@@ -305,12 +305,12 @@ bool HessianDiagPlusRowRank::update(const hiopIterate& it_curr,
     hiopVector& s_new = new_n_vec1(n);
     s_new.copyFrom(*it_curr.x);
     s_new.axpy(-1., *it_prev_->x);
-    double s_infnorm = s_new.infnorm();
+    const double s_infnorm = s_new.infnorm();
     if(s_infnorm >= 100 * std::numeric_limits<double>::epsilon()) {  // norm of s not too small
 
       // compute y_new = \grad J(x_curr,\lambda_curr) - \grad J(x_prev, \lambda_curr) (yes, J(x_prev, \lambda_curr))
       //               = graf_f_curr-grad_f_prev + (Jac_c_curr-Jac_c_prev)yc_curr+ (Jac_d_curr-Jac_c_prev)yd_curr -
-      //               zl_curr*s_new + zu_curr*s_new
+      //                 M_lumped*zl_curr*s_new + M_lumped*zu_curr*s_new
       hiopVector& y_new = new_n_vec2(n);
       y_new.copyFrom(grad_f_curr);
       y_new.axpy(-1., *grad_f_prev_);
@@ -321,17 +321,20 @@ bool HessianDiagPlusRowRank::update(const hiopIterate& it_curr,
       Jac_d_curr.transTimesVec(1.0, y_new, 1.0, *it_curr.yd);
       Jac_d_prev_->transTimesVec(1.0, y_new, -1.0, *it_curr.yd);
 
-      double sTy = s_new.dotProductWith(y_new), s_nrm2 = s_new.twonorm(), y_nrm2 = y_new.twonorm();
+      const double sTy = s_new.dotProductWith(y_new);
+      const double s_nrm2 = nlp_->inner_prod()->norm_M(s_new);//s_new.twonorm();
+      const double y_nrm2 = nlp_->inner_prod()->norm_H_dual(y_new);//y_new.twonorm();
 
-#ifdef HIOP_DEEPCHECKS
-      nlp_->log->printf(hovLinAlgScalarsVerb,
-                        "HessianDiagPlusRowRank: s^T*y=%20.14e ||s||=%20.14e ||y||=%20.14e\n",
+      nlp_->log->printf(hovWarning, //hovLinAlgScalarsVerb,
+                        "sigma HessianDiagPlusRowRank: s^T*y=%20.14e ||s||=%20.14e ||y||=%20.14e ||s||_inf=%20.14e\n",
                         sTy,
                         s_nrm2,
-                        y_nrm2);
+                        y_nrm2,
+                        s_infnorm);
+      nlp_->log->printf(hovWarning, "sigma y_new twonrm=%20.14e infnrm=%20.14e\n", y_nrm2, y_new.infnorm());
       nlp_->log->write("HessianDiagPlusRowRank s_new", s_new, hovIteration);
       nlp_->log->write("HessianDiagPlusRowRank y_new", y_new, hovIteration);
-#endif
+
       if(sTy > s_nrm2 * y_nrm2 * sqrt(std::numeric_limits<double>::epsilon())) {  // sTy far away from zero
 
         if(l_max_ > 0) {
@@ -357,12 +360,12 @@ bool HessianDiagPlusRowRank::update(const hiopIterate& it_curr,
             l_curr_ = l_max_;
           }
         }  // end of l_max_>0
-#ifdef HIOP_DEEPCHECKS
+
         nlp_->log->printf(hovMatrices, "\nHessianDiagPlusRowRank: these are L and D from the BFGS compact representation\n");
         nlp_->log->write("L", *L_, hovMatrices);
         nlp_->log->write("D", *D_, hovMatrices);
         nlp_->log->printf(hovMatrices, "\n");
-#endif
+
         // update B0 (i.e., sigma)
         switch(sigma_update_strategy_) {
           case SIGMA_STRATEGY1:
