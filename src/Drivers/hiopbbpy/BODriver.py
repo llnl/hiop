@@ -7,6 +7,7 @@
         3) determine the minimizer via BOAlgorithm
 """
 
+import sys
 import numpy as np
 import matplotlib.pyplot as plt
 import warnings
@@ -17,34 +18,75 @@ from hiopbbpy.opt import BOAlgorithm
 from hiopbbpy.problems import BraninProblem
 
 
-### parameters
-n_samples = 5 # number of the initial samples to train GP
-theta = 1.e-2 # hyperparameter for GP kernel
+# Get user input for the number of repetitions from command-line arguments
+if len(sys.argv) != 2:
+    num_repeat = 1
+else:
+    num_repeat = int(sys.argv[1])
 
-nx = 2 # dimension of the problem
+### parameters
+n_samples = 5  # number of the initial samples to train GP
+theta = 1.e-2  # hyperparameter for GP kernel
+nx = 2         # dimension of the problem
 xlimits = np.array([[-5, 5], [-5, 5]]) # bounds on optimization variable
 
-#problem = LpNormProblem(nx, xlimits)
-problem = BraninProblem()
+### saved solutions
+saved_sol = {"LpNorm": {"LCB": 0.04618462, "EI": 0.44954611}, "Branin": {"LCB": 0.62655919, "EI": 1.9838798}}
 
-print(problem.name, " problem")
+prob_type_l = ["LpNorm", "Branin"]
+acq_type_l = ["LCB", "EI"]
 
-### initial training set
-x_train = problem.sample(n_samples)
-y_train = problem.evaluate(x_train)
+mean_obj = {}
 
-# Define the GP surrogate model
-gp_model = smtKRG(theta, xlimits, nx)
-gp_model.train(x_train, y_train)
+retval = 0
+for prob_type in prob_type_l:
+   print()
+   if prob_type == "LpNorm":
+      problem = LpNormProblem(nx, xlimits)
+   else:
+      problem = BraninProblem()
 
-acquisition_types = ["LCB", "EI"]
-for acquisition_type in acquisition_types:
-    print("acquisition type: ", acquisition_type)
-    
-    # Instantiate and run Bayesian Optimization
-    bo = BOAlgorithm(gp_model, x_train, y_train, acquisition_type = acquisition_type) #EI or LCB
-    bo.optimize(problem)
-    
-    # Retrieve optimal point
-    x_opt, y_opt = bo.getOptimalPoint()
-    print()
+   if prob_type not in mean_obj:
+      mean_obj[prob_type] = {}
+
+   for acq_type in acq_type_l:
+      if acq_type not in mean_obj[prob_type]:
+         mean_obj[prob_type][acq_type] = 0
+
+      print("Problem name: ", problem.name)
+      print("Acquisition type: ", acq_type)
+   
+      for n_repeat in range(num_repeat):
+         print("Run: ", n_repeat, "/", num_repeat)
+         ### initial training set
+         x_train = problem.sample(n_samples)
+         y_train = problem.evaluate(x_train)
+
+         ### Define the GP surrogate model
+         gp_model = smtKRG(theta, xlimits, nx)
+         gp_model.train(x_train, y_train)
+   
+         # Instantiate and run Bayesian Optimization
+         bo = BOAlgorithm(gp_model, x_train, y_train, acquisition_type = acq_type) #EI or LCB
+         bo.optimize(problem)
+         
+         # Retrieve optimal objec
+         y_opt = bo.getOptimalObjective()
+         
+         mean_obj[prob_type][acq_type] += y_opt
+
+for prob_type in prob_type_l:
+   for acq_type in acq_type_l:
+      mean_obj[prob_type][acq_type] /= num_repeat
+      print("Mean Opt.Obj for ", prob_type, "-", acq_type, mean_obj[prob_type][acq_type])
+      
+      r_error = np.abs((mean_obj[prob_type][acq_type] - saved_sol[prob_type][acq_type])/saved_sol[prob_type][acq_type])
+      if r_error > 0.5:
+         print("Relative Error > 0.5: ", r_error)
+         print("Recorded Solution:", saved_sol[prob_type][acq_type])
+         retval = 1
+
+sys.exit(retval)
+
+
+

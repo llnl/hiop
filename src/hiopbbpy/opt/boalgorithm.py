@@ -8,6 +8,7 @@ Authors:    Tucker Hartland <hartland1@llnl.gov>
 import numpy as np
 from numpy.random import uniform
 from scipy.optimize import minimize
+from scipy.stats import qmc
 from ..surrogate_modeling.gp import GaussianProcess
 from .acquisition import LCBacquisition, EIacquisition
 from ..problems.problem import Problem
@@ -18,6 +19,7 @@ class BOAlgorithmBase:
         self.acquisition_type = "LCB" # Type of acquisition function (default = "LCB")
         self.xtrain = None            # Training data
         self.ytrain = None            # Training data
+        self.prob   = None            # Problem structure
         self.n_iter = 20              # Maximum number of optimization steps
         self.n_start = 10             # estimating acquisition global optima by determining local optima n_start times and then determining the discrete max of that set
         self.q = 1                    # batch size
@@ -48,11 +50,15 @@ class BOAlgorithmBase:
         y_hist = np.array(self.y_hist, copy=True)
         return x_hist, y_hist
 
-    # Method to return the optimal solution and objective
+    # Method to return the optimal solution 
     def getOptimalPoint(self):
         x_opt = np.array(self.x_opt, copy=True)
+        return x_opt
+
+    # Method to return the optimal objective
+    def getOptimalObjective(self):
         y_opt = np.array(self.y_opt, copy=True)
-        return x_opt, y_opt
+        return y_opt
 
 # A subclass of BOAlgorithmBase implementing a full Bayesian Optimization workflow
 class BOAlgorithm(BOAlgorithmBase):
@@ -96,8 +102,11 @@ class BOAlgorithm(BOAlgorithmBase):
         for ii in range(self.n_start):
             success = False
             # Generate random starting point if x0 is not provided
-            if x0 is None:
+            if x0 is None and self.prob is not None:
+                x0 = self.prob.sample(1)
+            else:
                 x0 = np.array([uniform(b[0], b[1]) for b in self.bounds])
+                
             xopt, yout, success = self.acqf_minimizer_callback(acqf_callback, x0)
             
             if success:
@@ -118,6 +127,7 @@ class BOAlgorithm(BOAlgorithmBase):
 
     # Method to perform Bayesian optimization
     def optimize(self, prob:Problem):
+      self.problem = prob
       x_train = self.xtrain
       y_train = self.ytrain
       
@@ -162,6 +172,8 @@ class BOAlgorithm(BOAlgorithmBase):
           print(f"Optimal at BO iteration: {self.idx_opt-n_init_sample+1} ")
           
       print(f"Optimal point: {self.x_opt.flatten()}, Optimal value: {self.y_opt}")
+      print()
+
 
 
 # Find the minimum of the input objective `fun`, using the minimize function from SciPy. 
