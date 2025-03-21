@@ -6,6 +6,7 @@ Authors:    Tucker Hartland <hartland1@llnl.gov>
 """
 import numpy as np
 from numpy.random import uniform
+from scipy.stats import qmc
 
 # define the general optimization problem class
 class Problem:
@@ -17,6 +18,7 @@ class Problem:
             self.name = " "
         else:
             self.name = name
+        self.sampler = qmc.LatinHypercube(ndim)
             
     def _evaluate(self, x: np.ndarray) -> np.ndarray:
         """
@@ -66,9 +68,16 @@ class Problem:
         ndarray[nsample, nx]
            Samples from domain defined by xlimits
         """
-        xsample = np.zeros((nsample, self.ndim))
-        for j in range(self.ndim):
-            xsample[:, j] = uniform(self.xlimits[j][0], self.xlimits[j][1], size=nsample)
+
+        # uniform
+        # xsample = np.zeros((nsample, self.ndim))
+        # for j in range(self.ndim):
+        #    xsample[:, j] = uniform(self.xlimits[j][0], self.xlimits[j][1], size=nsample)
+
+        # from predefined sampler
+        xsample = self.sampler.random(nsample)
+        xsample = self.xlimits[:,0] + (self.xlimits[:,1] - self.xlimits[:,0]) * xsample
+
         return xsample
 
 
