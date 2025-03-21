@@ -108,7 +108,7 @@ public:
   double norm_complementarity(const hiopVector& x) const;
   
   // Computes 1M norm, i.e., ||x|| =  1^T*M*|x|
-  double norm_M_one(const hiopVector&x) const;
+  double norm_M_one(const hiopVector& x) const;
 
   // Computes the "volume" of the space, norm of 1 function
   double volume() const;
