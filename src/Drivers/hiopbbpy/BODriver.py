@@ -5,6 +5,9 @@
         2) define a Kriging-based Gaussian-process (smt backend)
            trained on said data
         3) determine the minimizer via BOAlgorithm
+
+Authors:    Tucker Hartland <hartland1@llnl.gov>
+            Nai-Yuan Chiang <chiang7@llnl.gov>
 """
 
 import sys
@@ -30,13 +33,17 @@ theta = 1.e-2  # hyperparameter for GP kernel
 nx = 2         # dimension of the problem
 xlimits = np.array([[-5, 5], [-5, 5]]) # bounds on optimization variable
 
-### saved solutions
-saved_sol = {"LpNorm": {"LCB": 0.04618462, "EI": 0.44954611}, "Branin": {"LCB": 0.62655919, "EI": 1.9838798}}
+### saved solutions --- from 1000 repetitions
+saved_mean_obj = {"LpNorm": {"LCB": 0.01913481, "EI": 0.19634178}, "Branin": {"LCB": 0.51033727, "EI": 1.3722849}}
+saved_min_obj = {"LpNorm": {"LCB": 0.00014948, "EI": 0.01305073}, "Branin": {"LCB": 0.39810948, "EI": 0.40188902}}
+saved_max_obj = {"LpNorm": {"LCB": 0.10684082, "EI": 0.93578515}, "Branin": {"LCB": 1.4407172, "EI": 4.6802864}}
 
 prob_type_l = ["LpNorm", "Branin"]
 acq_type_l = ["LCB", "EI"]
 
 mean_obj = {}
+max_obj = {}
+min_obj = {}
 
 retval = 0
 for prob_type in prob_type_l:
@@ -48,10 +55,14 @@ for prob_type in prob_type_l:
 
    if prob_type not in mean_obj:
       mean_obj[prob_type] = {}
+      max_obj[prob_type] = {}
+      min_obj[prob_type] = {}
 
    for acq_type in acq_type_l:
       if acq_type not in mean_obj[prob_type]:
          mean_obj[prob_type][acq_type] = 0
+         max_obj[prob_type][acq_type] = -np.inf
+         min_obj[prob_type][acq_type] = np.inf
 
       print("Problem name: ", problem.name)
       print("Acquisition type: ", acq_type)
@@ -74,16 +85,20 @@ for prob_type in prob_type_l:
          y_opt = bo.getOptimalObjective()
          
          mean_obj[prob_type][acq_type] += y_opt
+         max_obj[prob_type][acq_type] = max(max_obj[prob_type][acq_type], y_opt)
+         min_obj[prob_type][acq_type] = min(min_obj[prob_type][acq_type], y_opt)
 
+print("Summary:")
 for prob_type in prob_type_l:
    for acq_type in acq_type_l:
       mean_obj[prob_type][acq_type] /= num_repeat
-      print("Mean Opt.Obj for ", prob_type, "-", acq_type, mean_obj[prob_type][acq_type])
+      print("(Min,Mean,Max) Opt.Obj for", prob_type, "-", acq_type, ":\t(", min_obj[prob_type][acq_type], ",",mean_obj[prob_type][acq_type], ",", max_obj[prob_type][acq_type], ")")
       
-      r_error = np.abs((mean_obj[prob_type][acq_type] - saved_sol[prob_type][acq_type])/saved_sol[prob_type][acq_type])
-      if r_error > 0.5:
-         print("Relative Error > 0.5: ", r_error)
-         print("Recorded Solution:", saved_sol[prob_type][acq_type])
+      #r_error = np.abs((mean_obj[prob_type][acq_type] - saved_mean_obj[prob_type][acq_type])/(1+saved_mean_obj[prob_type][acq_type]))
+      #print("Relative Error from Mean: ", r_error)
+      
+      if max_obj[prob_type][acq_type] > saved_max_obj[prob_type][acq_type] or min_obj[prob_type][acq_type] < saved_min_obj[prob_type][acq_type]:
+         print("Recorded (min, mean, max): (", saved_min_obj[prob_type][acq_type], ",", saved_mean_obj[prob_type][acq_type], ",", saved_max_obj[prob_type][acq_type], ")")
          retval = 1
 
 sys.exit(retval)
