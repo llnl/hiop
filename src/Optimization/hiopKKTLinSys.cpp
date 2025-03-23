@@ -100,16 +100,20 @@ double hiopKKTLinSys::errorKKT(const hiopResidual* resid, const hiopIterate* sol
   }
 
   double derr = 1e20, aux;
-  hiopVector* RX = resid->rx->new_copy();
-
   // RX = rx-H*dx-J'c*dyc-J'*dyd +dzl-dzu
+  //hiopVector* RX = resid->rx->new_copy();
+  hiopVector* RX = sol->zl->new_copy();
+  RX->axpy(-1.0, *sol->zu);
+  RX->componentMult(*nlp_->inner_prod()->M_lumped());
+  RX->axpy(1.0, *resid->rx);
+
   HessianTimesVec_noLogBarrierTerm(1.0, *RX, -1.0, *sol->x);
   RX->axzpy(-1., *delta_wx_, *sol->x);
-
   Jac_c_->transTimesVec(1.0, *RX, -1.0, *sol->yc);
   Jac_d_->transTimesVec(1.0, *RX, -1.0, *sol->yd);
-  RX->axpy(1.0, *sol->zl);
-  RX->axpy(-1.0, *sol->zu);
+  //RX->axpy(1.0, *sol->zl);
+  //RX->axpy(-1.0, *sol->zu);
+
   aux = RX->twonorm();
   derr = fmax(aux, derr);
   nlp_->log->printf(hovLinAlgScalars, "  --- rx=%g\n", aux);
@@ -568,7 +572,7 @@ bool hiopKKTLinSysCompressedXYcYd::update(const hiopIterate* iter,
   Dx_->axdzpy_w_pattern(1.0, *iter_->zl, *iter_->sxl, nlp_->get_ixl());
   Dx_->axdzpy_w_pattern(1.0, *iter_->zu, *iter_->sxu, nlp_->get_ixu());
   nlp_->log->write("Dx in KKT", *Dx_, hovMatrices);
-  assert(false);
+
   // Dd=(Sdl)^{-1}Vu + (Sdu)^{-1}Vu
   Dd_->setToZero();
   Dd_->axdzpy_w_pattern(1.0, *iter_->vl, *iter_->sdl, nlp_->get_idl());
@@ -1150,7 +1154,7 @@ bool hiopMatVecKKTFullOpr::combine_res_to_build_vec(hiopVector& y) { return true
 
 /**
  * Full KKT matrix is
- * [   H    0   Jc^T  Jd^T |  -I  I   0   0   |  0   0   0   0  ] [  dx]   [    rx    ]
+ * [   H    0   Jc^T  Jd^T |  -M  M   0   0   |  0   0   0   0  ] [  dx]   [    rx    ]
  * [  0     0     0    -I  |  0   0  -I   I   |  0   0   0   0  ] [  dd]   [    rd    ]
  * [  Jc    0     0     0  |  0   0   0   0   |  0   0   0   0  ] [ dyc] = [   ryc    ]
  * [  Jd    -I    0     0  |  0   0   0   0   |  0   0   0   0  ] [ dyd]   [   ryd    ]
@@ -1217,12 +1221,15 @@ bool hiopMatVecKKTFullOpr::times_vec(hiopVector& yvec, const hiopVector& xvec)
   hiopVector* yrvu_ = &(y.getVector(11));
 
   // rx = H*dx + delta_wx*I*dx + Jc'*dyc + Jd'*dyd - dzl + dzu
-  Hess->timesVec(0.0, *yrx_, +1.0, *dx_);
+  yrx_->copyFrom(*dzu_);
+  yrx_->axpy(-1.0, *dzl_);
+  yrx_->componentMult(*kkt_->nlp_->inner_prod()->M_lumped());
+  Hess->timesVec(1.0, *yrx_, +1.0, *dx_);
   yrx_->axzpy(1., *delta_wx, *dx_);
   Jac_c->transTimesVec(1.0, *yrx_, 1.0, *dyc_);
   Jac_d->transTimesVec(1.0, *yrx_, 1.0, *dyd_);
-  yrx_->axpy(-1.0, *dzl_);
-  yrx_->axpy(1.0, *dzu_);
+  //yrx_->axpy(-1.0, *dzl_);
+  //yrx_->axpy(1.0, *dzu_);
 
   // RD = delta_wd_*dd - dyd - dvl + dvu
   yrd_->setToZero();
@@ -1285,7 +1292,7 @@ bool hiopMatVecKKTFullOpr::times_vec(hiopVector& yvec, const hiopVector& xvec)
 
 /**
  * Full KKT matrix is
- * [   H    0   Jc^T  Jd^T |  -I  I   0   0   |  0   0   0   0  ] [  dx]   [    rx    ]
+ * [   H    0   Jc^T  Jd^T |  -M  M   0   0   |  0   0   0   0  ] [  dx]   [    rx    ]
  * [  0     0     0    -I  |  0   0  -I   I   |  0   0   0   0  ] [  dd]   [    rd    ]
  * [  Jc    0     0     0  |  0   0   0   0   |  0   0   0   0  ] [ dyc] = [   ryc    ]
  * [  Jd    -I    0     0  |  0   0   0   0   |  0   0   0   0  ] [ dyd]   [   ryd    ]
@@ -1378,12 +1385,14 @@ bool hiopMatVecKKTFullOpr::trans_times_vec(hiopVector& yvec, const hiopVector& x
 
   // RXL = -dx + Sxl*dsxl
   yrsxl_->setToZero();
-  yrsxl_->axpy(-1.0, *dx_);
+  //yrsxl_->axpy(-1.0, *dx_);
+  yrsxl_->axzpy(-1.0, *dx_, *kkt_->nlp_->inner_prod()->M_lumped());
   yrsxl_->axzpy(1.0, *iter_->get_sxl(), *dsxl_);
   yrsxl_->selectPattern(kkt_->nlp_->get_ixl());
 
   // RXU = dx + Sxu*dsxu
   yrsxu_->copyFrom(*dx_);
+  yrsxu_->componentMult(*kkt_->nlp_->inner_prod()->M_lumped());
   yrsxu_->axzpy(1.0, *iter_->get_sxu(), *dsxu_);
   yrsxu_->selectPattern(kkt_->nlp_->get_ixu());
 
