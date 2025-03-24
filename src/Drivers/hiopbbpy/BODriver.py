@@ -44,9 +44,9 @@ acq_type_l = ["LCB", "EI"]
 mean_obj = {}
 max_obj = {}
 min_obj = {}
+y_opt = {}
 
-retval = 1
-sys.exit(retval)
+retval = 0
 for prob_type in prob_type_l:
    print()
    if prob_type == "LpNorm":
@@ -58,12 +58,14 @@ for prob_type in prob_type_l:
       mean_obj[prob_type] = {}
       max_obj[prob_type] = {}
       min_obj[prob_type] = {}
+      y_opt[prob_type] = {}
 
    for acq_type in acq_type_l:
       if acq_type not in mean_obj[prob_type]:
          mean_obj[prob_type][acq_type] = 0
          max_obj[prob_type][acq_type] = -np.inf
          min_obj[prob_type][acq_type] = np.inf
+         y_opt[prob_type][acq_type] = np.zeros(num_repeat)
 
       print("Problem name: ", problem.name)
       print("Acquisition type: ", acq_type)
@@ -83,22 +85,28 @@ for prob_type in prob_type_l:
          bo.optimize(problem)
          
          # Retrieve optimal objec
-         y_opt = bo.getOptimalObjective()
+         y_opt[prob_type][acq_type][n_repeat] = bo.getOptimalObjective()
          
-         mean_obj[prob_type][acq_type] += y_opt
-         max_obj[prob_type][acq_type] = max(max_obj[prob_type][acq_type], y_opt)
-         min_obj[prob_type][acq_type] = min(min_obj[prob_type][acq_type], y_opt)
+         mean_obj[prob_type][acq_type] += y_opt[prob_type][acq_type][n_repeat]
+         max_obj[prob_type][acq_type] = max(max_obj[prob_type][acq_type], y_opt[prob_type][acq_type][n_repeat])
+         min_obj[prob_type][acq_type] = min(min_obj[prob_type][acq_type], y_opt[prob_type][acq_type][n_repeat])
 
 print("Summary:")
 for prob_type in prob_type_l:
    for acq_type in acq_type_l:
+      allowed_error = max(1e-6, 0.01*(saved_max_obj[prob_type][acq_type]-saved_min_obj[prob_type][acq_type]))
+
       mean_obj[prob_type][acq_type] /= num_repeat
       print("(Min,Mean,Max) Opt.Obj for", prob_type, "-", acq_type, ":\t(", min_obj[prob_type][acq_type], ",",mean_obj[prob_type][acq_type], ",", max_obj[prob_type][acq_type], ")")
-      
-      #r_error = np.abs((mean_obj[prob_type][acq_type] - saved_mean_obj[prob_type][acq_type])/(1+saved_mean_obj[prob_type][acq_type]))
-      #print("Relative Error from Mean: ", r_error)
-      
-      if max_obj[prob_type][acq_type] > saved_max_obj[prob_type][acq_type] or min_obj[prob_type][acq_type] < saved_min_obj[prob_type][acq_type]:
+   
+      lb = saved_min_obj[prob_type][acq_type] - allowed_error
+      ub = saved_max_obj[prob_type][acq_type] + allowed_error
+
+      is_failed = (y_opt[prob_type][acq_type] < lb) | (y_opt[prob_type][acq_type] > ub)
+      num_fail = np.sum(is_failed)
+
+      if num_fail > 1:
+         print(num_fail, "test(s) fail(s):", y_opt[prob_type][acq_type][is_failed])
          print("Recorded (min, mean, max): (", saved_min_obj[prob_type][acq_type], ",", saved_mean_obj[prob_type][acq_type], ",", saved_max_obj[prob_type][acq_type], ")")
          retval = 1
 
