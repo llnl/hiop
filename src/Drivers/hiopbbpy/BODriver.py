@@ -45,7 +45,8 @@ mean_obj = {}
 max_obj = {}
 min_obj = {}
 
-retval = 0
+retval = 1
+sys.exit(retval)
 for prob_type in prob_type_l:
    print()
    if prob_type == "LpNorm":
