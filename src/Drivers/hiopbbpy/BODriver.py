@@ -34,9 +34,9 @@ nx = 2         # dimension of the problem
 xlimits = np.array([[-5, 5], [-5, 5]]) # bounds on optimization variable
 
 ### saved solutions --- from 1000 repetitions
-saved_mean_obj = {"LpNorm": {"LCB": 0.01913481, "EI": 0.19634178}, "Branin": {"LCB": 0.51033727, "EI": 1.3722849}}
-saved_min_obj = {"LpNorm": {"LCB": 0.00014948, "EI": 0.01305073}, "Branin": {"LCB": 0.39810948, "EI": 0.40188902}}
-saved_max_obj = {"LpNorm": {"LCB": 0.10684082, "EI": 0.93578515}, "Branin": {"LCB": 1.4407172, "EI": 4.6802864}}
+saved_min_obj = {"LpNorm": {"LCB": 0.00042368892331226933, "EI": 0.0019275968567381914}, "Branin": {"LCB": 0.3979959767195336, "EI": 0.39790235440360533}}
+saved_mean_obj = {"LpNorm": {"LCB": 0.01890915696581122, "EI": 0.11469022086202098}, "Branin": {"LCB": 0.5050685759430463, "EI": 0.4364213497352602}}
+saved_max_obj = {"LpNorm": {"LCB": 0.08552407885786031, "EI": 0.477667932754357}, "Branin": {"LCB": 1.0991452465349347, "EI": 0.6516045239540915}}
 
 prob_type_l = ["LpNorm", "Branin"]
 acq_type_l = ["LCB", "EI"]
