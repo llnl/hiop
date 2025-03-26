@@ -22,7 +22,7 @@ from hiopbbpy.problems import BraninProblem
 
 
 # Get user input for the number of repetitions from command-line arguments
-if len(sys.argv) != 2:
+if len(sys.argv) != 2 or int(sys.argv[1]) < 0:
     num_repeat = 1
 else:
     num_repeat = int(sys.argv[1])
@@ -34,9 +34,10 @@ nx = 2         # dimension of the problem
 xlimits = np.array([[-5, 5], [-5, 5]]) # bounds on optimization variable
 
 ### saved solutions --- from 1000 repetitions
-saved_min_obj = {"LpNorm": {"LCB": 0.00042368892331226933, "EI": 0.0019275968567381914}, "Branin": {"LCB": 0.3979959767195336, "EI": 0.39790235440360533}}
-saved_mean_obj = {"LpNorm": {"LCB": 0.01890915696581122, "EI": 0.11469022086202098}, "Branin": {"LCB": 0.5050685759430463, "EI": 0.4364213497352602}}
-saved_max_obj = {"LpNorm": {"LCB": 0.08552407885786031, "EI": 0.477667932754357}, "Branin": {"LCB": 1.0991452465349347, "EI": 0.6516045239540915}}
+saved_min_obj = {"LpNorm": {"LCB": 0.0007586314501994839, "EI": 0.002094016049616341}, "Branin": {"LCB": 0.3979820338569908, "EI": 0.39789916461969455}}
+saved_mean_obj = {"LpNorm": {"LCB": 0.018774638321851504, "EI": 0.11583915178648867}, "Branin": {"LCB": 0.5079001079219421, "EI": 0.4377466109837465}}
+saved_max_obj = {"LpNorm": {"LCB": 0.0755173754382861, "EI": 0.4175676394969743}, "Branin": {"LCB": 1.107240543567082, "EI": 0.7522382699410031}}
+saved_yopt = np.load("yopt_20iter_1000run.npy",allow_pickle=True).item()
 
 prob_type_l = ["LpNorm", "Branin"]
 acq_type_l = ["LCB", "EI"]
@@ -91,6 +92,13 @@ for prob_type in prob_type_l:
          max_obj[prob_type][acq_type] = max(max_obj[prob_type][acq_type], y_opt[prob_type][acq_type][n_repeat])
          min_obj[prob_type][acq_type] = min(min_obj[prob_type][acq_type], y_opt[prob_type][acq_type][n_repeat])
 
+#if(num_repeat >= 1000 ):
+#   np.save("yopt_20iter_1000run.npy", y_opt)
+
+# Define percentiles
+left_percentile = 5  # or 1
+right_percentile = 100 - left_percentile  # 95 or 99
+
 print("Summary:")
 for prob_type in prob_type_l:
    for acq_type in acq_type_l:
@@ -99,8 +107,12 @@ for prob_type in prob_type_l:
       mean_obj[prob_type][acq_type] /= num_repeat
       print("(Min,Mean,Max) Opt.Obj for", prob_type, "-", acq_type, ":\t(", min_obj[prob_type][acq_type], ",",mean_obj[prob_type][acq_type], ",", max_obj[prob_type][acq_type], ")")
    
-      lb = saved_min_obj[prob_type][acq_type] - allowed_error
-      ub = saved_max_obj[prob_type][acq_type] + allowed_error
+      ### verify the results with the saved results
+      left_value = np.percentile(saved_yopt[prob_type][acq_type], left_percentile)
+      right_value = np.percentile(saved_yopt[prob_type][acq_type], right_percentile)
+
+      lb = left_value - allowed_error
+      ub = right_value + allowed_error
 
       is_failed = (y_opt[prob_type][acq_type] < lb) | (y_opt[prob_type][acq_type] > ub)
       num_fail = np.sum(is_failed)
@@ -111,6 +123,7 @@ for prob_type in prob_type_l:
          retval = 1
 
 sys.exit(retval)
+
 
 
 
