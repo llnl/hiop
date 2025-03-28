@@ -176,7 +176,7 @@ int hiopResidual::update(const hiopIterate& it,
   assert(it.sxl->matchesPattern(nlp->get_ixl()));
   assert(it.sxu->matchesPattern(nlp->get_ixu()));
 #endif
-  // rx = -grad_f - J_c^t*x - J_d^t*x+zl-zu - linear damping term in x
+  // rx = -grad_f - J_c^t*x - J_d^t*x+M*zl-M*zu - linear damping term in x
   //rx->copyFrom(grad);
   //jac_c.transTimesVec(1.0, *rx, 1.0, *it.yc);
   //jac_d.transTimesVec(1.0, *rx, 1.0, *it.yd);
@@ -484,49 +484,63 @@ void hiopResidual::update_soc(const hiopIterate& it,
   assert(it.sxl->matchesPattern(nlp->get_ixl()));
   assert(it.sxu->matchesPattern(nlp->get_ixu()));
 #endif
-  // rx = -grad_f - J_c^t*x - J_d^t*x+zl-zu - linear damping term in x
-  rx->copyFrom(grad);
+  // rx = -grad_f - J_c^t*x - J_d^t*x+M*zl-M*zu - linear damping term in x
+  //rx->copyFrom(grad);
+  //jac_c.transTimesVec(1.0, *rx, 1.0, *it.yc);
+  //jac_d.transTimesVec(1.0, *rx, 1.0, *it.yd);
+  //rx->axpy(-1.0, *it.zl);
+  //rx->axpy(1.0, *it.zu);
+
+//using rxl as auxiliary variable to compute -M*zl+M*zu
+  rxl->copyFrom(*it.zu);
+  rxl->axpy(-1.0, *it.zl);
+  nlp->inner_prod()->apply_M_lumped(*rxl, *rx);
+  //continue adding to rx
   jac_c.transTimesVec(1.0, *rx, 1.0, *it.yc);
   jac_d.transTimesVec(1.0, *rx, 1.0, *it.yd);
-  rx->axpy(-1.0, *it.zl);
-  rx->axpy(1.0, *it.zu);
-  buf = rx->infnorm_local();
+  rx->axpy(1.0, grad);
+
+  //buf = rx->infnorm_local();
+  buf = nlp->inner_prod()->norm_stationarity(*rx);
   nrmInf_nlp_optim = fmax(nrmInf_nlp_optim, buf);
-  nrmOne_nlp_optim += rx->onenorm();
-  nlp->log->printf(hovScalars, "NLP resid [update]: inf norm rx=%22.17e\n", buf);
+  //nrmOne_nlp_optim += rx->onenorm();
+  nrmOne_nlp_optim += nlp->inner_prod()->norm_M_one(*rx);
+  nlp->log->printf(hovScalars, "NLP resid [update_soc]: inf norm rx=%22.17e\n", buf);
   logprob.addNonLogBarTermsToGrad_x(1.0, *rx);
   rx->negate();
-  nrmInf_bar_optim = fmax(nrmInf_bar_optim, rx->infnorm_local());
-  nrmOne_bar_optim += rx->onenorm();
+  //nrmInf_bar_optim = fmax(nrmInf_bar_optim, rx->infnorm_local());
+  //nrmOne_bar_optim += rx->onenorm();
+  nrmInf_bar_optim = fmax(nrmInf_bar_optim, nlp->inner_prod()->norm_stationarity(*rx));
+  nrmOne_bar_optim += nlp->inner_prod()->norm_M_one(*rx);
 
   // rd
   rd->copyFrom(*it.yd);
   rd->axpy(1.0, *it.vl);
   rd->axpy(-1.0, *it.vu);
-  buf = rd->infnorm_local();
+  buf = rd->infnorm();
   nrmInf_nlp_optim = fmax(nrmInf_nlp_optim, buf);
   nrmOne_nlp_optim += rd->onenorm();
-  nlp->log->printf(hovScalars, "NLP resid [update]: inf norm rd=%22.17e\n", buf);
+  nlp->log->printf(hovScalars, "NLP resid [update_soc]: inf norm rd=%22.17e\n", buf);
   logprob.addNonLogBarTermsToGrad_d(-1.0, *rd);
   nrmInf_bar_optim = fmax(nrmInf_bar_optim, rd->infnorm_local());
   nrmOne_bar_optim += rd->onenorm();
 
   // ryc for soc: \alpha*c + c_trial
   ryc->copyFrom(c_soc);
-  buf = ryc->infnorm_local();
+  buf = ryc->infnorm();
   nrmInf_nlp_feasib = fmax(nrmInf_nlp_feasib, buf);
   nrmOne_nlp_feasib += ryc->onenorm();
-  nlp->log->printf(hovScalars, "NLP resid [update]: inf norm ryc=%22.17e\n", buf);
+  nlp->log->printf(hovScalars, "NLP resid [update_soc]: inf norm ryc=%22.17e\n", buf);
 
   // ryd for soc: \alpha*(slack-d_soc) + (slack_trial-c_trial)
   ryd->copyFrom(d_soc);
-  buf = ryd->infnorm_local();
+  buf = ryd->infnorm();
   nrmInf_nlp_feasib = fmax(nrmInf_nlp_feasib, buf);
   nrmOne_nlp_feasib += ryd->onenorm();
   nlp->log->printf(hovScalars, "NLP resid [update]: inf norm ryd=%22.17e\n", buf);
 
   // rxl=x-sxl-xl
-  if(nlp->n_low_local() > 0) {
+  if(nlp->n_low() > 0) {
     rxl->copyFrom(*it.x);
     rxl->axpy(-1.0, *it.sxl);
     rxl->axpy(-1.0, nlp->get_xl());
@@ -534,24 +548,24 @@ void hiopResidual::update_soc(const hiopIterate& it,
     if(nlp->n_low_local() < nx_loc) {
       rxl->selectPattern(nlp->get_ixl());
     }
-    buf = rxl->infnorm_local();
+    buf = rxl->infnorm();
     // nrmInf_nlp_feasib = fmax(nrmInf_nlp_feasib, buf);
-    nlp->log->printf(hovScalars, "NLP resid [update]: inf norm rxl=%22.17e\n", buf);
+    nlp->log->printf(hovScalars, "NLP resid [update_soc]: inf norm rxl=%22.17e\n", buf);
   }
-  // printf("  %10.4e (xl)", nrmInf_nlp_feasib);
+
   // rxu=-x-sxu+xu
-  if(nlp->n_upp_local() > 0) {
+  if(nlp->n_upp() > 0) {
     rxu->copyFrom(nlp->get_xu());
     rxu->axpy(-1.0, *it.x);
     rxu->axpy(-1.0, *it.sxu);
     if(nlp->n_upp_local() < nx_loc) {
       rxu->selectPattern(nlp->get_ixu());
     }
-    buf = rxu->infnorm_local();
+    buf = rxu->infnorm();
     // nrmInf_nlp_feasib = fmax(nrmInf_nlp_feasib, buf);
-    nlp->log->printf(hovScalars, "NLP resid [update]: inf norm rxu=%22.17e\n", buf);
+    nlp->log->printf(hovScalars, "NLP resid [update_soc]: inf norm rxu=%22.17e\n", buf);
   }
-  // printf("  %10.4e (xu)", nrmInf_nlp_feasib);
+
   // rdl=d-sdl-dl
   if(nlp->m_ineq_low() > 0) {
     rdl->copyFrom(*it.d);
@@ -560,7 +574,7 @@ void hiopResidual::update_soc(const hiopIterate& it,
     rdl->selectPattern(nlp->get_idl());
     buf = rdl->infnorm_local();
     // nrmInf_nlp_feasib = fmax(nrmInf_nlp_feasib, buf);
-    nlp->log->printf(hovScalars, "NLP resid [update]: inf norm rdl=%22.17e\n", buf);
+    nlp->log->printf(hovScalars, "NLP resid [update_soc]: inf norm rdl=%22.17e\n", buf);
   }
   // printf("  %10.4e (dl)", nrmInf_nlp_feasib);
   // rdu=-d-sdu+du
@@ -571,42 +585,43 @@ void hiopResidual::update_soc(const hiopIterate& it,
     rdu->selectPattern(nlp->get_idu());
     buf = rdu->infnorm_local();
     //    nrmInf_nlp_feasib = fmax(nrmInf_nlp_feasib, buf);
-    nlp->log->printf(hovScalars, "NLP resid [update]: inf norm rdl=%22.17e\n", buf);
+    nlp->log->printf(hovScalars, "NLP resid [update_soc]: inf norm rdl=%22.17e\n", buf);
   }
-  // printf("  %10.4e (du)\n", nrmInf_nlp_feasib);
+
   // set the feasibility error for the log barrier problem
   nrmInf_bar_feasib = nrmInf_nlp_feasib;
   nrmOne_bar_feasib = nrmOne_nlp_feasib;
 
   // rszl = \mu e - sxl * zl
-  if(nlp->n_low_local() > 0) {
+  if(nlp->n_low() > 0) {
     rszl->setToZero();
     rszl->axzpy(-1.0, *it.sxl, *it.zl);
     if(nlp->n_low_local() < nx_loc) {
       rszl->selectPattern(nlp->get_ixl());
     }
-    nrmInf_nlp_complem = fmax(nrmInf_nlp_complem, rszl->infnorm_local());
+    buf = nlp->inner_prod()->norm_complementarity(*rszl);
+    nrmInf_nlp_complem = fmax(nrmInf_nlp_complem, buf);
 
     rszl->addConstant_w_patternSelect(mu, nlp->get_ixl());
-    buf = rszl->infnorm_local();
+    buf = nlp->inner_prod()->norm_complementarity(*rszu);
     nrmInf_bar_complem = fmax(nrmInf_bar_complem, buf);
-    nlp->log->printf(hovScalars, "NLP resid [update]: inf norm rszl=%22.17e\n", buf);
+    nlp->log->printf(hovScalars, "NLP resid [update_soc]: inf norm rszl=%22.17e\n", buf);
   }
   // rszu = \mu e - sxu * zu
-  if(nlp->n_upp_local() > 0) {
+  if(nlp->n_upp() > 0) {
     rszu->setToZero();
     rszu->axzpy(-1.0, *it.sxu, *it.zu);
     if(nlp->n_upp_local() < nx_loc) {
       rszu->selectPattern(nlp->get_ixu());
     }
 
-    buf = rszu->infnorm_local();
+    buf = nlp->inner_prod()->norm_complementarity(*rszu);
     nrmInf_nlp_complem = fmax(nrmInf_nlp_complem, buf);
 
     rszu->addConstant_w_patternSelect(mu, nlp->get_ixu());
-    buf = rszu->infnorm_local();
+    buf = nlp->inner_prod()->norm_complementarity(*rszu);
     nrmInf_bar_complem = fmax(nrmInf_bar_complem, buf);
-    nlp->log->printf(hovScalars, "NLP resid [update]: inf norm rszu=%22.17e\n", buf);
+    nlp->log->printf(hovScalars, "NLP resid [update_soc]: inf norm rszu=%22.17e\n", buf);
   }
   // rsvl = \mu e - sdl * vl
   if(nlp->m_ineq_low() > 0) {
@@ -622,7 +637,7 @@ void hiopResidual::update_soc(const hiopIterate& it,
     rsvl->addConstant_w_patternSelect(mu, nlp->get_idl());
     buf = rsvl->infnorm_local();
     nrmInf_bar_complem = fmax(nrmInf_bar_complem, buf);
-    nlp->log->printf(hovScalars, "NLP resid [update]: inf norm rsvl=%22.17e\n", buf);
+    nlp->log->printf(hovScalars, "NLP resid [update_soc]: inf norm rsvl=%22.17e\n", buf);
   }
   // rsvu = \mu e - sdu * vu
   if(nlp->m_ineq_upp() > 0) {
@@ -639,78 +654,9 @@ void hiopResidual::update_soc(const hiopIterate& it,
     rsvu->addConstant_w_patternSelect(mu, nlp->get_idu());
     buf = rsvu->infnorm_local();
     nrmInf_bar_complem = fmax(nrmInf_bar_complem, buf);
-    nlp->log->printf(hovScalars, "NLP resid [update]: inf norm rsvu=%22.17e\n", buf);
+    nlp->log->printf(hovScalars, "NLP resid [update_soc]: inf norm rsvu=%22.17e\n", buf);
   }
-#ifdef HIOP_USE_MPI
-  // here we reduce each of the norm together for a total cost of 1 Allreduce of 3 doubles
-  // otherwise, if calling infnorm() for each vector, there will be 12 Allreduce's, each of 1 double
-  double aux[6] =
-      {nrmInf_nlp_optim, nrmInf_nlp_feasib, nrmInf_nlp_complem, nrmInf_bar_optim, nrmInf_bar_feasib, nrmInf_bar_complem},
-         aux_g[6];
-  int ierr = MPI_Allreduce(aux, aux_g, 6, MPI_DOUBLE, MPI_MAX, nlp->get_comm());
-  assert(MPI_SUCCESS == ierr);
-  nrmInf_nlp_optim = aux_g[0];
-  nrmInf_nlp_feasib = aux_g[1];
-  nrmInf_nlp_complem = aux_g[2];
-  nrmInf_bar_optim = aux_g[3];
-  nrmInf_bar_feasib = aux_g[4];
-  nrmInf_bar_complem = aux_g[5];
-#endif
   nlp->runStats.tmSolverInternal.stop();
 }
 
 };  // namespace hiop
-
-// void hiopResidual::
-// projectPrimalsIntoBounds(double kappa1, double kappa2)
-// {
-//   x->projectIntoBounds(nlp->get_xl(),nlp->get_ixl(),
-// 		       nlp->get_xu(),nlp->get_ixu(),
-// 		       kappa1,kappa2);
-//   d->projectIntoBounds(nlp->get_dl(),nlp->get_idl(),
-// 		       nlp->get_du(),nlp->get_idu(),
-// 		       kappa1,kappa2);
-// }
-
-// void hiopResidual::setBoundsDualsToConstant(const double& v)
-// {
-//   zl->setToConstant_w_patternSelect(v, nlp->get_ixl());
-//   zu->setToConstant_w_patternSelect(v, nlp->get_ixu());
-//   vl->setToConstant_w_patternSelect(v, nlp->get_idl());
-//   vu->setToConstant_w_patternSelect(v, nlp->get_idu());
-// #ifdef WITH_GPU
-//   //maybe do the above arithmetically zl->setToConstant(); zl=zl.*ixl
-// #endif
-// }
-
-// void hiopResidual::setEqualityDualsToConstant(const double& v)
-// {
-//   yc->setToConstant(v);
-//   yd->setToConstant(v);
-// }
-
-// void hiopResidual::determineSlacks()
-// {
-//   sxl->copyFrom(*x);
-//   sxl->axpy(-1., nlp->get_xl());
-//   sxl->selectPattern(nlp->get_ixl());
-
-//   sxu->copyFrom(nlp->get_xu());
-//   sxu->axpy(-1., *x);
-//   sxu->selectPattern(nlp->get_ixu());
-
-//   sdl->copyFrom(*d);
-//   sdl->axpy(-1., nlp->get_dl());
-//   sdl->selectPattern(nlp->get_idl());
-
-//   sdu->copyFrom(nlp->get_du());
-//   sdu->axpy(-1., *d);
-//   sdu->selectPattern(nlp->get_idu());
-
-// #ifdef HIOP_DEEPCHECKS
-//   assert(sxl->allPositive_w_patternSelect(nlp->get_ixl()));
-//   assert(sxu->allPositive_w_patternSelect(nlp->get_ixu()));
-//   assert(sdl->allPositive_w_patternSelect(nlp->get_idl()));
-//   assert(sdu->allPositive_w_patternSelect(nlp->get_idu()));
-// #endif
-// }

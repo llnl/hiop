@@ -1435,13 +1435,19 @@ hiopSolveStatus hiopAlgFilterIPMQuasiNewton::run()
       lsStatus = accept_line_search_conditions(theta, theta_trial, _alpha_primal, grad_phi_dx_computed, grad_phi_dx);
 
       if(lsStatus > 0) {
+        nlp->log->printf(hovScalars,
+                         "Linesearch: accept: theta %12.5e theta_trial %12.5e alpha_primal %12.5e\n",
+                         theta,
+                         theta_trial,
+                         _alpha_primal);
         nlp->runStats.tmSolverInternal.stop();
-        break;
+        //break;
       }
 
       nlp->runStats.tmSolverInternal.start();
       // second order correction
-      if(iniStep && theta <= theta_trial) {
+      if(true || iniStep && theta <= theta_trial) {
+
         bool grad_phi_dx_soc_computed = false;
         double grad_phi_dx_soc = 0.0;
         int num_adjusted_slacks_soc = 0;
@@ -3075,6 +3081,7 @@ int hiopAlgFilterIPMBase::accept_line_search_conditions(const double theta_curr,
         // Armijo is not satisfied
         trial_is_rejected_by_filter = false;
         bret = 0;
+        nlp->log->printf(hovLinesearchVerb, "Linesearch: Armijo cond is not satisfied (switch cond passed)\n");
         return bret;
       }
 
@@ -3082,6 +3089,7 @@ int hiopAlgFilterIPMBase::accept_line_search_conditions(const double theta_curr,
       if(filter.contains(theta_trial, logbar->f_logbar_trial)) {
         // it is in the filter, reject this trial point
         trial_is_rejected_by_filter = true;
+        nlp->log->printf(hovLinesearchVerb, "Linesearch: rejecting: trial pt in the filter (switch cond passed).\n");
         bret = 0;
       }
       return bret;
@@ -3105,6 +3113,7 @@ int hiopAlgFilterIPMBase::accept_line_search_conditions(const double theta_curr,
       // check filter condition
       if(filter.contains(theta_trial, logbar->f_logbar_trial)) {
         // it is in the filter, reject this trial point
+        nlp->log->printf(hovLinesearchVerb, "Linesearch: rejecting: trial pt in the filter (switch cond not satisfied).\n");
         trial_is_rejected_by_filter = true;
         bret = 0;
       }
@@ -3153,6 +3162,13 @@ int hiopAlgFilterIPMBase::apply_second_order_correction(hiopKKTLinSys* kkt,
   d_soc->copyFrom(*it_curr->get_d());
   d_soc->axpy(-1.0, *_d);
 
+  nlp->log->printf(hovLinesearch,
+                   "SOC start: theta_curr %12.5e theta_trial %12.5e kappa_soc %12.5e max_iter %d\n",
+                   theta_curr,
+                   theta_trial,
+                   kappa_soc,
+                   max_soc_iter);
+  
   while(num_soc < max_soc_iter && (num_soc == 0 || theta_trial <= kappa_soc * theta_trial_last)) {
     theta_trial_last = theta_trial;
 
@@ -3182,6 +3198,7 @@ int hiopAlgFilterIPMBase::apply_second_order_correction(hiopKKTLinSys* kkt,
 
     // evaluate the problem at the trial iterate (functions only)
     if(!this->evalNlp_funcOnly(*it_trial, _f_nlp_trial, *_c_trial, *_d_trial)) {
+      nlp->log->printf(hovError, "NLP evaluation failed in SOC\n");
       solver_status_ = Error_In_User_Function;
       return Error_In_User_Function;
     }
@@ -3192,7 +3209,13 @@ int hiopAlgFilterIPMBase::apply_second_order_correction(hiopKKTLinSys* kkt,
     theta_trial = resid_trial->compute_nlp_infeasib_onenorm(*it_trial, *_c_trial, *_d_trial);
 
     ls_status = accept_line_search_conditions(theta_curr, theta_trial, _alpha_primal, grad_phi_dx_computed, grad_phi_dx);
-
+    
+    nlp->log->printf(hovLinesearch,
+                     "SOC iter %d theta_curr %12.5e theta_trial %12.5e alpha_primal %12.5e\n",
+                     num_soc,
+                     theta_curr,
+                     theta_trial,
+                     _alpha_primal);
     if(ls_status > 0) {
       _alpha_primal = alpha_primal_soc;
       dir->copyFrom(*soc_dir);
