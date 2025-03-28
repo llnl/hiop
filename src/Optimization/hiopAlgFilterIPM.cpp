@@ -1441,12 +1441,12 @@ hiopSolveStatus hiopAlgFilterIPMQuasiNewton::run()
                          theta_trial,
                          _alpha_primal);
         nlp->runStats.tmSolverInternal.stop();
-        //break;
+        break;
       }
 
       nlp->runStats.tmSolverInternal.start();
       // second order correction
-      if(true || iniStep && theta <= theta_trial) {
+      if(iniStep && theta <= theta_trial) {
 
         bool grad_phi_dx_soc_computed = false;
         double grad_phi_dx_soc = 0.0;
