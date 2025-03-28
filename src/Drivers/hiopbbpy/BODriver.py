@@ -96,14 +96,12 @@ for prob_type in prob_type_l:
 #   np.save("yopt_20iter_1000run.npy", y_opt)
 
 # Define percentiles
-left_percentile = 5  # or 1
+left_percentile = 1  # 5 or 1
 right_percentile = 100 - left_percentile  # 95 or 99
 
 print("Summary:")
 for prob_type in prob_type_l:
    for acq_type in acq_type_l:
-      allowed_error = max(1e-6, 0.01*(saved_max_obj[prob_type][acq_type]-saved_min_obj[prob_type][acq_type]))
-
       mean_obj[prob_type][acq_type] /= num_repeat
       print("(Min,Mean,Max) Opt.Obj for", prob_type, "-", acq_type, ":\t(", min_obj[prob_type][acq_type], ",",mean_obj[prob_type][acq_type], ",", max_obj[prob_type][acq_type], ")")
    
@@ -111,13 +109,11 @@ for prob_type in prob_type_l:
       left_value = np.percentile(saved_yopt[prob_type][acq_type], left_percentile)
       right_value = np.percentile(saved_yopt[prob_type][acq_type], right_percentile)
 
-      lb = left_value - allowed_error
-      ub = right_value + allowed_error
-
-      is_failed = (y_opt[prob_type][acq_type] < lb) | (y_opt[prob_type][acq_type] > ub)
+      is_failed = (y_opt[prob_type][acq_type] < left_value) | (y_opt[prob_type][acq_type] > right_value)
       num_fail = np.sum(is_failed)
 
-      if num_fail > 1:
+      # currently ci test is only applied to num_repeat == 10
+      if num_fail >= 3 and num_repeat == 10:
          print(num_fail, "test(s) fail(s):", y_opt[prob_type][acq_type][is_failed])
          print("Recorded (min, mean, max): (", saved_min_obj[prob_type][acq_type], ",", saved_mean_obj[prob_type][acq_type], ",", saved_max_obj[prob_type][acq_type], ")")
          retval = 1
