@@ -11,6 +11,7 @@ Authors:    Tucker Hartland <hartland1@llnl.gov>
 """
 
 import sys
+import os
 import numpy as np
 import matplotlib.pyplot as plt
 import warnings
@@ -37,7 +38,8 @@ xlimits = np.array([[-5, 5], [-5, 5]]) # bounds on optimization variable
 saved_min_obj = {"LpNorm": {"LCB": 0.0007586314501994839, "EI": 0.002094016049616341}, "Branin": {"LCB": 0.3979820338569908, "EI": 0.39789916461969455}}
 saved_mean_obj = {"LpNorm": {"LCB": 0.018774638321851504, "EI": 0.11583915178648867}, "Branin": {"LCB": 0.5079001079219421, "EI": 0.4377466109837465}}
 saved_max_obj = {"LpNorm": {"LCB": 0.0755173754382861, "EI": 0.4175676394969743}, "Branin": {"LCB": 1.107240543567082, "EI": 0.7522382699410031}}
-saved_yopt = np.load("yopt_20iter_1000run.npy",allow_pickle=True).item()
+script_dir = os.path.dirname(__file__)
+saved_yopt = np.load(script_dir + "/yopt_20iter_1000run.npy",allow_pickle=True).item()
 
 prob_type_l = ["LpNorm", "Branin"]
 acq_type_l = ["LCB", "EI"]
