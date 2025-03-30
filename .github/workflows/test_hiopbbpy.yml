@@ -1,0 +1,32 @@
+name: test_hiopbbpy
+
+on: [push]
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4  # Set up Python environment
+        with:
+          python-version: '3.13'
+
+
+      - name: Install HiOpBBPy and its dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install .
+
+      - name: Run Tests
+        run: |
+          python src/Drivers/hiopbbpy/BODriver.py 10
+        continue-on-error: false
+          
+

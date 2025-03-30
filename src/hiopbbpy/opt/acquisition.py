@@ -43,7 +43,7 @@ class EIacquisition(acquisition):
         y_min = y_data[np.argmin(y_data[:, 0])]
 
         pred = self.gpsurrogate.mean(x)
-        sig = self.gpsurrogate.variance(x)
+        sig = np.sqrt(self.gpsurrogate.variance(x))
 
         retval = []
         if sig.size == 1 and np.abs(sig) > 1e-12:

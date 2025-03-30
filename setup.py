@@ -12,14 +12,14 @@ from setuptools import setup, find_packages
 
 metadata = dict(
         name="hiopbbpy",
-        version="0.0.2",
+        version="0.0.3",
         description="HiOp black box optimization (hiopbbpy)",
         author="Tucker hartland et al.",
         author_email="hartland1@llnl.gov",
         license="BSD-3",
         packages=find_packages(where="src"),
         package_dir={"": "src"},
-        install_requires=["smt", "cyipopt"],
+        install_requires=["smt"],
         python_requires=">=3.9",
         zip_safe=False,
         url="https://github.com/LLNL/hiop",
