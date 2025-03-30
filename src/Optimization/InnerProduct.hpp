@@ -73,18 +73,25 @@ class hiopNlpFormulation;
  * H is the mass matrix, while for H^1 is the mass plus stiffness. These user methods are called
  * to perform various operations associated with Hilbert spaces, such as inner products and norms. 
  *
+ *
  * Additional info: C. G. Petra et. al., On the implementation of a quasi-Newton 
  * interior-point method for PDE-constrained optimization using finite element 
  * discretizations, Optimiz. Meth. and Software, Vol. 38, 2023.
  *
+ * Currently, this class uses lumps the H matrix in a diagonal matrix and uses as the weight for
+ * norms and inner products over the underlying (primal) vector space. For the dual space, it uses
+ * the inverse of this diagonal matrix. Using the H and matrices directly complicates the linear 
+ * algebra of the quasi-Newton IPM solver, since it uses direct solves while M and H comes as
+ * mat-vec applies. 
+ *
  * This class also covers Euclidean (i.e., non-weighted) inner products, for which M=H=I.
  */
-class InnerProduct
+class VectorSpace
 {
 public:
-  InnerProduct(hiopNlpFormulation* nlp);
+  VectorSpace(hiopNlpFormulation* nlp);
   
-  virtual ~InnerProduct();
+  virtual ~VectorSpace();
 
   // Compute y=M*x
   bool apply_M(const hiopVector& x, hiopVector& y) const;

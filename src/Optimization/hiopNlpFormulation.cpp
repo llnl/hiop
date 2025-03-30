@@ -79,7 +79,7 @@ hiopNlpFormulation::hiopNlpFormulation(hiopInterfaceBase& interface_, const char
       nlp_evaluated_(false),
       nlp_transformations_(this),
       interface_base(interface_),
-      inner_prod_(nullptr)
+      vec_space_(nullptr)
 {
   strFixedVars_ = "";    // uninitialized
   dFixedVarsTol_ = -1.;  // uninitialized
@@ -187,7 +187,7 @@ hiopNlpFormulation::~hiopNlpFormulation()
   delete temp_x_;
   /// nlp_scaling_ and relax_bounds_ are deleted inside nlp_transformations_
 
-  delete inner_prod_;
+  delete vec_space_;
 }
 
 bool hiopNlpFormulation::finalizeInitialization()
@@ -259,8 +259,8 @@ bool hiopNlpFormulation::finalizeInitialization()
   ixu_ = xu_->alloc_clone();
 
   // create NLP space (H-weighted or Euclidean)
-  delete inner_prod_;
-  inner_prod_ = new InnerProduct(this);
+  delete vec_space_;
+  vec_space_ = new VectorSpace(this);
   
   //
   // preprocess variables bounds - this is curently done on the CPU
@@ -773,7 +773,7 @@ bool hiopNlpFormulation::eval_M(const hiopVector& x, hiopVector& y)
 
   // We need to also transform y to a y_full, pass it to user apply, and then the reverse, y_full back to y.
   // The following works, unless a "remove fixed variables" NLP transformation is present.
-  // TO DO: Either add functionality in hiopFixedVarRemovers to allow apply_inv_to_x for more than one vector
+  // TODO: Either add functionality in hiopFixedVarRemovers to allow apply_inv_to_x for more than one vector
   // simultaneously, or create y_full here use apply_inv_to_x with copying from the return to y_full
   hiopVector* y_full = &y;
   assert(x_full->get_size() == y.get_size() &&
@@ -786,7 +786,7 @@ bool hiopNlpFormulation::eval_M(const hiopVector& x, hiopVector& y)
   runStats.tm_eval_M_apply.stop();
   runStats.n_eval_M_apply++;
 
-  // TODO: copy back to y from y_full
+  // TODO: see note above
   
   return bret;  
 }

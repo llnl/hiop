@@ -358,7 +358,7 @@ public:
    *
    * @return true if enabled, false to default to Euclidean space with <u,v>=u^T*v
    */
-  virtual bool useWeightedInnerProducts()
+  virtual bool useWeightedVectorSpace()
   {
     return false;
   }

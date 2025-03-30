@@ -118,9 +118,9 @@ public:
   virtual bool eval_Jac_d(hiopVector& x, bool new_x, hiopMatrix& Jac_d) = 0;
   virtual bool eval_Jac_c_d(hiopVector& x, bool new_x, hiopMatrix& Jac_c, hiopMatrix& Jac_d);
 
-  inline bool useWeightedInnerProd()
+  inline bool useWeightedVectorSpace()
   {
-    return interface_base.useWeightedInnerProducts();
+    return interface_base.useWeightedVectorSpace();
   }
   /* Wrapper over user-defined M apply that also applies the NLP transformations. */
   bool eval_M(const hiopVector& x, hiopVector& y);
@@ -129,9 +129,9 @@ public:
   /* Wrapper over user-defined inverse of H apply that also applies the NLP transformations. */
   bool eval_H_inv(const hiopVector& x, hiopVector& y); 
 
-  InnerProduct const* inner_prod() const
+  VectorSpace const* inner_prod() const
   {
-    return inner_prod_;
+    return vec_space_;
   }
 
 protected:
@@ -369,8 +369,8 @@ protected:
   /* User provided interface */
   hiopInterfaceBase& interface_base;
 
-  /* Inner product wrapper */
-  InnerProduct* inner_prod_;
+  /* Vector space for primal variables */
+  VectorSpace* vec_space_;
   
   /**
    * Flag to indicate whether to use evaluate all constraints once or separately for equalities

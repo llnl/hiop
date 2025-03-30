@@ -46,7 +46,7 @@
 // product endorsement purposes.
 
 /**
- * @file InnerProduct.hpp
+ * @file VectorSpace.cpp
  *
  * @author Cosmin G. Petra <petra1@llnl.gov>, LLNL
  *
@@ -59,33 +59,30 @@
 namespace hiop
 {
 
-InnerProduct::InnerProduct(hiopNlpFormulation* nlp)
+VectorSpace::VectorSpace(hiopNlpFormulation* nlp)
   : nlp_(nlp)
 {
-  printf("InnerProduct::InnerProduct begin\n"); fflush(stdout);
   assert(nlp);
   M_lump_ = nullptr;
-  if(nlp->useWeightedInnerProd()) {
+  if(nlp->useWeightedVectorSpace()) {
     vec_n_ = nlp_->alloc_primal_vec();
     vec_n2_ = nlp_->alloc_primal_vec();
   } else {
     vec_n_ = nullptr;
     vec_n2_ = nullptr;
   }
-
-  printf("InnerProduct::InnerProduct end\n"); fflush(stdout);
 }
   
-InnerProduct::~InnerProduct()
+VectorSpace::~VectorSpace()
 {
   delete vec_n2_;
   delete vec_n_;
   delete M_lump_;
 }
 
-bool InnerProduct::apply_M(const hiopVector& x, hiopVector& y) const
+bool VectorSpace::apply_M(const hiopVector& x, hiopVector& y) const
 {
-  if(nlp_->useWeightedInnerProd()) {
+  if(nlp_->useWeightedVectorSpace()) {
     return nlp_->eval_M(x, y);
   } else {
     y.copyFrom(x);
@@ -94,7 +91,7 @@ bool InnerProduct::apply_M(const hiopVector& x, hiopVector& y) const
 }
 
 // Applies lumped mass matrix;
-bool InnerProduct::apply_M_lumped(const hiopVector& x, hiopVector& y) const
+bool VectorSpace::apply_M_lumped(const hiopVector& x, hiopVector& y) const
 {
   y.copyFrom(x);
   y.componentMult(*M_lumped());
@@ -102,9 +99,9 @@ bool InnerProduct::apply_M_lumped(const hiopVector& x, hiopVector& y) const
 }
 
 // Computes ||x||_M
-double InnerProduct::norm_M(const hiopVector& x) const
+double VectorSpace::norm_M(const hiopVector& x) const
 {
-  if(nlp_->useWeightedInnerProd()) {
+  if(nlp_->useWeightedVectorSpace()) {
     nlp_->eval_M(x, *vec_n_);
     auto dp = x.dotProductWith(*vec_n_);
     return ::std::sqrt(dp);
@@ -113,9 +110,9 @@ double InnerProduct::norm_M(const hiopVector& x) const
   }
 }
 // Computes H primal norm
-double InnerProduct::norm_H_primal(const hiopVector& x) const
+double VectorSpace::norm_H_primal(const hiopVector& x) const
 {
-  if(nlp_->useWeightedInnerProd()) {      
+  if(nlp_->useWeightedVectorSpace()) {      
     nlp_->eval_H(x, *vec_n_);
     auto dp = x.dotProductWith(*vec_n_);
       return ::std::sqrt(dp);
@@ -124,9 +121,9 @@ double InnerProduct::norm_H_primal(const hiopVector& x) const
   }
 }
 // Computes H dual norm
-double InnerProduct::norm_H_dual(const hiopVector& x) const
+double VectorSpace::norm_H_dual(const hiopVector& x) const
 {
-  if(nlp_->useWeightedInnerProd()) {      
+  if(nlp_->useWeightedVectorSpace()) {      
     nlp_->eval_H_inv(x, *vec_n_);
     auto dp = x.dotProductWith(*vec_n_);
     return ::std::sqrt(dp);
@@ -135,9 +132,9 @@ double InnerProduct::norm_H_dual(const hiopVector& x) const
   }
 }
 
-double InnerProduct::norm_stationarity(const hiopVector& x) const
+double VectorSpace::norm_stationarity(const hiopVector& x) const
 {
-  if(nlp_->useWeightedInnerProd()) {
+  if(nlp_->useWeightedVectorSpace()) {
     //nlp_->eval_H_inv(x, *vec_n_);
     //auto dp = x.dotProductWith(*vec_n_);
     //return ::std::sqrt(dp);
@@ -150,9 +147,9 @@ double InnerProduct::norm_stationarity(const hiopVector& x) const
 }
 
 // Compute norm one weighted by M, i.e., 1^T*M*|x|
-double InnerProduct::norm_M_one(const hiopVector&x) const
+double VectorSpace::norm_M_one(const hiopVector&x) const
 {
-  if(nlp_->useWeightedInnerProd()) {
+  if(nlp_->useWeightedVectorSpace()) {
     //opt! pre-compute M*1
     vec_n_->copyFrom(x);
     vec_n_->component_abs();
@@ -164,9 +161,9 @@ double InnerProduct::norm_M_one(const hiopVector&x) const
   }
 }
 
-double InnerProduct::norm_complementarity(const hiopVector& x) const
+double VectorSpace::norm_complementarity(const hiopVector& x) const
 {
-  if(nlp_->useWeightedInnerProd()) {
+  if(nlp_->useWeightedVectorSpace()) {
     // //opt! pre-compute M*1
     // vec_n_->copyFrom(x);
     // vec_n_->component_abs();
@@ -180,9 +177,9 @@ double InnerProduct::norm_complementarity(const hiopVector& x) const
 }
 
 // Computes the "volume" of the space, 1^T M*1 
-double InnerProduct::volume() const
+double VectorSpace::volume() const
 {
-  if(nlp_->useWeightedInnerProd()) {
+  if(nlp_->useWeightedVectorSpace()) {
     double vol_total = nlp_->m_ineq_low() + nlp_->m_ineq_upp();
     if(nlp_->n_low() > 0 || nlp_->n_upp() > 0) {
       //compute ||1||_M
@@ -204,11 +201,11 @@ double InnerProduct::volume() const
 }
 
 // Return vector containing the diagonals of the lumped mass matrix, possibly creating the internal object
-const hiopVector* InnerProduct::M_lumped() const
+const hiopVector* VectorSpace::M_lumped() const
 {
   if(M_lump_ == nullptr) {
     M_lump_ = nlp_->alloc_primal_vec();
-    if(nlp_->useWeightedInnerProd()) {    
+    if(nlp_->useWeightedVectorSpace()) {    
       vec_n_->setToConstant(1.);
       apply_M(*vec_n_, *M_lump_);
     } else {
@@ -218,10 +215,10 @@ const hiopVector* InnerProduct::M_lumped() const
   return M_lump_;
 }
 
-void InnerProduct::
+void VectorSpace::
 add_linear_damping_term(const hiopVector& ixl, const hiopVector& ixu, const double& ct, hiopVector& x) const
 {
-  if(nlp_->useWeightedInnerProd()) {
+  if(nlp_->useWeightedVectorSpace()) {
     vec_n_->copyFrom(ixl);
     vec_n_->axpy(-1.0, ixu);
     vec_n_->componentMult(*M_lumped());
@@ -231,9 +228,9 @@ add_linear_damping_term(const hiopVector& ixl, const hiopVector& ixu, const doub
   }
 }
 
-double InnerProduct::log_barrier_eval_local(const hiopVector& x, const hiopVector& ix) const
+double VectorSpace::log_barrier_eval_local(const hiopVector& x, const hiopVector& ix) const
 {
-  if(nlp_->useWeightedInnerProd()) {
+  if(nlp_->useWeightedVectorSpace()) {
     return x.logBarrierWeighted_local(ix, *M_lumped());
   } else {
     return x.logBarrier_local(ix);
@@ -241,9 +238,9 @@ double InnerProduct::log_barrier_eval_local(const hiopVector& x, const hiopVecto
 }
 
 // Adds (to `gradx`) the gradient of the weighted log, namely gradx = gradx - mu * M_lumped * ix/s
-void InnerProduct::log_barrier_grad_add(const double& mu, const hiopVector& s, const hiopVector& ix, hiopVector& gradx) const
+void VectorSpace::log_barrier_grad_add(const double& mu, const hiopVector& s, const hiopVector& ix, hiopVector& gradx) const
 {
-  if(nlp_->useWeightedInnerProd()) {
+  if(nlp_->useWeightedVectorSpace()) {
     vec_n_->copyFrom(ix);
     vec_n_->componentDiv(s);
     vec_n_->componentMult(*M_lumped());
@@ -253,13 +250,13 @@ void InnerProduct::log_barrier_grad_add(const double& mu, const hiopVector& s, c
   }
 }
 
-double InnerProduct::linear_damping_term_local(const hiopVector& s,
-                                               const hiopVector& ixl,
-                                               const hiopVector& ixr,
-                                               const double& mu,
-                                               const double& kappa_d) const
+double VectorSpace::linear_damping_term_local(const hiopVector& s,
+                                              const hiopVector& ixl,
+                                              const hiopVector& ixr,
+                                              const double& mu,
+                                              const double& kappa_d) const
 {
-  if(nlp_->useWeightedInnerProd()) {
+  if(nlp_->useWeightedVectorSpace()) {
     vec_n_->copyFrom(s);
     vec_n_->componentMult(*M_lumped());
     return vec_n_->linearDampingTerm_local(ixl, ixr, mu, kappa_d);
@@ -268,6 +265,5 @@ double InnerProduct::linear_damping_term_local(const hiopVector& s,
   }
   
 }
-
 
 } // end namespace
