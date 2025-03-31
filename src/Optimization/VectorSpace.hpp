@@ -73,7 +73,6 @@ class hiopNlpFormulation;
  * H is the mass matrix, while for H^1 is the mass plus stiffness. These user methods are called
  * to perform various operations associated with Hilbert spaces, such as inner products and norms. 
  *
- *
  * Additional info: C. G. Petra et. al., On the implementation of a quasi-Newton 
  * interior-point method for PDE-constrained optimization using finite element 
  * discretizations, Optimiz. Meth. and Software, Vol. 38, 2023.
@@ -93,25 +92,20 @@ public:
   
   virtual ~VectorSpace();
 
-  // Compute y=M*x
-  bool apply_M(const hiopVector& x, hiopVector& y) const;
-
-  // Appply lumped mass matrix, y=M_lumped*x
+  // Apply lumped mass matrix, y=M_lumped*x
   bool apply_M_lumped(const hiopVector& x, hiopVector& y) const;
   
-  // Computes ||x||_M
-  double norm_M(const hiopVector& x) const;
-
-  // Computes H primal norm
+  // Computes H primal norm, ||x||_H
   double norm_H_primal(const hiopVector& x) const;
   
-  // Computes H dual norm
-  double norm_H_dual(const hiopVector& x) const;
+  // Computes H dual norm, ||y||_{H^{-1}}
+  double norm_H_dual(const hiopVector& y) const;
 
-  // Computes norm of stationarity residual, using inf-norm for Euclidean spaces, H-inverse norm for Hilbert spaces
+  // Computes norm of stationarity residual, using inf-norm for Euclidean spaces, otherwise uses inf-norm
+  // of rescaled dual representer
   double norm_stationarity(const hiopVector& x) const;
 
-  // Computes norm of complementarity, using inf-norm for Euclidean spaces, 1M norm for Hilbert spaces
+  // Computes norm of complementarity, using inf-norm 
   double norm_complementarity(const hiopVector& x) const;
   
   // Computes 1M norm, i.e., ||x|| =  1^T*M*|x|

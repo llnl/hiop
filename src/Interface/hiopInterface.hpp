@@ -285,10 +285,11 @@ public:
    * The mass matrix is generally the weight matrix associated with L^2 finite element 
    * discretizations. This matrix is used internally to build and maintain Riesz-like 
    * representations of the dual variables (associated with bound constraints) to ensure
-   * mesh independent performance of the algorithm.
+   * mesh independent performance of the algorithm. Currently M is lumped into a diagonal
+   * and used internally for the abovementioned dual variables.
    *
    * @note If the variables are not coming from discretizations (specified by a false 
-   * value returned by @useWeightedInnerProducts), the methods should return false. HiOp 
+   * value returned by @useWeightedVectorSpace), the methods should return false. HiOp 
    * will use internally M=I. Otherwise, should return true or false depending on whether 
    * the user code succesfully applied M. 
    *
@@ -299,8 +300,7 @@ public:
    */
   virtual bool applyM(const size_type& n, const double* x, double* y)
   {
-    //the default impl. instructs HiOp to use Euclidean/l^2 variables (M=I) internally
-    return false;
+    return true;
   }
   
   /**
@@ -317,9 +317,14 @@ public:
    * discretizations, Optimiz. Meth. and Software, Vol. 38, 2023.
    *
    * @note If the variables are not coming from discretizations (specified by a false 
-   * value returned by @useWeightedInnerProducts), the methods should return false. HiOp 
+   * value returned by @useWeightedVectorSpace), the methods should return false. HiOp 
    * will use internally H=I. Otherwise, should return true or false depending on whether 
-   * the user code succesfully applied M.
+   * the user code succesfully applied H.
+   * 
+   * @note Currently HiOp only uses H for computing the inner products and norms (including
+   * for vector representations of duals discretizations). The lumped mass matrix M is used
+   * in the quasi-Newton Hessian approximations. This can be revisited, but will require
+   * the user to provide a method for solve with H plus a diagonal positive definite matrix.
    *
    * @param[in] n the (global) number of variables
    * @param[in] x the array to which the H matrix is applied
@@ -328,8 +333,7 @@ public:
    */
   virtual bool applyH(const size_type& n, const double* x, double* y)
   {
-    //the default impl. instructs HiOp to use Euclidean/l^2 variables (H=I) internally
-    return false;
+    return true;
   }
 
   /**
@@ -337,8 +341,7 @@ public:
    *
    * See @applyH for a discussion of H and additional notes. The inverse of H plays an
    * important role in computing the "dual" norms and, in turn, to ensure mesh
-   * independent behavior of the IPM solver(s). The inverse apply is also needed by the
-   * specialized solves HiOp performs when the quasi-Newton solver is used. 
+   * independent behavior of the IPM solver(s). Also see notes from @applyH.
    *
    * @param[in] n the (global) number of variables
    * @param[in] x the array to which the inverse is applied
@@ -347,8 +350,7 @@ public:
    */
   virtual bool applyHinv(const size_type& n, const double* x, double* y)
   {
-    //the default impl. instructs HiOp to use Euclidean/l^2 variables (H=I) internally
-    return false;
+    return true;
   }
 
   /**
@@ -360,6 +362,7 @@ public:
    */
   virtual bool useWeightedVectorSpace()
   {
+    //the default impl. instructs HiOp to use Euclidean/l^2 variables (H=I) internally
     return false;
   }
   

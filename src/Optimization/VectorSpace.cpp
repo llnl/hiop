@@ -79,15 +79,15 @@ VectorSpace::~VectorSpace()
   delete M_lump_;
 }
 
-bool VectorSpace::apply_M(const hiopVector& x, hiopVector& y) const
-{
-  if(nlp_->useWeightedVectorSpace()) {
-    return nlp_->eval_M(x, y);
-  } else {
-    y.copyFrom(x);
-    return true;
-  }
-}
+//bool VectorSpace::apply_M(const hiopVector& x, hiopVector& y) const
+//{
+//  if(nlp_->useWeightedVectorSpace()) {
+//    return nlp_->eval_M(x, y);
+//  } else {
+//    y.copyFrom(x);
+//    return true;
+//  }
+//}
 
 // Applies lumped mass matrix;
 bool VectorSpace::apply_M_lumped(const hiopVector& x, hiopVector& y) const
@@ -97,24 +97,13 @@ bool VectorSpace::apply_M_lumped(const hiopVector& x, hiopVector& y) const
   return true;
 }
 
-// Computes ||x||_M
-double VectorSpace::norm_M(const hiopVector& x) const
-{
-  if(nlp_->useWeightedVectorSpace()) {
-    nlp_->eval_M(x, *vec_n_);
-    auto dp = x.dotProductWith(*vec_n_);
-    return ::std::sqrt(dp);
-  } else {
-    return x.twonorm();
-  }
-}
 // Computes H primal norm
 double VectorSpace::norm_H_primal(const hiopVector& x) const
 {
   if(nlp_->useWeightedVectorSpace()) {      
     nlp_->eval_H(x, *vec_n_);
     auto dp = x.dotProductWith(*vec_n_);
-      return ::std::sqrt(dp);
+    return ::std::sqrt(dp);
   } else {
     return x.twonorm();
   }
@@ -134,9 +123,6 @@ double VectorSpace::norm_H_dual(const hiopVector& x) const
 double VectorSpace::norm_stationarity(const hiopVector& x) const
 {
   if(nlp_->useWeightedVectorSpace()) {
-    //nlp_->eval_H_inv(x, *vec_n_);
-    //auto dp = x.dotProductWith(*vec_n_);
-    //return ::std::sqrt(dp);
     vec_n_->copyFrom(x);
     vec_n_->componentDiv(*M_lumped());
     return vec_n_->infnorm();
@@ -146,15 +132,14 @@ double VectorSpace::norm_stationarity(const hiopVector& x) const
 }
 
 // Compute norm one weighted by M, i.e., 1^T*M*|x|
-double VectorSpace::norm_M_one(const hiopVector&x) const
+double VectorSpace::norm_M_one(const hiopVector& x) const
 {
   if(nlp_->useWeightedVectorSpace()) {
-    //opt! pre-compute M*1
-    vec_n_->copyFrom(x);
-    vec_n_->component_abs();
-    nlp_->eval_M(*vec_n_, *vec_n2_);
-    vec_n_->setToConstant(1.);
-    return vec_n_->dotProductWith(*vec_n2_);
+    //use vec_n2_ since vec_n_ may be changed in M_lumped_
+    vec_n2_->copyFrom(x);
+    vec_n2_->component_abs();
+    //M_lumped_ is already M*1
+    return M_lumped()->dotProductWith(*vec_n2_);
   } else {
     return x.onenorm();
   }
@@ -163,12 +148,8 @@ double VectorSpace::norm_M_one(const hiopVector&x) const
 double VectorSpace::norm_complementarity(const hiopVector& x) const
 {
   if(nlp_->useWeightedVectorSpace()) {
-    // //opt! pre-compute M*1
-    // vec_n_->copyFrom(x);
-    // vec_n_->component_abs();
-    // nlp_->eval_M(*vec_n_, *vec_n2_);
-    // vec_n_->setToConstant(1.);
-    // return vec_n_->dotProductWith(*vec_n2_);
+    // since both x (slacks) and the bound duals are in the same (primal) space, inf norm "is
+    // mesh independent".
     return x.infnorm();
   } else {
     return x.infnorm();
@@ -182,7 +163,6 @@ double VectorSpace::volume() const
     double vol_total = nlp_->m_ineq_low() + nlp_->m_ineq_upp();
     if(nlp_->n_low() > 0 || nlp_->n_upp() > 0) {
       //compute ||1||_M
-      //vec_n_->setToConstant(1.);      
       const double vol_mult_bnds = M_lumped()->onenorm();
       if(nlp_->n_low() > 0) {
         //For weighted Hilbert spaces we assume that if lower bounds are present, they are for all vars
@@ -199,14 +179,14 @@ double VectorSpace::volume() const
   }
 }
 
-// Return vector containing the diagonals of the lumped mass matrix, possibly creating the internal object
+// Return vector with the (diagonals of the) lumped mass matrix, possibly creating the internal object
 const hiopVector* VectorSpace::M_lumped() const
 {
   if(M_lump_ == nullptr) {
     M_lump_ = nlp_->alloc_primal_vec();
     if(nlp_->useWeightedVectorSpace()) {    
       vec_n_->setToConstant(1.);
-      apply_M(*vec_n_, *M_lump_);
+      nlp_->eval_M(*vec_n_, *M_lump_);
     } else {
       M_lump_->setToConstant(1.);
     }
