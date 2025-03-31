@@ -196,77 +196,12 @@ void hiopIterate::setEqualityDualsToConstant(const double& v)
   yd->setToConstant(v);
 }
 
-// double hiopIterate::normOneOfBoundDuals() const
-// {
-// #ifdef HIOP_DEEPCHECKS
-//   assert(zl->matchesPattern(nlp->get_ixl()));
-//   assert(zu->matchesPattern(nlp->get_ixu()));
-//   assert(vl->matchesPattern(nlp->get_idl()));
-//   assert(vu->matchesPattern(nlp->get_idu()));
-// #endif
-//   // work locally with all the vectors. This will result in only one MPI_Allreduce call instead of two.
-//   double nrm1 = zl->onenorm_local() + zu->onenorm_local();
-// #ifdef HIOP_USE_MPI
-//   double nrm1_global;
-//   int ierr = MPI_Allreduce(&nrm1, &nrm1_global, 1, MPI_DOUBLE, MPI_SUM, nlp->get_comm());
-//   assert(MPI_SUCCESS == ierr);
-//   nrm1 = nrm1_global;
-// #endif
-//   nrm1 += vl->onenorm_local() + vu->onenorm_local();
-//   return nrm1;
-// }
-
-// double hiopIterate::normOneOfEqualityDuals() const
-// {
-// #ifdef HIOP_DEEPCHECKS
-//   assert(zl->matchesPattern(nlp->get_ixl()));
-//   assert(zu->matchesPattern(nlp->get_ixu()));
-//   assert(vl->matchesPattern(nlp->get_idl()));
-//   assert(vu->matchesPattern(nlp->get_idu()));
-// #endif
-//   // work locally with all the vectors. This will result in only one MPI_Allreduce call instead of two.
-//   double nrm1 = zl->onenorm_local() + zu->onenorm_local();
-// #ifdef HIOP_USE_MPI
-//   double nrm1_global;
-//   int ierr = MPI_Allreduce(&nrm1, &nrm1_global, 1, MPI_DOUBLE, MPI_SUM, nlp->get_comm());
-//   assert(MPI_SUCCESS == ierr);
-//   nrm1 = nrm1_global;
-// #endif
-//   nrm1 += vl->onenorm_local() + vu->onenorm_local() + yc->onenorm_local() + yd->onenorm_local();
-//   return nrm1;
-// }
-
-// void hiopIterate::normOneOfDuals(double& nrm1Eq, double& nrm1Bnd) const
-// {
-// #ifdef HIOP_DEEPCHECKS
-//   assert(zl->matchesPattern(nlp->get_ixl()));
-//   assert(zu->matchesPattern(nlp->get_ixu()));
-//   assert(vl->matchesPattern(nlp->get_idl()));
-//   assert(vu->matchesPattern(nlp->get_idu()));
-// #endif
-//   // work locally with all the vectors. This will result in only one MPI_Allreduce call
-//   nrm1Bnd = zl->onenorm_local() + zu->onenorm_local();
-// #ifdef HIOP_USE_MPI
-//   double nrm1_global;
-//   int ierr = MPI_Allreduce(&nrm1Bnd, &nrm1_global, 1, MPI_DOUBLE, MPI_SUM, nlp->get_comm());
-//   assert(MPI_SUCCESS == ierr);
-//   nrm1Bnd = nrm1_global;
-// #endif
-//   nrm1Bnd += vl->onenorm_local() + vu->onenorm_local();
-//   nrm1Eq = yc->onenorm_local() + yd->onenorm_local();
-
-//   nlp->log->printf(hovWarning,
-//               "sc=--- sd=--- volume_n=--- nrm zl=%12.5e zu=%12.5e vl=%12.5e vu=%12.5e  yc=%12.5e yd=%12.5e\n",
-//                    zl->onenorm(), zu->onenorm(), vl->onenorm(), vu->onenorm(), yc->onenorm(), yd->onenorm());
-
-// }
-
 /// @brief Computes scaling factors sc and sd; also returns the "norms" of duals
 bool hiopIterate::compute_sc_sd(double& sc, double& sd, double& nrmDualsEq, double& nrmDualsBou) const
 {
-  const auto nrmzl = nlp->inner_prod()->norm_M_one(*zl);
-  const auto nrmzu = nlp->inner_prod()->norm_M_one(*zu);
-  const auto volume_n = nlp->inner_prod()->volume();
+  const auto nrmzl = nlp->vec_space()->norm_M_one(*zl);
+  const auto nrmzu = nlp->vec_space()->norm_M_one(*zu);
+  const auto volume_n = nlp->vec_space()->volume();
   const auto nrmvl = vl->onenorm_local();
   const auto nrmvu = vu->onenorm_local();
   nrmDualsBou = nrmzl + nrmzu + nrmvl + nrmvu;
@@ -278,7 +213,7 @@ bool hiopIterate::compute_sc_sd(double& sc, double& sd, double& nrmDualsEq, doub
   nrmDualsEq = nrmyc+nrmyd;
   sd = (nrmDualsBou+nrmDualsEq)/(volume_n+volume_m);
 
-  nlp->log->printf(hovWarning,
+  nlp->log->printf(hovScalars,
               "sc=%g sd=%g volume_n=%12.5e norms zl=%12.5e zu=%12.5e vl=%12.5e vu=%12.5e yc=%12.5e yd=%12.5e\n",
                    sc, sd, volume_n, nrmzl, nrmzu, nrmvl, nrmvu, nrmyc, nrmyd);
   return true;
@@ -568,11 +503,8 @@ bool hiopIterate::adjustDuals_primalLogHessian(const double& mu, const double& k
 
 double hiopIterate::evalLogBarrier() const
 {
-  double barrier;
-  //barrier = sxl->logBarrier_local(nlp->get_ixl());
-  //barrier += sxu->logBarrier_local(nlp->get_ixu());
-  barrier = nlp->inner_prod()->log_barrier_eval_local(*sxl, nlp->get_ixl());
-  barrier += nlp->inner_prod()->log_barrier_eval_local(*sxu, nlp->get_ixu());
+  auto barrier = nlp->vec_space()->log_barrier_eval_local(*sxl, nlp->get_ixl());
+  barrier += nlp->vec_space()->log_barrier_eval_local(*sxu, nlp->get_ixu());
 #ifdef HIOP_USE_MPI
   double res;
   int ierr = MPI_Allreduce(&barrier, &res, 1, MPI_DOUBLE, MPI_SUM, nlp->get_comm());
@@ -590,8 +522,8 @@ void hiopIterate::addLogBarGrad_x(const double& mu, hiopVector& gradx) const
   // gradx = grad - mu / sxl = grad - mu * select/sxl
   //gradx.addLogBarrierGrad(-mu, *sxl, nlp->get_ixl());
   //gradx.addLogBarrierGrad(mu, *sxu, nlp->get_ixu());
-  nlp->inner_prod()->log_barrier_grad_add(-mu, *sxl, nlp->get_ixl(), gradx);
-  nlp->inner_prod()->log_barrier_grad_add( mu, *sxu, nlp->get_ixu(), gradx);
+  nlp->vec_space()->log_barrier_grad_add(-mu, *sxl, nlp->get_ixl(), gradx);
+  nlp->vec_space()->log_barrier_grad_add( mu, *sxu, nlp->get_ixu(), gradx);
 }
 
 void hiopIterate::addLogBarGrad_d(const double& mu, hiopVector& gradd) const
@@ -602,11 +534,10 @@ void hiopIterate::addLogBarGrad_d(const double& mu, hiopVector& gradd) const
 
 double hiopIterate::linearDampingTerm(const double& mu, const double& kappa_d) const
 {
-  //double term;
   //term = sxl->linearDampingTerm_local(nlp->get_ixl(), nlp->get_ixu(), mu, kappa_d);
   //term += sxu->linearDampingTerm_local(nlp->get_ixu(), nlp->get_ixl(), mu, kappa_d);
-  double term = nlp->inner_prod()->linear_damping_term_local(*sxl, nlp->get_ixl(), nlp->get_ixu(), mu, kappa_d);
-  term += nlp->inner_prod()->linear_damping_term_local(*sxu, nlp->get_ixu(), nlp->get_ixl(), mu, kappa_d);
+  double term = nlp->vec_space()->linear_damping_term_local(*sxl, nlp->get_ixl(), nlp->get_ixu(), mu, kappa_d);
+  term += nlp->vec_space()->linear_damping_term_local(*sxu, nlp->get_ixu(), nlp->get_ixl(), mu, kappa_d);
 #ifdef HIOP_USE_MPI
   double res;
   int ierr = MPI_Allreduce(&term, &res, 1, MPI_DOUBLE, MPI_SUM, nlp->get_comm());
@@ -628,7 +559,7 @@ void hiopIterate::addLinearDampingTermToGrad_x(const double& mu,
 
   const double ct = kappa_d * mu * beta;
   //grad_x.addLinearDampingTerm(nlp->get_ixl(), nlp->get_ixu(), 1.0, ct);
-  nlp->inner_prod()->add_linear_damping_term(nlp->get_ixl(), nlp->get_ixu(), ct, grad_x);
+  nlp->vec_space()->add_linear_damping_term(nlp->get_ixl(), nlp->get_ixu(), ct, grad_x);
 }
 
 void hiopIterate::addLinearDampingTermToGrad_d(const double& mu,

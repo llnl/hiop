@@ -66,7 +66,7 @@
 #endif
 
 #include "hiopNlpTransforms.hpp"
-#include "InnerProduct.hpp"
+#include "VectorSpace.hpp"
 #include "hiopRunStats.hpp"
 #include "hiopLogger.hpp"
 #include "hiopOptions.hpp"
@@ -129,7 +129,7 @@ public:
   /* Wrapper over user-defined inverse of H apply that also applies the NLP transformations. */
   bool eval_H_inv(const hiopVector& x, hiopVector& y); 
 
-  VectorSpace const* inner_prod() const
+  VectorSpace const* vec_space() const
   {
     return vec_space_;
   }

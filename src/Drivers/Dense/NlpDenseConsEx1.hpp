@@ -292,7 +292,7 @@ public:
   /**
    * Enables the use of weighted inner products via @applyM, @applyH, and @applyHinv
    */
-  virtual bool useWeightedInnerProducts()
+  virtual bool useWeightedVectorSpace()
   {
     return use_weighted_space_;
   }

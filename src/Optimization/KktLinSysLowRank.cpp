@@ -100,7 +100,7 @@ bool KktLinSysLowRank::update(const hiopIterate* iter,
   Dx_->setToZero();
   Dx_->axdzpy_w_pattern(1.0, *iter_->zl, *iter_->sxl, nlp_->get_ixl());
   Dx_->axdzpy_w_pattern(1.0, *iter_->zu, *iter_->sxu, nlp_->get_ixu());
-  Dx_->componentMult(*nlp_->inner_prod()->M_lumped());
+  Dx_->componentMult(*nlp_->vec_space()->M_lumped());
   nlp_->log->write("Dx in KKT", *Dx_, hovMatrices);
 
   hess_low_rank->update_logbar_diag(*Dx_);

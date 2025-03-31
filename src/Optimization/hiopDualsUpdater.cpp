@@ -280,7 +280,7 @@ bool hiopDualsLsqUpdateLinsysRedDense::do_lsq_update(hiopIterate& iter,
   //vecx.axpy(1.0, *iter.get_zu());
   vecx.copyFrom(*iter.get_zu());
   vecx.axpy(-1.0, *iter.get_zl());
-  vecx.componentMult(*nlp_->inner_prod()->M_lumped());
+  vecx.componentMult(*nlp_->vec_space()->M_lumped());
   vecx.axpy(1.0, grad_f);
   hiopVector& vecd = *vec_mi_;
   vecd.copyFrom(*iter.get_vl());

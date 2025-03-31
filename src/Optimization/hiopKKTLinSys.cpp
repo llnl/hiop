@@ -104,7 +104,7 @@ double hiopKKTLinSys::errorKKT(const hiopResidual* resid, const hiopIterate* sol
   //hiopVector* RX = resid->rx->new_copy();
   hiopVector* RX = sol->zl->new_copy();
   RX->axpy(-1.0, *sol->zu);
-  RX->componentMult(*nlp_->inner_prod()->M_lumped());
+  RX->componentMult(*nlp_->vec_space()->M_lumped());
   RX->axpy(1.0, *resid->rx);
 
   HessianTimesVec_noLogBarrierTerm(1.0, *RX, -1.0, *sol->x);
@@ -646,7 +646,7 @@ bool hiopKKTLinSysCompressedXYcYd::computeDirections(const hiopResidual* resid, 
     rx2.axdzpy_w_pattern(-1.0, ru, *iter_->sxu, nlp_->get_ixu());
   }
   if(nlp_->n_low_local() > 0 || nlp_->n_upp_local() > 0) {
-    rx2.componentMult(*nlp_->inner_prod()->M_lumped());
+    rx2.componentMult(*nlp_->vec_space()->M_lumped());
     rx_tilde_->axpy(1.0, rx2);
   }
 
@@ -1223,7 +1223,7 @@ bool hiopMatVecKKTFullOpr::times_vec(hiopVector& yvec, const hiopVector& xvec)
   // rx = H*dx + delta_wx*I*dx + Jc'*dyc + Jd'*dyd - dzl + dzu
   yrx_->copyFrom(*dzu_);
   yrx_->axpy(-1.0, *dzl_);
-  yrx_->componentMult(*kkt_->nlp_->inner_prod()->M_lumped());
+  yrx_->componentMult(*kkt_->nlp_->vec_space()->M_lumped());
   Hess->timesVec(1.0, *yrx_, +1.0, *dx_);
   yrx_->axzpy(1., *delta_wx, *dx_);
   Jac_c->transTimesVec(1.0, *yrx_, 1.0, *dyc_);
@@ -1386,13 +1386,13 @@ bool hiopMatVecKKTFullOpr::trans_times_vec(hiopVector& yvec, const hiopVector& x
   // RXL = -dx + Sxl*dsxl
   yrsxl_->setToZero();
   //yrsxl_->axpy(-1.0, *dx_);
-  yrsxl_->axzpy(-1.0, *dx_, *kkt_->nlp_->inner_prod()->M_lumped());
+  yrsxl_->axzpy(-1.0, *dx_, *kkt_->nlp_->vec_space()->M_lumped());
   yrsxl_->axzpy(1.0, *iter_->get_sxl(), *dsxl_);
   yrsxl_->selectPattern(kkt_->nlp_->get_ixl());
 
   // RXU = dx + Sxu*dsxu
   yrsxu_->copyFrom(*dx_);
-  yrsxu_->componentMult(*kkt_->nlp_->inner_prod()->M_lumped());
+  yrsxu_->componentMult(*kkt_->nlp_->vec_space()->M_lumped());
   yrsxu_->axzpy(1.0, *iter_->get_sxu(), *dsxu_);
   yrsxu_->selectPattern(kkt_->nlp_->get_ixu());
 

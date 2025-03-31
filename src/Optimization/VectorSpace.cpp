@@ -52,8 +52,7 @@
  *
  */
 
-
-#include "InnerProduct.hpp"
+#include "VectorSpace.hpp"
 #include "hiopNlpFormulation.hpp"
 
 namespace hiop

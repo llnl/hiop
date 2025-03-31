@@ -241,7 +241,7 @@ bool HessianDiagPlusRowRank::update_logbar_diag(const hiopVector& Dx)
 {
   // DhInv = (B0+Dx)^{-1}
   //DhInv_->setToConstant(sigma_);
-  const hiopVector& B0 = *nlp_->inner_prod()->M_lumped();
+  const hiopVector& B0 = *nlp_->vec_space()->M_lumped();
   DhInv_->copyFrom(B0);
   DhInv_->scale(sigma_);
   DhInv_->axpy(1.0, Dx);
@@ -322,8 +322,8 @@ bool HessianDiagPlusRowRank::update(const hiopIterate& it_curr,
       Jac_d_prev_->transTimesVec(1.0, y_new, -1.0, *it_curr.yd);
 
       const double sTy = s_new.dotProductWith(y_new);
-      const double s_nrm2 = nlp_->inner_prod()->norm_M(s_new);//s_new.twonorm();
-      const double y_nrm2 = nlp_->inner_prod()->norm_H_dual(y_new);//y_new.twonorm();
+      const double s_nrm2 = nlp_->vec_space()->norm_H_primal(s_new);//s_new.twonorm();
+      const double y_nrm2 = nlp_->vec_space()->norm_H_dual(y_new);//y_new.twonorm();
 
       nlp_->log->printf(hovWarning, //hovLinAlgScalarsVerb,
                         "sigma HessianDiagPlusRowRank: s^T*y=%20.14e ||s||=%20.14e ||y||=%20.14e ||s||_inf=%20.14e\n",
@@ -463,7 +463,7 @@ void HessianDiagPlusRowRank::updateInternalBFGSRepresentation()
 
   //-- block (1,2)
   hiopMatrixDense& StB0DhInvYmL = DpYtDhInvY;  // just a rename
-  const hiopVector& B0 = *nlp_->inner_prod()->M_lumped();
+  const hiopVector& B0 = *nlp_->vec_space()->M_lumped();
   hiopVector& B0DhInv = new_n_vec1(n);
   B0DhInv.copyFrom(*DhInv_);
   B0DhInv.scale(sigma_);
@@ -562,7 +562,7 @@ void HessianDiagPlusRowRank::solve(const hiopVector& rhsx, hiopVector& x)
   hiopVector& B0DhInvx = new_n_vec1(n);
   B0DhInvx.copyFrom(x);    // it contains DhInv*res
   B0DhInvx.scale(sigma_);  // B0*(DhInv*res)
-  const hiopVector& B0 = *nlp_->inner_prod()->M_lumped();
+  const hiopVector& B0 = *nlp_->vec_space()->M_lumped();
   B0DhInvx.componentMult(B0);
     
   St_->timesVec(0.0, stx, 1.0, B0DhInvx);
@@ -629,7 +629,7 @@ void HessianDiagPlusRowRank::sym_mat_times_inverse_times_mattrans(double beta,
   auto& Y1 = new_Y1(X, *Yt_);  // both are kxl
   hiopVector& B0DhInv = new_n_vec1(n);
   B0DhInv.copyFrom(*DhInv_);
-  const hiopVector& B0 = *nlp_->inner_prod()->M_lumped();
+  const hiopVector& B0 = *nlp_->vec_space()->M_lumped();
   B0DhInv.scale(sigma_);
   B0DhInv.componentMult(B0);
   mat_times_diag_times_mattrans_local(S1, X, B0DhInv, *St_);
@@ -1078,7 +1078,7 @@ void HessianDiagPlusRowRank::times_vec_common(double beta,
 
   // we have B+=B-B*s*B*s'/(s'*B*s)+yy'/(y'*s)
   // B0 is sigma*I. There is an additional diagonal log-barrier term Dx_
-  const hiopVector& B0 = *nlp_->inner_prod()->M_lumped();
+  const hiopVector& B0 = *nlp_->vec_space()->M_lumped();
   
   bool print = false;
   if(print) {

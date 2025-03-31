@@ -177,16 +177,11 @@ int hiopResidual::update(const hiopIterate& it,
   assert(it.sxu->matchesPattern(nlp->get_ixu()));
 #endif
   // rx = -grad_f - J_c^t*x - J_d^t*x+M*zl-M*zu - linear damping term in x
-  //rx->copyFrom(grad);
-  //jac_c.transTimesVec(1.0, *rx, 1.0, *it.yc);
-  //jac_d.transTimesVec(1.0, *rx, 1.0, *it.yd);
-  //rx->axpy(-1.0, *it.zl);
-  //rx->axpy(1.0, *it.zu);
 
   //using rxl as auxiliary variable to compute -M*zl+M*zu
   rxl->copyFrom(*it.zu);
   rxl->axpy(-1.0, *it.zl);
-  nlp->inner_prod()->apply_M_lumped(*rxl, *rx);
+  nlp->vec_space()->apply_M_lumped(*rxl, *rx);
   //continue adding to rx
   jac_c.transTimesVec(1.0, *rx, 1.0, *it.yc);
   jac_d.transTimesVec(1.0, *rx, 1.0, *it.yd);
@@ -195,17 +190,17 @@ int hiopResidual::update(const hiopIterate& it,
   //nlp->log->write("rx w/o log terms:", *rx, hovWarning);
   
   //buf = rx->infnorm_local();
-  buf = nlp->inner_prod()->norm_stationarity(*rx);
+  buf = nlp->vec_space()->norm_stationarity(*rx);
   nrmInf_nlp_optim = fmax(nrmInf_nlp_optim, buf);
   //nrmOne_nlp_optim += rx->onenorm();
-  nrmOne_nlp_optim += nlp->inner_prod()->norm_M_one(*rx);
+  nrmOne_nlp_optim += nlp->vec_space()->norm_M_one(*rx);
   nlp->log->printf(hovScalars, "NLP resid [update]: inf norm rx=%22.17e\n", buf);
   logprob.addNonLogBarTermsToGrad_x(1.0, *rx);
   rx->negate();
   //nrmInf_bar_optim = fmax(nrmInf_bar_optim, rx->infnorm_local());
   //nrmOne_bar_optim += rx->onenorm();
-  nrmInf_bar_optim = fmax(nrmInf_bar_optim, nlp->inner_prod()->norm_stationarity(*rx));
-  nrmOne_bar_optim += nlp->inner_prod()->norm_M_one(*rx);
+  nrmInf_bar_optim = fmax(nrmInf_bar_optim, nlp->vec_space()->norm_stationarity(*rx));
+  nrmOne_bar_optim += nlp->vec_space()->norm_M_one(*rx);
 
   //nlp->log->write("rx with log terms:", *rx, hovWarning);
   
@@ -318,12 +313,12 @@ int hiopResidual::update(const hiopIterate& it,
       rszl->selectPattern(nlp->get_ixl());
     }
     // nrmInf_nlp_complem = fmax(nrmInf_nlp_complem, rszl->infnorm_local());
-    buf = nlp->inner_prod()->norm_complementarity(*rszl);
+    buf = nlp->vec_space()->norm_complementarity(*rszl);
     nrmInf_nlp_complem = fmax(nrmInf_nlp_complem, buf);
     
     rszl->addConstant_w_patternSelect(mu, nlp->get_ixl());
     //buf = rszl->infnorm_local();
-    buf = nlp->inner_prod()->norm_complementarity(*rszl);
+    buf = nlp->vec_space()->norm_complementarity(*rszl);
     nrmInf_bar_complem = fmax(nrmInf_bar_complem, buf);
     nlp->log->printf(hovScalars, "NLP resid [update]: inf norm rszl=%22.17e\n", buf);
   }
@@ -336,12 +331,12 @@ int hiopResidual::update(const hiopIterate& it,
     }
 
     //buf = rszu->infnorm_local();
-    buf = nlp->inner_prod()->norm_complementarity(*rszu);
+    buf = nlp->vec_space()->norm_complementarity(*rszu);
     nrmInf_nlp_complem = fmax(nrmInf_nlp_complem, buf);
 
     rszu->addConstant_w_patternSelect(mu, nlp->get_ixu());
     //buf = rszu->infnorm_local();
-    buf = nlp->inner_prod()->norm_complementarity(*rszu);
+    buf = nlp->vec_space()->norm_complementarity(*rszu);
     nrmInf_bar_complem = fmax(nrmInf_bar_complem, buf);
     nlp->log->printf(hovScalars, "NLP resid [update]: inf norm rszu=%22.17e\n", buf);
   }
@@ -489,21 +484,21 @@ void hiopResidual::update_soc(const hiopIterate& it,
   //using rxl as auxiliary variable to compute -M*zl+M*zu
   rxl->copyFrom(*it.zu);
   rxl->axpy(-1.0, *it.zl);
-  nlp->inner_prod()->apply_M_lumped(*rxl, *rx);
+  nlp->vec_space()->apply_M_lumped(*rxl, *rx);
   //continue adding to rx
   jac_c.transTimesVec(1.0, *rx, 1.0, *it.yc);
   jac_d.transTimesVec(1.0, *rx, 1.0, *it.yd);
   rx->axpy(1.0, grad);
 
   //buf = rx->infnorm_local();
-  buf = nlp->inner_prod()->norm_stationarity(*rx);
+  buf = nlp->vec_space()->norm_stationarity(*rx);
   nrmInf_nlp_optim = fmax(nrmInf_nlp_optim, buf);
-    nrmOne_nlp_optim += nlp->inner_prod()->norm_M_one(*rx);
+    nrmOne_nlp_optim += nlp->vec_space()->norm_M_one(*rx);
   nlp->log->printf(hovScalars, "NLP resid [update_soc]: inf norm rx=%22.17e\n", buf);
   logprob.addNonLogBarTermsToGrad_x(1.0, *rx);
   rx->negate();
-  nrmInf_bar_optim = fmax(nrmInf_bar_optim, nlp->inner_prod()->norm_stationarity(*rx));
-  nrmOne_bar_optim += nlp->inner_prod()->norm_M_one(*rx);
+  nrmInf_bar_optim = fmax(nrmInf_bar_optim, nlp->vec_space()->norm_stationarity(*rx));
+  nrmOne_bar_optim += nlp->vec_space()->norm_M_one(*rx);
 
   // rd
   rd->copyFrom(*it.yd);
@@ -591,11 +586,11 @@ void hiopResidual::update_soc(const hiopIterate& it,
     if(nlp->n_low_local() < nx_loc) {
       rszl->selectPattern(nlp->get_ixl());
     }
-    buf = nlp->inner_prod()->norm_complementarity(*rszl);
+    buf = nlp->vec_space()->norm_complementarity(*rszl);
     nrmInf_nlp_complem = fmax(nrmInf_nlp_complem, buf);
 
     rszl->addConstant_w_patternSelect(mu, nlp->get_ixl());
-    buf = nlp->inner_prod()->norm_complementarity(*rszu);
+    buf = nlp->vec_space()->norm_complementarity(*rszu);
     nrmInf_bar_complem = fmax(nrmInf_bar_complem, buf);
     nlp->log->printf(hovScalars, "NLP resid [update_soc]: inf norm rszl=%22.17e\n", buf);
   }
@@ -607,11 +602,11 @@ void hiopResidual::update_soc(const hiopIterate& it,
       rszu->selectPattern(nlp->get_ixu());
     }
 
-    buf = nlp->inner_prod()->norm_complementarity(*rszu);
+    buf = nlp->vec_space()->norm_complementarity(*rszu);
     nrmInf_nlp_complem = fmax(nrmInf_nlp_complem, buf);
 
     rszu->addConstant_w_patternSelect(mu, nlp->get_ixu());
-    buf = nlp->inner_prod()->norm_complementarity(*rszu);
+    buf = nlp->vec_space()->norm_complementarity(*rszu);
     nrmInf_bar_complem = fmax(nrmInf_bar_complem, buf);
     nlp->log->printf(hovScalars, "NLP resid [update_soc]: inf norm rszu=%22.17e\n", buf);
   }

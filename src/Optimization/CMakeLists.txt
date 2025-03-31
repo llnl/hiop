@@ -9,7 +9,7 @@ set(hiopOptimization_SRC
   KktLinSysLowRank.cpp
   hiopKKTLinSysMDS.cpp 
   HessianDiagPlusRowRank.cpp
-  InnerProduct.cpp
+  VectorSpace.cpp
   hiopDualsUpdater.cpp 
   hiopNlpTransforms.cpp
   hiopPDPerturbation.cpp
@@ -30,7 +30,7 @@ set(hiopOptimization_INTERFACE_HEADERS
   hiopFactAcceptor.hpp
   hiopFilter.hpp
   HessianDiagPlusRowRank.hpp
-  InnerProduct.hpp
+  VectorSpace.hpp
   hiopIterate.hpp
   hiopKKTLinSys.hpp
   hiopKKTLinSysDense.hpp

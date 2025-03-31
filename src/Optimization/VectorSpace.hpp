@@ -46,14 +46,14 @@
 // product endorsement purposes.
 
 /**
- * @file InnerProduct.hpp
+ * @file VectorSpace.hpp
  *
  * @author Cosmin G. Petra <petra1@llnl.gov>, LLNL
  *
  */
 
-#ifndef HIOP_NLP_INNERPROD
-#define HIOP_NLP_INNERPROD
+#ifndef HIOP_NLP_VECSPACE
+#define HIOP_NLP_VECSPACE
 
 #include "hiopVector.hpp"
 

@@ -54,7 +54,6 @@
  */
 
 #include "hiopNlpFormulation.hpp"
-#include "InnerProduct.hpp"
 #include "HessianDiagPlusRowRank.hpp"
 #include "hiopVector.hpp"
 #include "LinAlgFactory.hpp"
@@ -777,7 +776,7 @@ bool hiopNlpFormulation::eval_M(const hiopVector& x, hiopVector& y)
   // simultaneously, or create y_full here use apply_inv_to_x with copying from the return to y_full
   hiopVector* y_full = &y;
   assert(x_full->get_size() == y.get_size() &&
-         "weighted inner products not supported when fixed variables are removed");
+         "weighted vector spaces not supported when fixed variables are removed");
   
   runStats.tm_eval_M_apply.start();
   bool bret = interface_base.applyM(nlp_transformations_.n_pre(),
@@ -800,7 +799,7 @@ bool hiopNlpFormulation::eval_H(const hiopVector& x, hiopVector& y)
   // TODO: see notes from eval_M
   hiopVector* y_full = &y;
   assert(x_full->get_size() == y.get_size() &&
-         "weighted inner products not supported when fixed variables are removed");
+         "weighted vector spaces not supported when fixed variables are removed");
 
   runStats.tm_eval_H_apply.start();
   bool bret = interface_base.applyH(nlp_transformations_.n_pre(),
@@ -821,7 +820,7 @@ bool hiopNlpFormulation::eval_H_inv(const hiopVector& x, hiopVector& y)
   // TODO: see notes from eval_M
   hiopVector* y_full = &y;
   assert(x_full->get_size() == y.get_size() &&
-         "weighted inner products not supported when fixed variables are removed");
+         "weighted vector spaces not supported when fixed variables are removed");
 
   runStats.tm_eval_Hinv_apply.start();
   bool bret = interface_base.applyHinv(nlp_transformations_.n_pre(),
