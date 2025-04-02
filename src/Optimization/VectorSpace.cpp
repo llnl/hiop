@@ -79,16 +79,6 @@ VectorSpace::~VectorSpace()
   delete M_lump_;
 }
 
-//bool VectorSpace::apply_M(const hiopVector& x, hiopVector& y) const
-//{
-//  if(nlp_->get_weighted_space_type()) {
-//    return nlp_->eval_M(x, y);
-//  } else {
-//    y.copyFrom(x);
-//    return true;
-//  }
-//}
-
 // Applies lumped mass matrix;
 bool VectorSpace::apply_M_lumped(const hiopVector& x, hiopVector& y) const
 {
@@ -100,23 +90,35 @@ bool VectorSpace::apply_M_lumped(const hiopVector& x, hiopVector& y) const
 // Computes H primal norm
 double VectorSpace::norm_H_primal(const hiopVector& x) const
 {
-  if(nlp_->get_weighted_space_type()) {      
+  if(hiopInterfaceBase::Hilbert==nlp_->get_weighted_space_type()) {
     nlp_->eval_H(x, *vec_n_);
     auto dp = x.dotProductWith(*vec_n_);
     return ::std::sqrt(dp);
+  } if(hiopInterfaceBase::HilbertLumped==nlp_->get_weighted_space_type()) {
+    apply_M_lumped(x, *vec_n_);
+    auto dp = x.dotProductWith(*vec_n_);
+    return ::std::sqrt(dp);
   } else {
+    assert(hiopInterfaceBase::Euclidean==nlp_->get_weighted_space_type());
     return x.twonorm();
   }
 }
 // Computes H dual norm
 double VectorSpace::norm_H_dual(const hiopVector& x) const
 {
-  if(nlp_->get_weighted_space_type()) {      
+  if(hiopInterfaceBase::Hilbert==nlp_->get_weighted_space_type()) {      
     nlp_->eval_H_inv(x, *vec_n_);
     auto dp = x.dotProductWith(*vec_n_);
     return ::std::sqrt(dp);
   } else {
-    return x.twonorm();
+    if(hiopInterfaceBase::HilbertLumped==nlp_->get_weighted_space_type()) {
+      vec_n_->copyFrom(x);
+      vec_n_->componentDiv(*M_lumped());
+      auto dp = x.dotProductWith(*vec_n_);                                                                                               return ::std::sqrt(dp); 
+    } else {
+      assert(hiopInterfaceBase::Euclidean==nlp_->get_weighted_space_type());
+      return x.twonorm();
+    }
   }
 }
 
