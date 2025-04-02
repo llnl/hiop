@@ -61,7 +61,7 @@
 
 namespace hiop
 {
-/** Solver status codes. */
+// Solver status codes
 enum hiopSolveStatus
 {
   //(partial) success
@@ -141,6 +141,24 @@ public:
     hiopLinear = 0,
     hiopQuadratic,
     hiopNonlinear
+  };
+  /**
+   * Type of weighting to be used internally for computing norm and inner products, for determining
+   * representations of dual bound variables, and initial quasi-Newton Hessian approximations.
+   */
+  enum WeightedSpaceType
+  {
+    // no weighted space.
+    Euclidean = 0,
+    
+    // lumps mass matrix and uses lumped matrix everywhere
+    HilbertLumped,
+    
+    /**
+     * Experimental: lumps mass matrix and uses for dual bound representers and initial Hessian
+     * approximations, however, uses H and H-inverse norms in termination criteria
+     */
+    Hilbert
   };
 
 public:
@@ -288,17 +306,17 @@ public:
    * mesh independent performance of the algorithm. Currently M is lumped into a diagonal
    * and used internally for the abovementioned dual variables.
    *
-   * @note If the variables are not coming from discretizations (specified by a false 
-   * value returned by @useWeightedVectorSpace), the methods should return false. HiOp 
-   * will use internally M=I. Otherwise, should return true or false depending on whether 
-   * the user code succesfully applied M. 
+   * @note If the variables are not coming from discretizations (specified by 
+   * a hiopInterfaceBase::Euclidean return value from @get_weighted_space_type), the method is
+   * not called and HiOp will use internally M=I. Otherwise, should true or false depending 
+   * on whether the user code succesfully applied M. 
    *
    * @param[in] n the (global) number of variables
    * @param[in] x the array to which mass action is applied
    * @param[out] y the result of apply
    * @return see note above.
    */
-  virtual bool applyM(const size_type& n, const double* x, double* y)
+  virtual bool apply_M(const size_type& n, const double* x, double* y)
   {
     return true;
   }
@@ -316,10 +334,9 @@ public:
    * interior-point method for PDE-constrained optimization using finite element 
    * discretizations, Optimiz. Meth. and Software, Vol. 38, 2023.
    *
-   * @note If the variables are not coming from discretizations (specified by a false 
-   * value returned by @useWeightedVectorSpace), the methods should return false. HiOp 
-   * will use internally H=I. Otherwise, should return true or false depending on whether 
-   * the user code succesfully applied H.
+   * @note The method is called only when hiopInterfaceBase::Hilbert is returned by 
+   * @get_weighted_space_type. In this case, it should return true or false depending on 
+   * whether the user code succesfully applied H.
    * 
    * @note Currently HiOp only uses H for computing the inner products and norms (including
    * for vector representations of duals discretizations). The lumped mass matrix M is used
@@ -331,7 +348,7 @@ public:
    * @param[out] y the result of apply
    * @return see note above
    */
-  virtual bool applyH(const size_type& n, const double* x, double* y)
+  virtual bool apply_H(const size_type& n, const double* x, double* y)
   {
     return true;
   }
@@ -339,31 +356,38 @@ public:
   /**
    * Computes action y of the inverse of H on a vector x, namely y=H^{-1}*x
    *
-   * See @applyH for a discussion of H and additional notes. The inverse of H plays an
+   * See @apply_H for a discussion of H and additional notes. The inverse of H plays an
    * important role in computing the "dual" norms and, in turn, to ensure mesh
-   * independent behavior of the IPM solver(s). Also see notes from @applyH.
+   * independent behavior of the IPM solver(s). Also see notes from @apply_H.
    *
    * @param[in] n the (global) number of variables
    * @param[in] x the array to which the inverse is applied
    * @param[out] y the result of apply
-   * @return see return of @applyH
+   * @return see return of @apply_H
    */
-  virtual bool applyHinv(const size_type& n, const double* x, double* y)
+  virtual bool apply_Hinv(const size_type& n, const double* x, double* y)
   {
     return true;
   }
 
   /**
-   * Enables the use of weighted inner products via @applyM, @applyH, and @applyHinv
+   * Enables the use of weighted inner products via @apply_M, @apply_H, and @apply_Hinv
+   * 
+   * See @WeightedSpaceType for the return values of this function and their meaning. If the
+   * return value is
+   *  - hiopInterfaceBase::Euclidean: @apply_M, @apply_H, and @apply_Hinv need not be overriden by user.
+   * If provided, they are not called.
+   *  - hiopInterfaceBase::HilbertLumped: only @apply_M is called. @apply_H and @apply_Hinv are not.
+   *  - hiopInterfaceBase::Hilbert: @apply_M, @apply_H, and @apply_Hinv are called.
    *
-   * See also notes for @applyM, @applyH, and @applyHinv.
+   * See also notes for @apply_M, @apply_H, and @apply_Hinv.
    *
-   * @return true if enabled, false to default to Euclidean space with <u,v>=u^T*v
+   * @return WeightedSpaceType (see @WeightedSpaceType and notes above
    */
-  virtual bool useWeightedVectorSpace()
+  virtual WeightedSpaceType get_weighted_space_type()
   {
     //the default impl. instructs HiOp to use Euclidean/l^2 variables (H=I) internally
-    return false;
+    return Euclidean;
   }
   
   /**

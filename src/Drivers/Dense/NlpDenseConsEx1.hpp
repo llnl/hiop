@@ -112,10 +112,10 @@ protected:
 class DenseConsEx1 : public hiop::hiopInterfaceDenseConstraints
 {
 public:
-  DenseConsEx1(int n_mesh_elem, double mesh_ratio=1.0, bool use_weighted_vars=false)
+  DenseConsEx1(int n_mesh_elem, double mesh_ratio=1.0, int type_weighted_vars=0)
       : n_vars(n_mesh_elem),
         comm(MPI_COMM_WORLD),
-        use_weighted_space_(use_weighted_vars),
+        type_weighted_space_((hiopInterfaceBase::WeightedSpaceType)type_weighted_vars),
         solver_(nullptr)
   {
     // create the members
@@ -259,7 +259,7 @@ public:
                         double alpha_pr,
                         int ls_trials);
   
-  bool applyM(const size_type& n, const double* x_in, double* y_out)
+  bool apply_M(const size_type& n, const double* x_in, double* y_out)
   {
     x->copyFrom(x_in);
     _mesh->applyM(*x);
@@ -270,7 +270,7 @@ public:
   /**
    * Computes action y of the inner product weight matrix H on a vector x, namely y=H*x
    */
-  virtual bool applyH(const size_type& n, const double* x_in, double* y_out)
+  virtual bool apply_H(const size_type& n, const double* x_in, double* y_out)
   {
     x->copyFrom(x_in);
     _mesh->applyM(*x);
@@ -281,7 +281,7 @@ public:
   /**
    * Computes action y of the inverse of H on a vector x, namely y=H^{-1}*x
    */
-  virtual bool applyHinv(const size_type& n, const double* x_in, double* y_out)
+  virtual bool apply_Hinv(const size_type& n, const double* x_in, double* y_out)
   {
     x->copyFrom(x_in);
     _mesh->applyMinv(*x);
@@ -290,17 +290,20 @@ public:
   }
 
   /**
-   * Enables the use of weighted inner products via @applyM, @applyH, and @applyHinv
+   * Enables the use of weighted inner products via @apply_M, @apply_H, and @apply_Hinv
    */
-  virtual bool useWeightedVectorSpace()
+  virtual hiopInterfaceBase::WeightedSpaceType get_weighted_space_type()
   {
-    return use_weighted_space_;
+    // return 
+    // - hiopInterfaceBase::Euclidean for no weighted space 
+    // - hiopInterfaceBase::HilbertLumped for space weighted by lumped mass matrix
+    return type_weighted_space_;
   }
 
 private:
   int n_vars;
   MPI_Comm comm;
-  bool use_weighted_space_;
+  hiopInterfaceBase::WeightedSpaceType type_weighted_space_;
   Ex1Meshing1D* _mesh;
 
   int n_local;

@@ -63,7 +63,7 @@ VectorSpace::VectorSpace(hiopNlpFormulation* nlp)
 {
   assert(nlp);
   M_lump_ = nullptr;
-  if(nlp->useWeightedVectorSpace()) {
+  if(nlp->get_weighted_space_type()) {
     vec_n_ = nlp_->alloc_primal_vec();
     vec_n2_ = nlp_->alloc_primal_vec();
   } else {
@@ -81,7 +81,7 @@ VectorSpace::~VectorSpace()
 
 //bool VectorSpace::apply_M(const hiopVector& x, hiopVector& y) const
 //{
-//  if(nlp_->useWeightedVectorSpace()) {
+//  if(nlp_->get_weighted_space_type()) {
 //    return nlp_->eval_M(x, y);
 //  } else {
 //    y.copyFrom(x);
@@ -100,7 +100,7 @@ bool VectorSpace::apply_M_lumped(const hiopVector& x, hiopVector& y) const
 // Computes H primal norm
 double VectorSpace::norm_H_primal(const hiopVector& x) const
 {
-  if(nlp_->useWeightedVectorSpace()) {      
+  if(nlp_->get_weighted_space_type()) {      
     nlp_->eval_H(x, *vec_n_);
     auto dp = x.dotProductWith(*vec_n_);
     return ::std::sqrt(dp);
@@ -111,7 +111,7 @@ double VectorSpace::norm_H_primal(const hiopVector& x) const
 // Computes H dual norm
 double VectorSpace::norm_H_dual(const hiopVector& x) const
 {
-  if(nlp_->useWeightedVectorSpace()) {      
+  if(nlp_->get_weighted_space_type()) {      
     nlp_->eval_H_inv(x, *vec_n_);
     auto dp = x.dotProductWith(*vec_n_);
     return ::std::sqrt(dp);
@@ -122,7 +122,7 @@ double VectorSpace::norm_H_dual(const hiopVector& x) const
 
 double VectorSpace::norm_stationarity(const hiopVector& x) const
 {
-  if(nlp_->useWeightedVectorSpace()) {
+  if(nlp_->get_weighted_space_type()) {
     vec_n_->copyFrom(x);
     vec_n_->componentDiv(*M_lumped());
     return vec_n_->infnorm();
@@ -134,7 +134,7 @@ double VectorSpace::norm_stationarity(const hiopVector& x) const
 // Compute norm one weighted by M, i.e., 1^T*M*|x|
 double VectorSpace::norm_M_one(const hiopVector& x) const
 {
-  if(nlp_->useWeightedVectorSpace()) {
+  if(nlp_->get_weighted_space_type()) {
     //use vec_n2_ since vec_n_ may be changed in M_lumped_
     vec_n2_->copyFrom(x);
     vec_n2_->component_abs();
@@ -147,7 +147,7 @@ double VectorSpace::norm_M_one(const hiopVector& x) const
 
 double VectorSpace::norm_complementarity(const hiopVector& x) const
 {
-  if(nlp_->useWeightedVectorSpace()) {
+  if(nlp_->get_weighted_space_type()) {
     // since both x (slacks) and the bound duals are in the same (primal) space, inf norm "is
     // mesh independent".
     return x.infnorm();
@@ -159,7 +159,7 @@ double VectorSpace::norm_complementarity(const hiopVector& x) const
 // Computes the "volume" of the space, 1^T M*1 
 double VectorSpace::volume() const
 {
-  if(nlp_->useWeightedVectorSpace()) {
+  if(nlp_->get_weighted_space_type()) {
     double vol_total = nlp_->m_ineq_low() + nlp_->m_ineq_upp();
     if(nlp_->n_low() > 0 || nlp_->n_upp() > 0) {
       //compute ||1||_M
@@ -184,7 +184,7 @@ const hiopVector* VectorSpace::M_lumped() const
 {
   if(M_lump_ == nullptr) {
     M_lump_ = nlp_->alloc_primal_vec();
-    if(nlp_->useWeightedVectorSpace()) {    
+    if(nlp_->get_weighted_space_type()) {    
       vec_n_->setToConstant(1.);
       nlp_->eval_M(*vec_n_, *M_lump_);
     } else {
@@ -197,7 +197,7 @@ const hiopVector* VectorSpace::M_lumped() const
 void VectorSpace::
 add_linear_damping_term(const hiopVector& ixl, const hiopVector& ixu, const double& ct, hiopVector& x) const
 {
-  if(nlp_->useWeightedVectorSpace()) {
+  if(nlp_->get_weighted_space_type()) {
     vec_n_->copyFrom(ixl);
     vec_n_->axpy(-1.0, ixu);
     vec_n_->componentMult(*M_lumped());
@@ -209,7 +209,7 @@ add_linear_damping_term(const hiopVector& ixl, const hiopVector& ixu, const doub
 
 double VectorSpace::log_barrier_eval_local(const hiopVector& x, const hiopVector& ix) const
 {
-  if(nlp_->useWeightedVectorSpace()) {
+  if(nlp_->get_weighted_space_type()) {
     return x.logBarrierWeighted_local(ix, *M_lumped());
   } else {
     return x.logBarrier_local(ix);
@@ -219,7 +219,7 @@ double VectorSpace::log_barrier_eval_local(const hiopVector& x, const hiopVector
 // Adds (to `gradx`) the gradient of the weighted log, namely gradx = gradx - mu * M_lumped * ix/s
 void VectorSpace::log_barrier_grad_add(const double& mu, const hiopVector& s, const hiopVector& ix, hiopVector& gradx) const
 {
-  if(nlp_->useWeightedVectorSpace()) {
+  if(nlp_->get_weighted_space_type()) {
     vec_n_->copyFrom(ix);
     vec_n_->componentDiv(s);
     vec_n_->componentMult(*M_lumped());
@@ -235,7 +235,7 @@ double VectorSpace::linear_damping_term_local(const hiopVector& s,
                                               const double& mu,
                                               const double& kappa_d) const
 {
-  if(nlp_->useWeightedVectorSpace()) {
+  if(nlp_->get_weighted_space_type()) {
     vec_n_->copyFrom(s);
     vec_n_->componentMult(*M_lumped());
     return vec_n_->linearDampingTerm_local(ixl, ixr, mu, kappa_d);

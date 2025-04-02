@@ -779,9 +779,9 @@ bool hiopNlpFormulation::eval_M(const hiopVector& x, hiopVector& y)
          "weighted vector spaces not supported when fixed variables are removed");
   
   runStats.tm_eval_M_apply.start();
-  bool bret = interface_base.applyM(nlp_transformations_.n_pre(),
-                                    x_full->local_data_const(),
-                                    y_full->local_data());
+  bool bret = interface_base.apply_M(nlp_transformations_.n_pre(),
+                                     x_full->local_data_const(),
+                                     y_full->local_data());
   runStats.tm_eval_M_apply.stop();
   runStats.n_eval_M_apply++;
 
@@ -802,9 +802,9 @@ bool hiopNlpFormulation::eval_H(const hiopVector& x, hiopVector& y)
          "weighted vector spaces not supported when fixed variables are removed");
 
   runStats.tm_eval_H_apply.start();
-  bool bret = interface_base.applyH(nlp_transformations_.n_pre(),
-                                    x_full->local_data_const(),
-                                    y_full->local_data());
+  bool bret = interface_base.apply_H(nlp_transformations_.n_pre(),
+                                     x_full->local_data_const(),
+                                     y_full->local_data());
   runStats.tm_eval_H_apply.stop();
   runStats.n_eval_H_apply++;
   
@@ -823,9 +823,9 @@ bool hiopNlpFormulation::eval_H_inv(const hiopVector& x, hiopVector& y)
          "weighted vector spaces not supported when fixed variables are removed");
 
   runStats.tm_eval_Hinv_apply.start();
-  bool bret = interface_base.applyHinv(nlp_transformations_.n_pre(),
-                                       x_full->local_data_const(),
-                                       y_full->local_data());
+  bool bret = interface_base.apply_Hinv(nlp_transformations_.n_pre(),
+                                        x_full->local_data_const(),
+                                        y_full->local_data());
   runStats.tm_eval_Hinv_apply.stop();
   runStats.n_eval_Hinv_apply++;
   

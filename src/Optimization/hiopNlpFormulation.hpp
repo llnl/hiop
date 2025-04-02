@@ -118,9 +118,9 @@ public:
   virtual bool eval_Jac_d(hiopVector& x, bool new_x, hiopMatrix& Jac_d) = 0;
   virtual bool eval_Jac_c_d(hiopVector& x, bool new_x, hiopMatrix& Jac_c, hiopMatrix& Jac_d);
 
-  inline bool useWeightedVectorSpace()
+  inline bool get_weighted_space_type()
   {
-    return interface_base.useWeightedVectorSpace();
+    return interface_base.get_weighted_space_type();
   }
   /* Wrapper over user-defined M apply that also applies the NLP transformations. */
   bool eval_M(const hiopVector& x, hiopVector& y);
