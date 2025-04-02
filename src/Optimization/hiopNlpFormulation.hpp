@@ -118,7 +118,7 @@ public:
   virtual bool eval_Jac_d(hiopVector& x, bool new_x, hiopMatrix& Jac_d) = 0;
   virtual bool eval_Jac_c_d(hiopVector& x, bool new_x, hiopMatrix& Jac_c, hiopMatrix& Jac_d);
 
-  inline bool get_weighted_space_type()
+  inline hiopInterfaceBase::WeightedSpaceType get_weighted_space_type()
   {
     return interface_base.get_weighted_space_type();
   }
