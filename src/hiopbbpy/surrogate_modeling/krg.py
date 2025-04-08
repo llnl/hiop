@@ -32,12 +32,12 @@ class smtKRG(GaussianProcess):
 
     def mean(self, x):
         if not self.trained:
-            ValueError("must train kriging model before utilizing it to predict mean or variances")
+            raise ValueError("must train kriging model before utilizing it to predict mean or variances")
         return self.surrogatesmt.predict_values(x)
 
     def variance(self, x):
         if not self.trained:
-            ValueError("must train kriging model before utilizing it to predict mean or variances")
+            raise ValueError("must train kriging model before utilizing it to predict mean or variances")
         return self.surrogatesmt.predict_variances(x)
 
     def train(self, x, y):
@@ -47,7 +47,16 @@ class smtKRG(GaussianProcess):
         self.surrogatesmt.train()
         self.trained = True
 
+    def mean_gradient(self, x: np.ndarray) -> np.ndarray:
+        if not self.trained:
+            raise ValueError("must train kriging model before utilizing it to predict gradient")
+        assert (np.size(x,-1) == self.ndim)
+        gradient = [
+            self.surrogatesmt._predict_derivatives(x, kx) for kx in range(self.ndim) 
+        ]
+        return np.atleast_2d(gradient).T
 
-
-
-
+    def variance_gradient(self, x: np.ndarray) -> np.ndarray:
+        if not self.trained:
+            raise ValueError("must train kriging model before utilizing it to predict gradient")
+        return self.surrogatesmt.predict_variance_gradient(x)
