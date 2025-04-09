@@ -12,6 +12,9 @@ Parameters:
     
 Returns:
     Ipopt-compatible prob and bounds
+
+Authors:    Tucker Hartland <hartland1@llnl.gov>
+            Nai-Yuan Chiang <chiang7@llnl.gov>
 """
 class IpoptProb:
     def __init__(self, objective, gradient, constraints_list, xbounds, solver_options=None):
