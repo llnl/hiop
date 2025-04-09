@@ -1,4 +1,5 @@
 import numpy as np
+import cyipopt
 
 """
 Convert a Scipy optimization problem to an Ipopt problem.
@@ -12,8 +13,8 @@ Parameters:
 Returns:
     Ipopt-compatible prob and bounds
 """
-class IpoptProbFromScipy:
-    def __init__(self, objective, gradient, constraints_list, xbounds):
+class IpoptProb:
+    def __init__(self, objective, gradient, constraints_list, xbounds, solver_options=None):
         self.constraints_list = constraints_list
         self.eval_f = objective
         self.eval_g  = gradient
@@ -23,6 +24,7 @@ class IpoptProbFromScipy:
         self.cu = []
         self.nvar = len(xbounds)
         self.ncon = len(self.constraints_list)
+        self.ipopt_options = solver_options
 
         for con in constraints_list:
             if con['type'] == 'eq':
@@ -33,6 +35,16 @@ class IpoptProbFromScipy:
                 self.cu.append(np.inf)
             else:
                 raise ValueError(f"Unknown constraint type: {con['type']}")
+
+        self.nlp = cyipopt.Problem(
+            n=self.nvar,
+            m=self.ncon,
+            problem_obj=self,
+            lb=self.xl,
+            ub=self.xu,
+            cl=self.cl,
+            cu=self.xu
+        )
 
     def objective(self, x):
         return self.eval_f(x)
@@ -51,3 +63,14 @@ class IpoptProbFromScipy:
             else:
                 raise ValueError("Jacobian not provided for constraint.")
         return np.vstack(jacs)
+
+    def solve(self, x0, solver_options=None):
+        ipopt_options = self.ipopt_options
+        if solver_options is not None:
+            ipopt_options = solver_options
+        if ipopt_options is not None:
+            for key, value in ipopt_options.items():
+                self.nlp.add_option(key, value)
+
+        # Solve the optimization problem
+        return self.nlp.solve(x0)

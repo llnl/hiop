@@ -1,6 +1,6 @@
 from .boalgorithm import (BOAlgorithmBase, BOAlgorithm)
 from .acquisition import (acquisition, LCBacquisition, EIacquisition)
-from .optproblem import (IpoptProbFromScipy)
+from .optproblem import (IpoptProb)
 
 __all__ = [
         "BOAlgorithmBase"
@@ -8,5 +8,5 @@ __all__ = [
         "acquisition"
         "LCBacquisition"
         "EIacquisition"
-        "IpoptProbFromScipy"
+        "IpoptProb"
         ]

@@ -70,6 +70,15 @@ for prob_type in prob_type_l:
          min_obj[prob_type][acq_type] = np.inf
          y_opt[prob_type][acq_type] = np.zeros(num_repeat)
 
+      options = {
+        'acquisition_type': acq_type,
+        'bo_maxiter': 20,
+        'opt_solver': 'SLSQP', #"SLSQP" "IPOPT"
+        'solver_options': {
+           'maxiter': 200
+           }
+      }
+
       print("Problem name: ", problem.name)
       print("Acquisition type: ", acq_type)
    
@@ -84,7 +93,7 @@ for prob_type in prob_type_l:
          gp_model.train(x_train, y_train)
    
          # Instantiate and run Bayesian Optimization
-         bo = BOAlgorithm(gp_model, x_train, y_train, acquisition_type = acq_type) #EI or LCB
+         bo = BOAlgorithm(gp_model, x_train, y_train, options = options) #EI or LCB
          bo.optimize(problem)
          
          # Retrieve optimal objec

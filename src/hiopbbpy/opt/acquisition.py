@@ -91,6 +91,7 @@ class EIacquisition(acquisition):
 
             dz_dx = -dmean_dx / sig - (y_min - mean) * dsig_dx / sig**2         
             grad_EI = -dmean_dx * ncdf + dsig_dx * npdf
+            grad_EI *= -1.
         elif sig.size == 1 and np.abs(sig) <= 1e-12:
             grad_EI = 0.0
         elif sig.size > 1:

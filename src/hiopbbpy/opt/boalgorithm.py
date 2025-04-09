@@ -9,11 +9,11 @@ import numpy as np
 from numpy.random import uniform
 from scipy.optimize import minimize
 from scipy.stats import qmc
-from cyipopt import Problem as IpoptProb
+import warnings
 from ..surrogate_modeling.gp import GaussianProcess
 from .acquisition import LCBacquisition, EIacquisition
 from ..problems.problem import Problem
-from .optproblem import IpoptProbFromScipy
+from .optproblem import IpoptProb
 
 # A base class defining a general framework for Bayesian Optimization
 class BOAlgorithmBase:
@@ -83,9 +83,9 @@ class BOAlgorithm(BOAlgorithmBase):
             assert self.bo_maxiter > 0, f"Invalid bo_maxiter: {self.bo_maxiter }"
 
         if options and 'solver_options' in options:
-            self.options = options['solver_options']
+            self.solver_options = options['solver_options']
         else:
-            self.options = {"maxiter": 200}
+            self.solver_options = {"maxiter": 200}
 
         if options and 'acquisition_type' in options:
             acquisition_type = options['acquisition_type']
@@ -110,7 +110,7 @@ class BOAlgorithm(BOAlgorithmBase):
 
     # Method to set up a callback function to minimize the acquisition function
     def _setup_acqf_minimizer_callback(self):
-        self.acqf_minimizer_callback = lambda fun, x0: pyminimize(fun, x0, self.opt_solver, self.bounds, self.constraints, self.options)
+        self.acqf_minimizer_callback = lambda fun, x0: minimizer(fun, x0, self.opt_solver, self.bounds, self.constraints, self.solver_options)
 
     # Method to train the GP model
     def _train_surrogate(self, x_train, y_train):
@@ -143,11 +143,14 @@ class BOAlgorithm(BOAlgorithmBase):
             else:
                 x0 = np.array([uniform(b[0], b[1]) for b in self.bounds])
             xopt, yout, success = self.acqf_minimizer_callback(acqf_callback, x0)
-            
+
             if success:
                 x_all.append(xopt)
                 y_all.append(yout)
-        
+
+        if not x_all:
+            raise RuntimeError("Optimization failed for all initial points — no solution found.")
+
         best_xopt = x_all[np.argmin(np.array(y_all))]
 
         return best_xopt
@@ -156,9 +159,9 @@ class BOAlgorithm(BOAlgorithmBase):
     def set_method(self, method):
         self.opt_solver = method
 
-    # Set the user options for the Bayesian optimization
-    def set_options(self, options):
-        self.options = options
+    # Set the options for the internal optimization solver
+    def set_options(self, solver_options):
+        self.solver_options = solver_options
 
     # Method to perform Bayesian optimization
     def optimize(self, prob:Problem):
@@ -211,24 +214,31 @@ class BOAlgorithm(BOAlgorithmBase):
       print()
 
 # Find the minimum of the input objective `fun`, using the minimize function from SciPy. 
-def pyminimize(fun, x0, method, bounds, constraints, options):
+def minimizer(fun, x0, method, bounds, constraints, solver_options):
     if method != "IPOPT":
         if 'grad' in fun:
-            y = minimize(fun['obj'], x0, method=method, bounds=bounds, jac=fun['grad'], constraints=constraints, options=options)
+            y = minimize(fun['obj'], x0, method=method, bounds=bounds, jac=fun['grad'], constraints=constraints, options=solver_options)
         else:
-            y = minimize(fun['obj'], x0, method=method, bounds=bounds, constraints=constraints, options=options)
+            y = minimize(fun['obj'], x0, method=method, bounds=bounds, constraints=constraints, options=solver_options)
         success = y.success
         if not success:
             print(y.message)
         xopt = y.x
         yopt = y.fun
     else:
-        ipopt_prob = IpoptProbFromScipy(fun['obj'], fun['grad'], constraints, bounds)
-        nlp = IpoptProb(n=ipopt_prob.nvar, m=ipopt_prob.ncon, problem_obj=ipopt_prob, lb=ipopt_prob.xl, ub=ipopt_prob.xu, cl=ipopt_prob.cl, cu=ipopt_prob.cu)
+        ipopt_prob = IpoptProb(fun['obj'], fun['grad'], constraints, bounds, solver_options)
+        sol, info = ipopt_prob.solve(x0)
 
-        sol = nlp.solve(x0)
-        success = not sol[1]['status'] # ipopt returns 0 as success
-        yopt = sol[1]['obj_val']
-        xopt = sol[0]
+        status = info.get('status', -1)
+        msg = info.get('status_msg', -1)
+        if status == 0:
+            # ipopt returns 0 as success
+            success = True
+        else:
+            warnings.warn(f"Ipopt failed to solve the problem. Status msg: {msg}")
+            success = False
+
+        yopt = info['obj_val']
+        xopt = sol
 
     return xopt, yopt, success

@@ -78,7 +78,8 @@ for prob_type in prob_type_l:
         'bo_maxiter': 10,
         'opt_solver': 'IPOPT', #"SLSQP" "IPOPT"
         'solver_options': {
-           'maxiter': 200
+           'max_iter': 200,
+           'print_level': 1
            }
       }
    
