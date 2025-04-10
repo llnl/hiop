@@ -19,12 +19,13 @@ from .optproblem import IpoptProb
 class BOAlgorithmBase:
     def __init__(self):
         self.acquisition_type = "LCB" # Type of acquisition function (default = "LCB")
+        self.batch_type = "KB"        # strategy for qEI
         self.xtrain = None            # Training data
         self.ytrain = None            # Training data
         self.prob   = None            # Problem structure
         self.bo_maxiter = 20          # Maximum number of Bayesian optimization steps
         self.n_start = 10             # estimating acquisition global optima by determining local optima n_start times and then determining the discrete max of that set
-        self.q = 1                    # batch size
+        self.batch_size = 1           # batch size
         # save some internal member train
         self.y_hist = None            # History of evaluations
         self.x_hist = None            # History of evaluations
@@ -33,9 +34,9 @@ class BOAlgorithmBase:
         self.idx_opt = None           # Index of the best observed value in the history
 
     # Sets the acquisition function type and batch size
-    def setAcquisitionType(self, acquisition_type, q=1):
+    def setAcquisitionType(self, acquisition_type, batch_size=1):
         self.acquisition_type = acquisition_type
-        self.q = q
+        self.batch_size = batch_size
 
     # Sets the training data
     def setTrainingData(self, xtrain, ytrain):
@@ -66,7 +67,7 @@ class BOAlgorithmBase:
 class BOAlgorithm(BOAlgorithmBase):
     def __init__(self, prob:Problem, gpsurrogate:GaussianProcess, xtrain, ytrain,
                  user_grad = None,
-                 options = None):
+                 options = {}):
         super().__init__()
         
         assert isinstance(gpsurrogate, GaussianProcess)
@@ -77,21 +78,20 @@ class BOAlgorithm(BOAlgorithmBase):
         self.bounds = self.gpsurrogate.get_bounds()
         self.fun_grad = None
 
-        if options and 'bo_maxiter' in options:
-            self.bo_maxiter = options['bo_maxiter']
-            assert self.bo_maxiter > 0, f"Invalid bo_maxiter: {self.bo_maxiter }"
+        self.bo_maxiter = options.get('bo_maxiter', self.bo_maxiter)
+        assert self.bo_maxiter > 0, f"Invalid bo_maxiter: {self.bo_maxiter }"
+        
+        self.solver_options = {"maxiter": 200}
+        self.solver_options = options.get('solver_options', self.solver_options)
 
-        if options and 'solver_options' in options:
-            self.solver_options = options['solver_options']
-        else:
-            self.solver_options = {"maxiter": 200}
-
-        if options and 'acquisition_type' in options:
-            acquisition_type = options['acquisition_type']
-            assert acquisition_type in ["LCB", "EI"], f"Invalid acquisition_type: {acquisition_type}"
-        else:
-            acquisition_type = "LCB"
-        self.setAcquisitionType(acquisition_type)
+        acquisition_type = options.get('acquisition_type', "LCB")
+        assert acquisition_type in ["LCB", "EI"], f"Invalid acquisition_type: {acquisition_type}"
+        batch_size = options.get('batch_size', 1)
+        assert isinstance(batch_size, int), f"batch_size {batch_size} not an integer"
+        assert batch_size > 0, f"batch_size {batch_size} is not strictly positive"
+        assert ((batch_size == 1 and acquisition_type == "LCB") or (acquisition_type == "EI")), \
+                f"batched BO only supported for expected-improvement"
+        self.setAcquisitionType(acquisition_type, batch_size)
 
         if options and 'opt_solver' in options:
             opt_solver = options['opt_solver']
@@ -99,6 +99,7 @@ class BOAlgorithm(BOAlgorithmBase):
         else:
             opt_solver = "SLSQP"
         self.set_method(opt_solver)
+
 
         if user_grad:
             self.fun_grad = user_grad

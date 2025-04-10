@@ -18,7 +18,7 @@ if os.getenv("SKIP_CYIPOPT", "0") != "1":
 
 metadata = dict(
         name="hiopbbpy",
-        version="0.0.4",
+        version="0.0.5",
         description="HiOp black box optimization (hiopbbpy)",
         author="Tucker hartland et al.",
         author_email="hartland1@llnl.gov",
