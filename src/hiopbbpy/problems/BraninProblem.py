@@ -19,11 +19,11 @@ from numpy.random import uniform
 
 # define the Branin problem class
 class BraninProblem(Problem):
-    def __init__(self):
+    def __init__(self, constraints=None):
         ndim = 2
         xlimits = np.array([[-5.0, 10], [0.0, 15]]) 
         name = 'Branin'
-        super().__init__(ndim, xlimits, name=name)
+        super().__init__(ndim, xlimits, name=name, constraints=constraints)
             
     def _evaluate(self, x: np.ndarray) -> np.ndarray:
         
@@ -40,15 +40,8 @@ class BraninProblem(Problem):
         arg1 = (x[:,1] - b * x[:,0]**2 + c * x[:,0] - r)
         y[:,0] = arg1**2 + s * (1 - t) * np.cos(x[:,0]) + s
         
-        '''
-        # compute derivatives
-        dy_dx0 = 2*arg1*(-2*b*x[:,0]+c) - s*(1-t)*np.sin(x[:,0])
-        dy_dx1 = 2*arg1
-        
-        dy_dx = np.array([dy_dx0, dy_dx1])
-        '''
-
         return y
+
 
 
 

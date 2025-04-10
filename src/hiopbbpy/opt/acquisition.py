@@ -14,28 +14,41 @@ class acquisition(object):
     def __init__(self, gpsurrogate):
         assert isinstance(gpsurrogate, GaussianProcess) # add something here
         self.gpsurrogate = gpsurrogate
+        self.has_gradient = False
     
     # Abstract method to evaluate the acquisition function at x.
     def evaluate(self, x: np.ndarray) -> np.ndarray:
         raise NotImplementedError("Child class of acquisition should implement method evaluate")
 
+    # Abstract method to evaluate the gradient of acquisition function at x.
+    def eval_g(self, x: np.ndarray) -> np.ndarray:
+        raise NotImplementedError("Child class of acquisition should implement method evaluate")
 
 # A subclass of acquisition, implementing the Lower Confidence Bound (LCB) acquisition function.
 class LCBacquisition(acquisition):
     def __init__(self, gpsurrogate, beta=3.0):
         super().__init__(gpsurrogate)
         self.beta = beta
+        self.has_gradient = True
 
     # Method to evaluate the acquisition function at x.
     def evaluate(self, x : np.ndarray) -> np.ndarray:
         mu = self.gpsurrogate.mean(x)
-        sig = self.gpsurrogate.variance(x)
-        return mu - self.beta * np.sqrt(sig)
+        sig2 = self.gpsurrogate.variance(x)
+        return mu - self.beta * np.sqrt(sig2)
+
+    def eval_g(self, x: np.ndarray) -> np.ndarray:
+        mu = self.gpsurrogate.mean(x)
+        sig2 = self.gpsurrogate.variance(x)
+        dsig2_dx = self.gpsurrogate.variance_gradient(x)
+        dmu_dx = self.gpsurrogate.mean_gradient(x)
+        return dmu_dx - 0.5 * self.beta * dsig2_dx / np.sqrt(sig2)
 
 # A subclass of acquisition, implementing the Expected improvement (EI) acquisition function.
 class EIacquisition(acquisition):
     def __init__(self, gpsurrogate):
         super().__init__(gpsurrogate)
+        self.has_gradient = True
 
     # Method to evaluate the acquisition function at x.
     def evaluate(self, x : np.ndarray) -> np.ndarray:        
@@ -47,12 +60,41 @@ class EIacquisition(acquisition):
 
         retval = []
         if sig.size == 1 and np.abs(sig) > 1e-12:
-            arg0 = (y_min - pred) / sig
-            retval = (y_min - pred) * norm.cdf(arg0) + sig * norm.pdf(arg0)
+            z = (y_min - pred) / sig
+            retval = (y_min - pred) * norm.cdf(z) + sig * norm.pdf(z)
             retval *= -1.
         elif sig.size == 1 and np.abs(sig) <= 1e-12:
             retval = 0.0
         elif sig.size > 1:
-            NotImplementedError("TODO --- Not implemented yet!")
+            raise NotImplementedError("TODO --- Not implemented yet!")
 
         return retval
+
+    def eval_g(self, x: np.ndarray) -> np.ndarray:
+        y_data = self.gpsurrogate.training_y
+        y_min = y_data[np.argmin(y_data[:, 0])]
+
+        mean = self.gpsurrogate.mean(x)
+        sig2 = self.gpsurrogate.variance(x)
+        sig = np.sqrt(sig2)
+
+        grad_EI = None
+        if sig.size == 1 and np.abs(sig) > 1e-12:
+            dmean_dx = self.gpsurrogate.mean_gradient(x)
+            dsig2_dx = self.gpsurrogate.variance_gradient(x)
+            dsig_dx = 0.5 * dsig2_dx / sig
+
+            z = (y_min - mean) / sig
+            ncdf = norm.cdf(z)
+            npdf = norm.pdf(z)
+            EI = (y_min - mean) * ncdf + sig * npdf
+
+            dz_dx = -dmean_dx / sig - (y_min - mean) * dsig_dx / sig**2         
+            grad_EI = -dmean_dx * ncdf + dsig_dx * npdf
+            grad_EI *= -1.
+        elif sig.size == 1 and np.abs(sig) <= 1e-12:
+            grad_EI = 0.0
+        elif sig.size > 1:
+            raise NotImplementedError("TODO --- Not implemented yet!")
+
+        return grad_EI

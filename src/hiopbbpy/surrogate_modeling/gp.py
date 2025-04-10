@@ -87,3 +87,35 @@ class GaussianProcess:
 
         """
         NotImplementedError("Child class of GaussianProcess should implement method train")
+
+    # Abstract method for computing the gradient of the mean of the GP at a given input x
+    def mean_gradient(self, x: np.ndarray) -> np.ndarray:
+        """
+        evaluation of the gradien of GP mean
+
+        Parameters
+        ---------
+        x : ndarray[n, nx]
+
+        Returns
+        -------
+        ndarray[n, 1]
+           Gradient of Mean of GP at x
+        """
+        raise NotImplementedError("Child class of GaussianProcess should implement method mean_gradient")
+
+    # Abstract method for computing the gradient of variance of the GP at a given input x
+    def variance_gradient(self, x: np.ndarray) -> np.ndarray:
+        """
+        evaluation of the gradient of GP variance
+
+        Parameters
+        ---------
+        x: ndarray[n, nx]
+
+        Returns
+        -------
+        ndarray[n, n]
+           Gradient of variance of GP at w.r.t. x
+        """
+        raise NotImplementedError("Child class of GaussianProcess should implement method variance_gradient")
