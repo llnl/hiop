@@ -12,9 +12,9 @@ from scipy.stats import qmc
 import warnings
 from ..surrogate_modeling.gp import GaussianProcess
 from .acquisition import LCBacquisition, EIacquisition
-from .evaluator import Evaluator
 from ..problems.problem import Problem
 from .optproblem import IpoptProb
+from smt.applications.ego import Evaluator
 
 # A base class defining a general framework for Bayesian Optimization
 class BOAlgorithmBase:
@@ -24,7 +24,7 @@ class BOAlgorithmBase:
         self.xtrain = None            # Training data
         self.ytrain = None            # Training data
         self.prob   = None            # Problem structure
-        self.evaluator = None         # compute control objective evaluations
+        self.evaluator = Evaluator()  # compute control objective evaluations
         self.bo_maxiter = 20          # Maximum number of Bayesian optimization steps
         self.n_start = 10             # estimating acquisition global optima by determining local optima n_start times and then determining the discrete max of that set
         self.batch_size = 1           # batch size
@@ -95,7 +95,7 @@ class BOAlgorithm(BOAlgorithmBase):
                 f"batched BO only supported for expected-improvement"
         self.setAcquisitionType(acquisition_type, batch_size)
 
-        self.evaluator = options.get('evaluator', Evaluator())
+        self.evaluator = options.get('evaluator', self.evaluator)
         assert isinstance(self.evaluator, Evaluator)
 
         if options and 'opt_solver' in options:
