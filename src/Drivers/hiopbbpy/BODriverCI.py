@@ -103,7 +103,7 @@ for prob_type in prob_type_l:
          max_obj[prob_type][acq_type] = max(max_obj[prob_type][acq_type], y_opt[prob_type][acq_type][n_repeat])
          min_obj[prob_type][acq_type] = min(min_obj[prob_type][acq_type], y_opt[prob_type][acq_type][n_repeat])
 
-#if(num_repeat >= 1000 ):
+#if(num_repeat == 1000 ):
 #   np.save("yopt_20iter_1000run.npy", y_opt)
 
 # Define percentiles

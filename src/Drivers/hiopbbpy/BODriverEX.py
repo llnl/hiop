@@ -57,9 +57,9 @@ retval = 0
 for prob_type in prob_type_l:
    print()
    if prob_type == "LpNorm":
-      problem = LpNormProblem(nx, xlimits, constraints=None)
+      problem = LpNormProblem(nx, xlimits)
    else:
-      problem = BraninProblem(constraints=None)
+      problem = BraninProblem()
    problem.set_constraints(user_constraint)
 
    for acq_type in acq_type_l:
@@ -78,6 +78,7 @@ for prob_type in prob_type_l:
         'acquisition_type': acq_type,
         'bo_maxiter': 10,
         'opt_solver': 'IPOPT', #"SLSQP" "IPOPT"
+        'batch_size': 1,
         'solver_options': {
            'max_iter': 200,
            'print_level': 1

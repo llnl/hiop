@@ -199,10 +199,7 @@ class BOAlgorithm(BOAlgorithmBase):
              # Update training set with the virtual point
              x_train         = np.vstack([x_train,         x_new    ])
              y_train_virtual = np.vstack([y_train_virtual, y_virtual])
-
-          # TODO: include a parallel evaluator
           y_new = self.evaluator.run(self.prob.evaluate, x_train[-self.batch_size:])
-          #y_new = self.prob.evaluate(np.atleast_2d(x_train[-self.batch_size:]))
           
 
           y_train = np.vstack([y_train, y_new])

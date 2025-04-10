@@ -8,7 +8,7 @@ import numpy as np
 from hiopbbpy.problems.problem import Problem
 
 class LpNormProblem(Problem):
-    def __init__(self, ndim, xlimits, p=2.0, constraints=None):
+    def __init__(self, ndim, xlimits, p=2.0, constraints=[]):
         name = "LpNormProblem"
         super().__init__(ndim, xlimits, name=name, constraints=constraints)
         self.p = p
