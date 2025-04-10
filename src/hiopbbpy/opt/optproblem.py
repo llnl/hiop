@@ -46,7 +46,7 @@ class IpoptProb:
             lb=self.xl,
             ub=self.xu,
             cl=self.cl,
-            cu=self.xu
+            cu=self.cu
         )
 
     def objective(self, x):

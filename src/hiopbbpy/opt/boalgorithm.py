@@ -64,19 +64,18 @@ class BOAlgorithmBase:
 
 # A subclass of BOAlgorithmBase implementing a full Bayesian Optimization workflow
 class BOAlgorithm(BOAlgorithmBase):
-    def __init__(self, gpsurrogate, xtrain, ytrain,
+    def __init__(self, prob:Problem, gpsurrogate:GaussianProcess, xtrain, ytrain,
                  user_grad = None,
-                 user_constraints = None,
                  options = None):
         super().__init__()
         
         assert isinstance(gpsurrogate, GaussianProcess)
         
         self.setTrainingData(xtrain, ytrain)
+        self.prob = prob
         self.gpsurrogate = gpsurrogate
         self.bounds = self.gpsurrogate.get_bounds()
         self.fun_grad = None
-        self.constraints = None
 
         if options and 'bo_maxiter' in options:
             self.bo_maxiter = options['bo_maxiter']
@@ -101,16 +100,13 @@ class BOAlgorithm(BOAlgorithmBase):
             opt_solver = "SLSQP"
         self.set_method(opt_solver)
 
-        if user_constraints:
-            self.constraints = user_constraints
-
         if user_grad:
             self.fun_grad = user_grad
 
 
     # Method to set up a callback function to minimize the acquisition function
     def _setup_acqf_minimizer_callback(self):
-        self.acqf_minimizer_callback = lambda fun, x0: minimizer(fun, x0, self.opt_solver, self.bounds, self.constraints, self.solver_options)
+        self.acqf_minimizer_callback = lambda fun, x0: minimizer(fun, x0, self.opt_solver, self.bounds, self.prob.constraints, self.solver_options)
 
     # Method to train the GP model
     def _train_surrogate(self, x_train, y_train):
@@ -164,8 +160,7 @@ class BOAlgorithm(BOAlgorithmBase):
         self.solver_options = solver_options
 
     # Method to perform Bayesian optimization
-    def optimize(self, prob:Problem):
-      self.prob = prob
+    def optimize(self):
       x_train = self.xtrain
       y_train = self.ytrain
       
@@ -184,7 +179,7 @@ class BOAlgorithm(BOAlgorithmBase):
           x_new = self._find_best_point(x_train, y_train)
 
           # Evaluate the new sample point
-          y_new = prob.evaluate(np.atleast_2d(x_new))
+          y_new = self.prob.evaluate(np.atleast_2d(x_new))
 
           # Update training set
           x_train = np.vstack([x_train, x_new])
@@ -229,8 +224,8 @@ def minimizer(fun, x0, method, bounds, constraints, solver_options):
         ipopt_prob = IpoptProb(fun['obj'], fun['grad'], constraints, bounds, solver_options)
         sol, info = ipopt_prob.solve(x0)
 
-        status = info.get('status', -1)
-        msg = info.get('status_msg', -1)
+        status = info.get('status', -999)
+        msg = info.get('status_msg', b'unknown error')
         if status == 0:
             # ipopt returns 0 as success
             success = True

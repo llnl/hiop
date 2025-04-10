@@ -10,7 +10,7 @@ from scipy.stats import qmc
 
 # define the general optimization problem class
 class Problem:
-    def __init__(self, ndim, xlimits, name=None):
+    def __init__(self, ndim, xlimits, name=None, constraints=None):
         self.ndim = ndim
         self.xlimits = xlimits
         assert self.xlimits.shape[0] == ndim            
@@ -19,6 +19,7 @@ class Problem:
         else:
             self.name = name
         self.sampler = qmc.LatinHypercube(ndim)
+        self.constraints = constraints
             
     def _evaluate(self, x: np.ndarray) -> np.ndarray:
         """
@@ -79,6 +80,9 @@ class Problem:
         xsample = self.xlimits[:,0] + (self.xlimits[:,1] - self.xlimits[:,0]) * xsample
 
         return xsample
+
+    def set_constraints(self, constraints: dict):
+        self.constraints = constraints
 
 
 

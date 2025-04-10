@@ -57,9 +57,10 @@ retval = 0
 for prob_type in prob_type_l:
    print()
    if prob_type == "LpNorm":
-      problem = LpNormProblem(nx, xlimits)
+      problem = LpNormProblem(nx, xlimits, constraints=None)
    else:
-      problem = BraninProblem()
+      problem = BraninProblem(constraints=None)
+   problem.set_constraints(user_constraint)
 
    for acq_type in acq_type_l:
       print("Problem name: ", problem.name)
@@ -84,8 +85,8 @@ for prob_type in prob_type_l:
       }
    
       # Instantiate and run Bayesian Optimization
-      bo = BOAlgorithm(gp_model, x_train, y_train, options = options, user_constraints = user_constraint) #EI or LCB
-      bo.optimize(problem)
+      bo = BOAlgorithm(problem, gp_model, x_train, y_train, options = options) #EI or LCB
+      bo.optimize()
 
 sys.exit(retval)
 
