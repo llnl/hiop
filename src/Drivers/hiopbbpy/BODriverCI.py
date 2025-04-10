@@ -93,8 +93,8 @@ for prob_type in prob_type_l:
          gp_model.train(x_train, y_train)
    
          # Instantiate and run Bayesian Optimization
-         bo = BOAlgorithm(gp_model, x_train, y_train, options = options) #EI or LCB
-         bo.optimize(problem)
+         bo = BOAlgorithm(problem, gp_model, x_train, y_train, options = options)
+         bo.optimize()
          
          # Retrieve optimal objec
          y_opt[prob_type][acq_type][n_repeat] = bo.getOptimalObjective()
