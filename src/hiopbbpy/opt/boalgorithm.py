@@ -151,6 +151,13 @@ class BOAlgorithm(BOAlgorithmBase):
         best_xopt = x_all[np.argmin(np.array(y_all))]
 
         return best_xopt
+    
+    def _get_virtual_point(self, x):
+        # Kriging-Believer
+        if self.batch_type == "KB":
+            return self.gpsurrogate.mean(x)
+        else:
+            raise NotImplementedError("No implemented batch_type associated to"+self.batch_type)
 
     # Set the optimization method
     def set_method(self, method):
@@ -165,7 +172,7 @@ class BOAlgorithm(BOAlgorithmBase):
       x_train = self.xtrain
       y_train = self.ytrain
       
-      n_init_sample = np.size(x_train,0)
+      n_init_sample = np.size(x_train, 0)
       print(f"n_init_sample: {n_init_sample}")
       self._setup_acqf_minimizer_callback()
 
@@ -176,21 +183,30 @@ class BOAlgorithm(BOAlgorithmBase):
           print(f"*****************************")
           print(f"Iteration {i+1}/{self.bo_maxiter}")
 
-          # Get a new sample point
-          x_new = self._find_best_point(x_train, y_train)
+          y_train_virtual = y_train.copy() # old training + batch_size num of virtual points
+          for batch in range(self.batch_size):
+             # Get a new sample point
+             x_new = self._find_best_point(x_train, y_train_virtual)
 
-          # Evaluate the new sample point
-          y_new = self.prob.evaluate(np.atleast_2d(x_new))
+             # Get a virtual point
+             y_virtual = self._get_virtual_point(np.atleast_2d(x_new))
 
-          # Update training set
-          x_train = np.vstack([x_train, x_new])
+             # Update training set with the virtual point
+             x_train         = np.vstack([x_train,         x_new    ])
+             y_train_virtual = np.vstack([y_train_virtual, y_virtual])
+
+          # TODO: include a parallel evaluator
+          y_new = self.prob.evaluate(np.atleast_2d(x_train[-self.batch_size:]))
+          
+
           y_train = np.vstack([y_train, y_new])
+          
+          # Save the new sample points and objective evaluations
+          for batch in range(1, self.batch_size+1):
+              self.x_hist.append(x_train[-batch].flatten())
+              self.y_hist.append(y_train[-batch].flatten())
 
-          # Save the new sample point and its observation
-          self.x_hist.append(x_new)
-          self.y_hist.append(y_new)
-
-          print(f"Sampled point X: {x_new.flatten()}, Observation Y: {y_new.flatten()}")
+          print(f"Sampled point X: {x_train[-self.batch_size:]}, Observation Y: {y_new}")
 
       # Save the optimal results and all the training data
       self.idx_opt = np.argmin(self.y_hist)
@@ -198,9 +214,7 @@ class BOAlgorithm(BOAlgorithmBase):
       self.y_opt = self.y_hist[self.idx_opt]
       self.setTrainingData(x_train, y_train)
 
-      print()
-      print()
-      print(f"Optimal at BO iteration: {self.idx_opt+1} ")
+      print(f"\n\nOptimal at BO iteration: {self.idx_opt+1} ")
       #if self.idx_opt < n_init_sample:
       #    print(f"Optimal at initial sample: {self.idx_opt+1}")
       #else:
