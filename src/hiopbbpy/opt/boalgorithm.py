@@ -91,8 +91,6 @@ class BOAlgorithm(BOAlgorithmBase):
         batch_size = options.get('batch_size', 1)
         assert isinstance(batch_size, int), f"batch_size {batch_size} not an integer"
         assert batch_size > 0, f"batch_size {batch_size} is not strictly positive"
-        assert ((batch_size == 1 and acquisition_type == "LCB") or (acquisition_type == "EI")), \
-                f"batched BO only supported for expected-improvement"
         self.setAcquisitionType(acquisition_type, batch_size)
 
         self.evaluator = options.get('evaluator', self.evaluator)
@@ -158,11 +156,20 @@ class BOAlgorithm(BOAlgorithmBase):
         return best_xopt
     
     def _get_virtual_point(self, x):
-        # Kriging-Believer
-        if self.batch_type == "KB":
-            return self.gpsurrogate.mean(x)
-        else:
+        if self.batch_type not in ["CLmin", "KB", "KBUB", "KBLB", "KBRand"]:
             raise NotImplementedError("No implemented batch_type associated to"+self.batch_type)
+        # constant-liar, Kriging-believer and Kriging-believer variants
+        if self.batch_type == "CLmin":
+            return min(self.gpsurrogate.training_y)
+        elif self.batch_type == "KB":
+            beta = 0.
+        elif self.batch_type == "KBUB":
+            beta = 3.0
+        elif self.batch_type == "KBLB":
+            beta = -3.0
+        elif self.batch_type == "KBRand":
+            beta = np.random.randn()
+        return self.gpsurrogate.mean(x) + beta * np.sqrt(self.gpsurrogate.variance(x))
 
     # Set the optimization method
     def set_method(self, method):
@@ -208,8 +215,11 @@ class BOAlgorithm(BOAlgorithmBase):
           for batch in range(1, self.batch_size+1):
               self.x_hist.append(x_train[-batch].flatten())
               self.y_hist.append(y_train[-batch].flatten())
+          if self.batch_size == 1:
+              print(f"Sample point X: {x_train[-self.batch_size:]}, Observation Y: {y_new}")
+          else:
+              print(f"Sample points X: {x_train[-self.batch_size:]}, Observations Y: {y_new}")
 
-          print(f"Sampled point X: {x_train[-self.batch_size:]}, Observation Y: {y_new}")
 
       # Save the optimal results and all the training data
       self.idx_opt = np.argmin(self.y_hist)
