@@ -1,6 +1,16 @@
 # Change Log
 All notable changes to HiOp are documented in this file.
 
+## Version 1.1.1: Misc updates to quasi-Newton solver and build system, updates to recent RAJA, and preliminary black-box solver
+* Consolidating qn solver by @cnpetra in https://github.com/LLNL/hiop/pull/697 and https://github.com/LLNL/hiop/pull/699
+* Use clang-format in hiop to keep code style by @nychiang in https://github.com/LLNL/hiop/pull/700
+* Cmake option HIOP_TEST_WITH_SLURM by @thartland in https://github.com/LLNL/hiop/pull/707
+* Support for C++17 by @nychiang in https://github.com/LLNL/hiop/pull/703
+* Improved log output for NLP scaling by @cnpetra in https://github.com/LLNL/hiop/pull/709
+* Use the latest RAJA and UMPIRE by @nychiang in https://github.com/LLNL/hiop/pull/706
+* Add Bayesian Optimization into HiOp by @nychiang in https://github.com/LLNL/hiop/pull/711
+* Support for constrained problems for black-box solver by @nychiang in https://github.com/LLNL/hiop/pull/722
+
 ## Version 1.1.0: Checkpointing, advanced restarts, and misc fixes
 * Checkpointing for quasi-Newton solver: new API for load and saving checkpoints, user options for rollover restarts, and scalable I/O via axom::sidre.
 * New function for advanced warmstarts.
