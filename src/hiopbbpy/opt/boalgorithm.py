@@ -185,7 +185,6 @@ class BOAlgorithm(BOAlgorithmBase):
       y_train = self.ytrain
       
       n_init_sample = np.size(x_train, 0)
-      print(f"n_init_sample: {n_init_sample}")
       self._setup_acqf_minimizer_callback()
 
       self.x_hist = []
