@@ -196,25 +196,29 @@ class BOAlgorithm(BOAlgorithmBase):
           print(f"Iteration {i+1}/{self.bo_maxiter}")
 
           y_train_virtual = y_train.copy() # old training + batch_size num of virtual points
-          for batch in range(self.batch_size):
+          for j in range(self.batch_size):
              # Get a new sample point
              x_new = self._find_best_point(x_train, y_train_virtual)
-
-             # Get a virtual point
-             y_virtual = self._get_virtual_point(np.atleast_2d(x_new))
-
-             # Update training set with the virtual point
+             
+             # Update training sample points
              x_train         = np.vstack([x_train,         x_new    ])
-             y_train_virtual = np.vstack([y_train_virtual, y_virtual])
-          y_new = self.evaluator.run(self.prob.evaluate, x_train[-self.batch_size:])
-          
 
+             # if this is not the last point in the current batch
+             # then obtain a virtual point
+             if j < max(range(self.batch_size)):
+                 # Get a virtual point
+                 y_virtual = self._get_virtual_point(np.atleast_2d(x_new))
+
+                 # Update training set with the virtual point
+                 y_train_virtual = np.vstack([y_train_virtual, y_virtual])
+          
+          y_new = self.evaluator.run(self.prob.evaluate, x_train[-self.batch_size:])
           y_train = np.vstack([y_train, y_new])
           
           # Save the new sample points and objective evaluations
-          for batch in range(1, self.batch_size+1):
-              self.x_hist.append(x_train[-batch].flatten())
-              self.y_hist.append(y_train[-batch].flatten())
+          for j in range(1, self.batch_size+1):
+              self.x_hist.append(x_train[-j].flatten())
+              self.y_hist.append(y_train[-j].flatten())
           if self.batch_size == 1:
               print(f"Sample point X: {x_train[-self.batch_size:]}, Observation Y: {y_new}")
           else:
@@ -223,7 +227,7 @@ class BOAlgorithm(BOAlgorithmBase):
 
       # Save the optimal results and all the training data
       self.idx_opt = np.argmin(self.y_hist)
-      self.x_opt = self.y_hist[self.idx_opt]
+      self.x_opt = self.x_hist[self.idx_opt]
       self.y_opt = self.y_hist[self.idx_opt]
       self.setTrainingData(x_train, y_train)
 
