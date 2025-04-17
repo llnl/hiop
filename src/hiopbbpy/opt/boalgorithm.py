@@ -14,17 +14,20 @@ from ..surrogate_modeling.gp import GaussianProcess
 from .acquisition import LCBacquisition, EIacquisition
 from ..problems.problem import Problem
 from .optproblem import IpoptProb
+from smt.applications.ego import Evaluator
 
 # A base class defining a general framework for Bayesian Optimization
 class BOAlgorithmBase:
     def __init__(self):
         self.acquisition_type = "LCB" # Type of acquisition function (default = "LCB")
+        self.batch_type = "KB"        # strategy for qEI
         self.xtrain = None            # Training data
         self.ytrain = None            # Training data
         self.prob   = None            # Problem structure
+        self.evaluator = Evaluator()  # compute control objective evaluations
         self.bo_maxiter = 20          # Maximum number of Bayesian optimization steps
         self.n_start = 10             # estimating acquisition global optima by determining local optima n_start times and then determining the discrete max of that set
-        self.q = 1                    # batch size
+        self.batch_size = 1           # batch size
         # save some internal member train
         self.y_hist = None            # History of evaluations
         self.x_hist = None            # History of evaluations
@@ -33,9 +36,9 @@ class BOAlgorithmBase:
         self.idx_opt = None           # Index of the best observed value in the history
 
     # Sets the acquisition function type and batch size
-    def setAcquisitionType(self, acquisition_type, q=1):
+    def setAcquisitionType(self, acquisition_type, batch_size=1):
         self.acquisition_type = acquisition_type
-        self.q = q
+        self.batch_size = batch_size
 
     # Sets the training data
     def setTrainingData(self, xtrain, ytrain):
@@ -66,7 +69,7 @@ class BOAlgorithmBase:
 class BOAlgorithm(BOAlgorithmBase):
     def __init__(self, prob:Problem, gpsurrogate:GaussianProcess, xtrain, ytrain,
                  user_grad = None,
-                 options = None):
+                 options = {}):
         super().__init__()
         
         assert isinstance(gpsurrogate, GaussianProcess)
@@ -77,21 +80,21 @@ class BOAlgorithm(BOAlgorithmBase):
         self.bounds = self.gpsurrogate.get_bounds()
         self.fun_grad = None
 
-        if options and 'bo_maxiter' in options:
-            self.bo_maxiter = options['bo_maxiter']
-            assert self.bo_maxiter > 0, f"Invalid bo_maxiter: {self.bo_maxiter }"
+        self.bo_maxiter = options.get('bo_maxiter', self.bo_maxiter)
+        assert self.bo_maxiter > 0, f"Invalid bo_maxiter: {self.bo_maxiter }"
+        
+        self.solver_options = {"maxiter": 200}
+        self.solver_options = options.get('solver_options', self.solver_options)
 
-        if options and 'solver_options' in options:
-            self.solver_options = options['solver_options']
-        else:
-            self.solver_options = {"maxiter": 200}
+        acquisition_type = options.get('acquisition_type', "LCB")
+        assert acquisition_type in ["LCB", "EI"], f"Invalid acquisition_type: {acquisition_type}"
+        batch_size = options.get('batch_size', 1)
+        assert isinstance(batch_size, int), f"batch_size {batch_size} not an integer"
+        assert batch_size > 0, f"batch_size {batch_size} is not strictly positive"
+        self.setAcquisitionType(acquisition_type, batch_size)
 
-        if options and 'acquisition_type' in options:
-            acquisition_type = options['acquisition_type']
-            assert acquisition_type in ["LCB", "EI"], f"Invalid acquisition_type: {acquisition_type}"
-        else:
-            acquisition_type = "LCB"
-        self.setAcquisitionType(acquisition_type)
+        self.evaluator = options.get('evaluator', self.evaluator)
+        assert isinstance(self.evaluator, Evaluator)
 
         if options and 'opt_solver' in options:
             opt_solver = options['opt_solver']
@@ -99,6 +102,7 @@ class BOAlgorithm(BOAlgorithmBase):
         else:
             opt_solver = "SLSQP"
         self.set_method(opt_solver)
+
 
         if user_grad:
             self.fun_grad = user_grad
@@ -150,6 +154,22 @@ class BOAlgorithm(BOAlgorithmBase):
         best_xopt = x_all[np.argmin(np.array(y_all))]
 
         return best_xopt
+    
+    def _get_virtual_point(self, x):
+        if self.batch_type not in ["CLmin", "KB", "KBUB", "KBLB", "KBRand"]:
+            raise NotImplementedError("No implemented batch_type associated to"+self.batch_type)
+        # constant-liar, Kriging-believer and Kriging-believer variants
+        if self.batch_type == "CLmin":
+            return min(self.gpsurrogate.training_y)
+        elif self.batch_type == "KB":
+            beta = 0.
+        elif self.batch_type == "KBUB":
+            beta = 3.0
+        elif self.batch_type == "KBLB":
+            beta = -3.0
+        elif self.batch_type == "KBRand":
+            beta = np.random.randn()
+        return self.gpsurrogate.mean(x) + beta * np.sqrt(self.gpsurrogate.variance(x))
 
     # Set the optimization method
     def set_method(self, method):
@@ -164,8 +184,7 @@ class BOAlgorithm(BOAlgorithmBase):
       x_train = self.xtrain
       y_train = self.ytrain
       
-      n_init_sample = np.size(x_train,0)
-      print(f"n_init_sample: {n_init_sample}")
+      n_init_sample = np.size(x_train, 0)
       self._setup_acqf_minimizer_callback()
 
       self.x_hist = []
@@ -175,31 +194,43 @@ class BOAlgorithm(BOAlgorithmBase):
           print(f"*****************************")
           print(f"Iteration {i+1}/{self.bo_maxiter}")
 
-          # Get a new sample point
-          x_new = self._find_best_point(x_train, y_train)
+          y_train_virtual = y_train.copy() # old training + batch_size num of virtual points
+          for j in range(self.batch_size):
+             # Get a new sample point
+             x_new = self._find_best_point(x_train, y_train_virtual)
+             
+             # Update training sample points
+             x_train         = np.vstack([x_train,         x_new    ])
 
-          # Evaluate the new sample point
-          y_new = self.prob.evaluate(np.atleast_2d(x_new))
+             # if this is not the last point in the current batch
+             # then obtain a virtual point
+             if j < max(range(self.batch_size)):
+                 # Get a virtual point
+                 y_virtual = self._get_virtual_point(np.atleast_2d(x_new))
 
-          # Update training set
-          x_train = np.vstack([x_train, x_new])
+                 # Update training set with the virtual point
+                 y_train_virtual = np.vstack([y_train_virtual, y_virtual])
+          
+          y_new = self.evaluator.run(self.prob.evaluate, x_train[-self.batch_size:])
           y_train = np.vstack([y_train, y_new])
+          
+          # Save the new sample points and objective evaluations
+          for j in range(1, self.batch_size+1):
+              self.x_hist.append(x_train[-j].flatten())
+              self.y_hist.append(y_train[-j].flatten())
+          if self.batch_size == 1:
+              print(f"Sample point X: {x_train[-self.batch_size:]}, Observation Y: {y_new}")
+          else:
+              print(f"Sample points X: {x_train[-self.batch_size:]}, Observations Y: {y_new}")
 
-          # Save the new sample point and its observation
-          self.x_hist.append(x_new)
-          self.y_hist.append(y_new)
-
-          print(f"Sampled point X: {x_new.flatten()}, Observation Y: {y_new.flatten()}")
 
       # Save the optimal results and all the training data
       self.idx_opt = np.argmin(self.y_hist)
-      self.x_opt = self.y_hist[self.idx_opt]
+      self.x_opt = self.x_hist[self.idx_opt]
       self.y_opt = self.y_hist[self.idx_opt]
       self.setTrainingData(x_train, y_train)
 
-      print()
-      print()
-      print(f"Optimal at BO iteration: {self.idx_opt+1} ")
+      print(f"\n\nOptimal at BO iteration: {self.idx_opt+1} ")
       #if self.idx_opt < n_init_sample:
       #    print(f"Optimal at initial sample: {self.idx_opt+1}")
       #else:

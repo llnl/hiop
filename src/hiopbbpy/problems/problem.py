@@ -5,19 +5,19 @@ Authors:    Tucker Hartland <hartland1@llnl.gov>
             Nai-Yuan Chiang <chiang7@llnl.gov>
 """
 import numpy as np
+import collections.abc
 from numpy.random import uniform
 from scipy.stats import qmc
 
 # define the general optimization problem class
 class Problem:
-    def __init__(self, ndim, xlimits, name=None, constraints=None):
+    def __init__(self, ndim, xlimits, name=" ", constraints=[]):
         self.ndim = ndim
         self.xlimits = xlimits
         assert self.xlimits.shape[0] == ndim            
-        if name is None:
-            self.name = " "
-        else:
-            self.name = name
+        assert isinstance(name, str)
+        assert isinstance(constraints, collections.abc.Sequence)
+        self.name = name
         self.sampler = qmc.LatinHypercube(ndim)
         self.constraints = constraints
             

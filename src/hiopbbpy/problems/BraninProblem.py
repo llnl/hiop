@@ -19,7 +19,7 @@ from numpy.random import uniform
 
 # define the Branin problem class
 class BraninProblem(Problem):
-    def __init__(self, constraints=None):
+    def __init__(self, constraints=[]):
         ndim = 2
         xlimits = np.array([[-5.0, 10], [0.0, 15]]) 
         name = 'Branin'
