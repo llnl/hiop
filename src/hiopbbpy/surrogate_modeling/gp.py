@@ -66,7 +66,6 @@ class GaussianProcess:
         for i in range(x.shape[1]):
             y[i][0] = covariance(np.atleast_2d(x[i,:]))[0][0]
         return y
-        #return np.atleast_2d(np.diag(covariance(x))).T
 
     # Retrieves the bounds of the input space if xlimits is provided.
     def get_bounds(self):

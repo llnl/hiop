@@ -70,11 +70,6 @@ class Problem:
            Samples from domain defined by xlimits
         """
 
-        # uniform
-        # xsample = np.zeros((nsample, self.ndim))
-        # for j in range(self.ndim):
-        #    xsample[:, j] = uniform(self.xlimits[j][0], self.xlimits[j][1], size=nsample)
-
         # from predefined sampler
         xsample = self.sampler.random(nsample)
         xsample = self.xlimits[:,0] + (self.xlimits[:,1] - self.xlimits[:,0]) * xsample

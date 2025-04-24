@@ -22,7 +22,7 @@ class acquisition(object):
 
     # Abstract method to evaluate the gradient of acquisition function at x.
     def eval_g(self, x: np.ndarray) -> np.ndarray:
-        raise NotImplementedError("Child class of acquisition should implement method evaluate")
+        raise NotImplementedError("Child class of acquisition should implement method eval_g")
 
 # A subclass of acquisition, implementing the Lower Confidence Bound (LCB) acquisition function.
 class LCBacquisition(acquisition):

@@ -231,11 +231,6 @@ class BOAlgorithm(BOAlgorithmBase):
       self.setTrainingData(x_train, y_train)
 
       print(f"\n\nOptimal at BO iteration: {self.idx_opt+1} ")
-      #if self.idx_opt < n_init_sample:
-      #    print(f"Optimal at initial sample: {self.idx_opt+1}")
-      #else:
-      #    print(f"Optimal at BO iteration: {self.idx_opt-n_init_sample+1} ")
-          
       print(f"Optimal point: {self.x_opt.flatten()}, Optimal value: {self.y_opt}")
       print()
 
