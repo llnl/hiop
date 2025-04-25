@@ -74,18 +74,12 @@ static inline void toupper(std::string& str_in) { std::transform(str_in.begin(),
 
 // Function to reorder elements of arr[] according to index[]
 template<class T>
-inline void reorder(T* arr, std::vector<int> index, int n)
+inline void reorder(T* arr, const std::vector<int> &index, int n)
 {
-  T temp[n];
+  const std::vector<T> temp(arr, arr+n);
 
   // arr[i] should be present at index[i] index
-  for(int i = 0; i < n; i++) temp[i] = arr[index[i]];
-
-  // Copy temp[] to arr[]
-  for(int i = 0; i < n; i++) {
-    arr[i] = temp[i];
-    //       index[i] = i;
-  }
+  for(int i = 0; i < n; ++i) arr[i] = temp[index[i]];
 }
 
 static inline unsigned long generate_seed()
