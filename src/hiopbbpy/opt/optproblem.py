@@ -16,9 +16,11 @@ Returns:
 Authors:    Tucker Hartland <hartland1@llnl.gov>
             Nai-Yuan Chiang <chiang7@llnl.gov>
 """
+from typing import Callable, Dict, List, Union, Tuple
+
 class IpoptProb:
-    def __init__(self, objective, gradient, constraints_list, xbounds, solver_options=None):
-        self.constraints_list = constraints_list
+    def __init__(self, objective, gradient, constraint:Union[Dict, List[Dict]], xbounds, solver_options=None):
+        self.cons = constraint
         self.eval_f = objective
         self.eval_g  = gradient
         self.xl = [b[0] for b in xbounds]
@@ -26,28 +28,36 @@ class IpoptProb:
         self.cl = []
         self.cu = []
         self.nvar = len(xbounds)
-        self.ncon = len(self.constraints_list)
+
         self.ipopt_options = solver_options
 
-        for con in constraints_list:
-            if con['type'] == 'eq':
-                self.cl.append(0.0)
-                self.cu.append(0.0)
-            elif con['type'] == 'ineq':
-                self.cl.append(0.0)
-                self.cu.append(np.inf)
-            else:
-                raise ValueError(f"Unknown constraint type: {con['type']}")
+        if isinstance(self.cons, list):
+            # constraints is provided as a list of dict, supported by SLSQP and Ipopt
+            for con in self.cons:
+                if con['type'] == 'eq':
+                    self.cl.append(0.0)
+                    self.cu.append(0.0)
+                elif con['type'] == 'ineq':
+                    self.cl.append(0.0)
+                    self.cu.append(np.inf)
+                else:
+                    raise ValueError(f"Unknown constraint type: {con['type']}")
+        elif isinstance(self.cons, dict):
+            # constraints is provided as a dict, supported by trust-constr and Ipopt
+            self.cl = constraint['cl']
+            self.cu = constraint['cu']
+        else:
+            raise ValueError("constraints must be provided as a dict of a list of dict.")
+        self.ncon = len(self.cl)
 
-        self.nlp = cyipopt.Problem(
-            n=self.nvar,
-            m=self.ncon,
-            problem_obj=self,
-            lb=self.xl,
-            ub=self.xu,
-            cl=self.cl,
-            cu=self.cu
-        )
+        self.nlp = cyipopt.Problem( n=self.nvar,
+                                    m=self.ncon,
+                                    problem_obj=self,
+                                    lb=self.xl,
+                                    ub=self.xu,
+                                    cl=self.cl,
+                                    cu=self.cu
+                                  )
 
     def objective(self, x):
         return self.eval_f(x)
@@ -56,16 +66,22 @@ class IpoptProb:
         return self.eval_g(x)
 
     def constraints(self, x):
-        return np.array([con['fun'](x) for con in self.constraints_list])
+        if isinstance(self.cons, list):
+            return np.array([con['fun'](x) for con in self.cons])
+        else:
+            return self.cons['cons'](x)
 
     def jacobian(self, x):
-        jacs = []
-        for con in self.constraints_list:
-            if 'jac' in con:
-                jacs.append(con['jac'](x))
-            else:
-                raise ValueError("Jacobian not provided for constraint.")
-        return np.vstack(jacs)
+        if isinstance(self.cons, list):
+            jacs = []
+            for con in self.cons:
+                if 'jac' in con:
+                    jacs.append(con['jac'](x))
+                else:
+                    raise ValueError("Jacobian not provided for constraint.")
+            return np.vstack(jacs)
+        else:
+            return self.cons['jac'](x)
 
     def solve(self, x0, solver_options=None):
         ipopt_options = self.ipopt_options
