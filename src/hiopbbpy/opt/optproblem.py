@@ -17,6 +17,8 @@ Authors:    Tucker Hartland <hartland1@llnl.gov>
             Nai-Yuan Chiang <chiang7@llnl.gov>
 """
 from typing import Callable, Dict, List, Union, Tuple
+from ..utils.util import check_required_keys
+
 
 class IpoptProb:
     def __init__(self, objective, gradient, constraint:Union[Dict, List[Dict]], xbounds, solver_options=None):
@@ -34,6 +36,7 @@ class IpoptProb:
         if isinstance(self.cons, list):
             # constraints is provided as a list of dict, supported by SLSQP and Ipopt
             for con in self.cons:
+                check_required_keys(con,['type', 'fun'])
                 if con['type'] == 'eq':
                     self.cl.append(0.0)
                     self.cu.append(0.0)
@@ -43,6 +46,7 @@ class IpoptProb:
                 else:
                     raise ValueError(f"Unknown constraint type: {con['type']}")
         elif isinstance(self.cons, dict):
+            check_required_keys(self.cons,['cons', 'jac', 'cl', 'cu'])
             # constraints is provided as a dict, supported by trust-constr and Ipopt
             self.cl = constraint['cl']
             self.cu = constraint['cu']
