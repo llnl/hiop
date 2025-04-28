@@ -98,11 +98,16 @@ class BOAlgorithm(BOAlgorithmBase):
 
         if options and 'opt_solver' in options:
             opt_solver = options['opt_solver']
-            assert opt_solver in ["SLSQP", "IPOPT"], f"Invalid opt_solver: {opt_solver}"
+            assert opt_solver in ["SLSQP", "trust-constr", "IPOPT"], f"Invalid opt_solver: {opt_solver}"
         else:
             opt_solver = "SLSQP"
-        self.set_method(opt_solver)
 
+        if isinstance(prob.constraints, dict):
+            assert opt_solver in ["trust-constr", "IPOPT"], f"Invalid opt_solver: {opt_solver} while constraints are defined as a dict"
+        elif isinstance(prob.constraints, list):
+            assert opt_solver in ["SLSQP", "IPOPT"], f"Invalid opt_solver: {opt_solver} while constraints are defined as a list of dict"
+
+        self.set_method(opt_solver)
 
         if user_grad:
             self.fun_grad = user_grad
@@ -241,11 +246,19 @@ class BOAlgorithm(BOAlgorithmBase):
 
 # Find the minimum of the input objective `fun`, using the minimize function from SciPy. 
 def minimizer(fun, x0, method, bounds, constraints, solver_options):
-    if method != "IPOPT":
+    if method == "SLSQP":
         if 'grad' in fun:
             y = minimize(fun['obj'], x0, method=method, bounds=bounds, jac=fun['grad'], constraints=constraints, options=solver_options)
         else:
             y = minimize(fun['obj'], x0, method=method, bounds=bounds, constraints=constraints, options=solver_options)
+        success = y.success
+        if not success:
+            print(y.message)
+        xopt = y.x
+        yopt = y.fun
+    elif method == "trust-constr":
+        nonlinear_constraint = NonlinearConstraint(constraints['cons'], constraints['cl'], constraints['cu'], jac=constraints['jac'])
+        y = minimize(fun['obj'], x0, method=method, bounds=bounds, constraints=[nonlinear_constraint], options=solver_options)
         success = y.success
         if not success:
             print(y.message)

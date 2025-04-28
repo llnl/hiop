@@ -16,10 +16,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 import warnings
 warnings.filterwarnings("ignore")
-from LpNormProblem import LpNormProblem
 from hiopbbpy.surrogate_modeling import smtKRG
 from hiopbbpy.opt import BOAlgorithm
-from hiopbbpy.problems import BraninProblem
+from hiopbbpy.problems import BraninProblem, LpNormProblem
 
 
 # Get user input for the number of repetitions from command-line arguments
@@ -49,9 +48,32 @@ def con_ineq(x):
 def con_jac_ineq(x):
   return  np.array([1.0, -1.0])
 
-# only 'trust-constr' method supports vector-valued constraints
-user_constraint = [{'type': 'ineq', 'fun': con_ineq, 'jac': con_jac_ineq},
-                   {'type': 'eq',   'fun': con_eq,   'jac': con_jac_eq}]
+# 'SLSQP' requires constraints defined in a list of dict
+user_constraint_list = [{'type': 'eq',   'fun': con_eq,   'jac': con_jac_eq},
+                   {'type': 'ineq', 'fun': con_ineq, 'jac': con_jac_ineq}]
+
+def cons_vec(x):
+    x1, x2 = x
+    return np.array([
+        (x1 - 2)**2 + (x2 - 2.5)**2 - 2,
+        x1 + x2 - 5,
+        -x1
+    ])
+
+# Jacobian of constraints
+def cons_jac_vec(x):
+    x1, x2 = x
+    return np.array([
+        [2 * (x1 - 2), 2 * (x2 - 2.5)],
+        [1, 1],
+        [-1, 0]
+    ])
+
+cl = -np.inf * np.ones(3)
+cu = np.zeros(3)
+
+# 'trust-constr' method supports vector-valued constraints
+user_constraint_dict = {'cons': cons_vec, 'jac': cons_jac_vec, 'cl': cl, 'cu': cu}
 
 retval = 0
 for prob_type in prob_type_l:
@@ -60,7 +82,7 @@ for prob_type in prob_type_l:
       problem = LpNormProblem(nx, xlimits)
    else:
       problem = BraninProblem()
-   problem.set_constraints(user_constraint)
+   problem.set_constraints(user_constraint_dict) #use user_constraint_dict or user_constraint_list
 
    for acq_type in acq_type_l:
       print("Problem name: ", problem.name)
@@ -77,7 +99,7 @@ for prob_type in prob_type_l:
       options = {
         'acquisition_type': acq_type,
         'bo_maxiter': 10,
-        'opt_solver': 'IPOPT', #"SLSQP" "IPOPT"
+        'opt_solver': 'IPOPT',  #"SLSQP" "IPOPT" "trust-constr"
         'batch_size': 1,
         'solver_options': {
            'max_iter': 200,
