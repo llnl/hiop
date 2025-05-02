@@ -16,10 +16,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 import warnings
 warnings.filterwarnings("ignore")
-from LpNormProblem import LpNormProblem
 from hiopbbpy.surrogate_modeling import smtKRG
 from hiopbbpy.opt import BOAlgorithm
-from hiopbbpy.problems import BraninProblem
+from hiopbbpy.problems import BraninProblem, LpNormProblem
 
 
 # Get user input for the number of repetitions from command-line arguments

@@ -81,7 +81,7 @@ class Problem:
 
         return xsample
 
-    def set_constraints(self, constraints: dict):
+    def set_constraints(self, constraints):
         self.constraints = constraints
 
 
