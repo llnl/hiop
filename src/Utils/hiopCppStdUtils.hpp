@@ -12,7 +12,7 @@
 #include <numeric>
 #include <cassert>
 #include <math.h>
-#include <chrono>
+#include <random>
 
 namespace hiop
 {
@@ -79,13 +79,15 @@ inline void reorder(T* arr, const std::vector<int> &index, int n)
   const std::vector<T> temp(arr, arr+n);
 
   // arr[i] should be present at index[i] index
-  for(int i = 0; i < n; ++i) arr[i] = temp[index[i]];
+  for(int i = 0; i < n; ++i) {
+    arr[i] = temp[index[i]];
+  }
 }
 
 static inline unsigned long generate_seed()
 {
 #ifdef NDEBUG
-  return std::chrono::system_clock::now().time_since_epoch().count();
+  return std::random_device{}();
 #else
   return 0;
 #endif
