@@ -14,7 +14,7 @@ from ..surrogate_modeling.gp import GaussianProcess
 from .acquisition import LCBacquisition, EIacquisition
 from ..problems.problem import Problem
 from .optproblem import IpoptProb
-from smt.applications.ego import Evaluator
+from ..utils.util import Evaluator
 
 # A base class defining a general framework for Bayesian Optimization
 class BOAlgorithmBase:
