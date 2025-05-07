@@ -57,3 +57,17 @@ class Evaluator(object):
 
         """
         return fun(x)
+
+
+class MPIEvaluator(Evaluator):
+    def __init__(self, manager, executor_type):
+        self.manager = manager
+        self.executor_type = executor_type
+    def run(self, fun, Xin):
+        nevals = Xin.shape[0]
+        self.manager.submit_tasks(fun, [np.atleast_2d(Xin[i]) for i in range(nevals)], execute_at=self.executor_type)
+        self.manager.sync()
+        Xout, Fout = self.manager.retrieve_results()
+        Y = np.ndarray((nevals, 1))
+        Y[:,0] = np.array(Fout)[:,0,0]
+        return Y
