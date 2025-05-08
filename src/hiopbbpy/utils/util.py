@@ -58,8 +58,14 @@ class Evaluator(object):
         """
         return fun(x)
 
-
 class MPIEvaluator(Evaluator):
+    """
+    A wrapper of the evaluation_manager code.
+    Note that application codes application.py that use this Evaluator should be run as
+    env MPI4PY_FUTURES_MAX_WORKERS=8 mpiexec -n 1 python application.py
+    Also, the application code should have a "main" section wrapped in
+    if __name__ == "__main__":
+    """
     def __init__(self, manager, executor_type):
         self.manager = manager
         self.executor_type = executor_type
