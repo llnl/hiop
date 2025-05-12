@@ -1291,6 +1291,33 @@ void hiopOptionsNLP::register_options()
         "specified by 'checkpoint_file' option.";
     register_str_option("checkpoint_load_on_start", range[1], range, msgclos);
   }
+
+  //
+  // Derivative checker
+  // 
+  {
+    vector<string> range = {"no", "first-order", "second-order"};
+    constexpr char msg_der[] =
+      "Check user-provided derivatives using finite differences and report comparison. "
+      "";
+    register_str_option("derivative_check", range[0], range, msg_der);
+
+    constexpr char msg_pert[] =
+      "Finite difference perturbation of 'x' variable entries, relative to entry's values.";
+    register_num_option("derivative_check_perturbation", 1e-8, 1e-20, 1000, msg_pert);
+
+    constexpr char msg_tol[] =
+      "Tolerance for marking a mismatch between user-provided derivative and finite difference, "
+      "relative to derivative value provided by the user.";
+    register_num_option("derivative_check_tolerance", 1e-4, 1e-20, 1000, msg_tol);
+      
+    range = {"no", "yes"};
+    constexpr char msg_printall[] =
+      "Print the comparison of user-provided derivatives and finite difference approximation "
+      "for all, including when no mismatch occurs.";
+    register_str_option("derivative_check_print_all", range[0], range, msg_printall);
+
+  }
 }
 void hiopOptionsNLP::ensure_consistence()
 {

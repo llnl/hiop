@@ -953,6 +953,10 @@ hiopSolveStatus hiopAlgFilterIPMQuasiNewton::run()
   // types of linear algebra objects are known now
   auto* Hess = dynamic_cast<HessianDiagPlusRowRank*>(_Hess_Lagr);
 
+  if(nlp->options->GetString("derivative_check") != "no") {
+    nlp->run_derivative_checker();
+  }
+  
   nlp->runStats.initialize();
   nlp->runStats.kkt.initialize();
   ////////////////////////////////////////////////////////////////////////////////////

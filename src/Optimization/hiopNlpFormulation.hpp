@@ -118,6 +118,12 @@ public:
   virtual bool eval_Jac_d(hiopVector& x, bool new_x, hiopMatrix& Jac_d) = 0;
   virtual bool eval_Jac_c_d(hiopVector& x, bool new_x, hiopMatrix& Jac_c, hiopMatrix& Jac_d);
 
+  /**
+   * @brief Runs a (slow) derivative checker using finite differences, controlled by user options.
+   *
+   * @pre Assumes option 'derivative_checker' is set to 'first-order' or 'second-order'.
+   */
+  void run_derivative_checker();
 protected:
   // calls specific hiopInterfaceXXX::eval_Jac_cons and deals with specializations of hiopMatrix arguments
   virtual bool eval_Jac_c_d_interface_impl(hiopVector& x, bool new_x, hiopMatrix& Jac_c, hiopMatrix& Jac_d) = 0;

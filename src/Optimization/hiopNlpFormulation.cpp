@@ -757,6 +757,108 @@ bool hiopNlpFormulation::eval_grad_f(hiopVector& x, bool new_x, hiopVector& grad
   return bret;
 }
 
+void hiopNlpFormulation::run_derivative_checker()
+{
+  auto* it_hiop = new hiopIterate(this);
+  hiopVector* lambdas =
+    hiop::LinearAlgebraFactory::create_vector(options->GetString("mem_space"), n_cons_);
+  assert(n_cons_ == it_hiop->get_yc()->get_size() + it_hiop->get_yd()->get_size());
+
+  // finite difference (FD) check at initial point provided by the user 
+  hiopVector* x0_for_user = nlp_transformations_.apply_inv_to_x(*it_hiop->get_x(), true);
+
+  double* zL0_for_user = it_hiop->get_zl()->local_data();
+  double* zU0_for_user = it_hiop->get_zu()->local_data();
+  double* lambda_for_user = lambdas->local_data();
+  double* d_for_user = it_hiop->get_d()->local_data();
+
+  if(options->GetString("warm_start") == "yes") {
+    log->printf(hovError,
+                "Derivative check NOT supported for 'warm' starting points. Use 'get_starting_point' "
+                "instead to specifiy the point to which the derivatives should be checked.");
+    return;
+  }
+  bool duals_avail = false;
+  bool slacks_avail = false;
+  bool bret = interface_base.get_starting_point(nlp_transformations_.n_pre(),
+                                                n_cons_,
+                                                x0_for_user->local_data(),
+                                                duals_avail,
+                                                zL0_for_user,
+                                                zU0_for_user,
+                                                lambda_for_user,
+                                                slacks_avail,
+                                                d_for_user);
+  //if above failed, try the other user-provided starting point method
+  if(!bret) {
+    bret = interface_base.get_starting_point(nlp_transformations_.n_pre(), x0_for_user->local_data());
+  }
+  if(!bret) {
+    log->printf(hovError, "Derivate check failed due to failure(s) in user-provided starting point methods.");
+    return;
+  }
+  
+
+  hiopVector& x_ref = *x0_for_user;
+  const double pert = options->GetNumeric("derivative_check_perturbation");
+  const double derivative_check_tolerance = options->GetNumeric("derivative_check_tolerance");
+  const bool print_all = ( options->GetString("derivative_check_print_all") != "no" );
+  hiopVector* x_pert = x_ref.alloc_clone();
+
+  //
+  // gradient and Jacobian
+  //
+  if(options->GetString("derivative_check") == "first-order") {
+    std::cout << "Starting derivative checker for gradient ..." << std::endl;
+    double f_ref;
+    bret = interface_base.eval_f(nlp_transformations_.n_pre(), x_ref.local_data_const(), true, f_ref);
+    if(!bret) {
+      log->printf(hovError, "Derivative check error: in evaluating user objective.");
+      return;
+    }
+    
+    hiopVector* grad_exact = x_ref.alloc_clone();
+    bret = interface_base.eval_grad_f(nlp_transformations_.n_pre(),
+                                      x_ref.local_data_const(),
+                                      false,
+                                      grad_exact->local_data());
+    if(!bret) {
+      log->printf(hovError, "Derivative check error: in evaluating user gradient.");
+      return;
+    }
+    
+    // grad_fd = (f(x_pert) - f(x_ref)) / pert    
+    for(index_type idx=0; idx<nlp_transformations_.n_pre(); ++idx) {
+      x_pert->copyFrom(x_ref);
+      x_pert->local_data()[idx] += pert * ::std::max(::std::abs(x_ref.local_data()[idx]), 1.0);
+      //evaluate at the perturbed point
+      double f_pert;
+      bret = interface_base.eval_f(nlp_transformations_.n_pre(), x_pert->local_data_const(), true, f_pert);
+
+      const double grad_fd = (f_pert-f_ref)/pert;
+      const double grad_ex = grad_exact->local_data()[idx];
+      const double scale = ::std::max(grad_ex, ::std::max(::std::abs(grad_fd), derivative_check_tolerance));
+      double rel_error = ::std::abs(grad_fd - grad_ex) / scale;
+
+      char err_marker = rel_error > derivative_check_tolerance ? '!' : ' ';
+      if(rel_error > derivative_check_tolerance || print_all) {
+        std::cout << err_marker << " grad[" << std::setw(5) << idx << "]=" 
+                  << std::fixed << std::setprecision(14) << std::setw(21) << grad_ex << " " << grad_fd
+                  << " [" << std::scientific << std::setprecision(3) << std::setw(9) << rel_error << "]"
+                  << std::endl;
+      }
+      
+    }
+
+    std::cout << "Derivative checker for gradient finished: " << num_errs << " detected." << std::endl;
+    delete grad_exact;
+  }
+
+  delete x_pert;
+  delete it_hiop;
+  delete lambdas;
+}
+
 bool hiopNlpFormulation::get_starting_point(hiopVector& x0_for_hiop,
                                             bool& duals_avail,
                                             hiopVector& zL0_for_hiop,
