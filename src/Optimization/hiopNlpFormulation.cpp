@@ -809,7 +809,9 @@ void hiopNlpFormulation::run_derivative_checker()
   // gradient and Jacobian
   //
   if(options->GetString("derivative_check") == "first-order") {
+    
     std::cout << "Starting derivative checker for gradient ..." << std::endl;
+    size_t num_errs = 0;
     double f_ref;
     bret = interface_base.eval_f(nlp_transformations_.n_pre(), x_ref.local_data_const(), true, f_ref);
     if(!bret) {
@@ -840,17 +842,23 @@ void hiopNlpFormulation::run_derivative_checker()
       const double scale = ::std::max(grad_ex, ::std::max(::std::abs(grad_fd), derivative_check_tolerance));
       double rel_error = ::std::abs(grad_fd - grad_ex) / scale;
 
-      char err_marker = rel_error > derivative_check_tolerance ? '!' : ' ';
-      if(rel_error > derivative_check_tolerance || print_all) {
-        std::cout << err_marker << " grad[" << std::setw(5) << idx << "]=" 
-                  << std::fixed << std::setprecision(14) << std::setw(21) << grad_ex << " " << grad_fd
-                  << " [" << std::scientific << std::setprecision(3) << std::setw(9) << rel_error << "]"
+      const bool b_err = rel_error > derivative_check_tolerance;
+      char err_marker = ' ';
+      if(b_err) {
+        err_marker = '!';
+        num_errs++;
+      }
+      if(b_err || print_all) {
+        std::cout << err_marker << " grad[" << std::setw(5) << idx << "] "
+                  << "user " << std::fixed << std::setprecision(14) << std::setw(21) << grad_ex << "  "
+                  << "fd " << std::fixed << std::setprecision(14) << std::setw(21) << grad_fd
+                  << " relerr [" << std::scientific << std::setprecision(3) << std::setw(9) << rel_error << "]"
                   << std::endl;
       }
       
     }
 
-    std::cout << "Derivative checker for gradient finished: " << num_errs << " detected." << std::endl;
+    std::cout << "Derivative checker for gradient finished: " << num_errs << " errors detected." << std::endl;
     delete grad_exact;
   }
 
