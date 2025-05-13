@@ -153,6 +153,43 @@ void hiopVectorPar::setToConstant_w_patternSelect(double c, const hiopVector& se
     }
   }
 }
+
+void hiopVectorPar::set_elem(const index_type& idx_global, const double& val)
+{
+  assert(idx_global>=0 && idx_global<n_);
+  assert(idx_global-glob_il_ < n_local_);
+  const index_type idx_local = idx_global - glob_il_;
+  assert(idx_local < n_local_);
+  if(idx_local>=0 && idx_global<glob_iu_) {
+    data_[idx_local] = val;
+  }
+}
+  
+double hiopVectorPar::get_elem(const index_type& idx_global) const
+{
+  assert(idx_global>=0 && idx_global<n_);
+  assert(idx_global-glob_il_ < n_local_);
+  const index_type idx_local = idx_global - glob_il_;
+  assert(idx_local < n_local_);
+
+  double val;
+  if(idx_local>=0 && idx_global<glob_iu_) {
+    val = data_[idx_local];
+  } else {
+    val = 0.;
+  }
+#ifdef HIOP_USE_MPI
+  double valg;
+  //Bcast would be slightly more efficient but "root" rank is not known to the "other" ranks since
+  //we do not store the global index distribution.
+  MPI_Allreduce(&val, &valg, 1, MPI_DOUBLE, MPI_SUM, comm_);
+  return valg;
+#else
+  return val;
+#endif
+
+}
+
 void hiopVectorPar::copyFrom(const hiopVector& v_in)
 {
   const hiopVectorPar& v = dynamic_cast<const hiopVectorPar&>(v_in);

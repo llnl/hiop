@@ -798,7 +798,6 @@ void hiopNlpFormulation::run_derivative_checker()
     return;
   }
   
-
   hiopVector& x_ref = *x0_for_user;
   const double pert = options->GetNumeric("derivative_check_perturbation");
   const double derivative_check_tolerance = options->GetNumeric("derivative_check_tolerance");
@@ -831,8 +830,10 @@ void hiopNlpFormulation::run_derivative_checker()
     
     // grad_fd = (f(x_pert) - f(x_ref)) / pert    
     for(index_type idx=0; idx<nlp_transformations_.n_pre(); ++idx) {
+      const double val_ref = x_ref.get_elem(idx);
+      cout << "val =" << val_ref << std::endl;
       x_pert->copyFrom(x_ref);
-      x_pert->local_data()[idx] += pert * ::std::max(::std::abs(x_ref.local_data()[idx]), 1.0);
+      x_pert->set_elem(idx, val_ref+pert*::std::max(::std::abs(val_ref), 1.0));
       //evaluate at the perturbed point
       double f_pert;
       bret = interface_base.eval_f(nlp_transformations_.n_pre(), x_pert->local_data_const(), true, f_pert);
