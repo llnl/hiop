@@ -181,13 +181,12 @@ double hiopVectorPar::get_elem(const index_type& idx_global) const
 #ifdef HIOP_USE_MPI
   double valg;
   //Bcast would be slightly more efficient but "root" rank is not known to the "other" ranks since
-  //we do not store the global index distribution.
+  //we do not store the global index patitioning.
   MPI_Allreduce(&val, &valg, 1, MPI_DOUBLE, MPI_SUM, comm_);
   return valg;
 #else
   return val;
 #endif
-
 }
 
 void hiopVectorPar::copyFrom(const hiopVector& v_in)

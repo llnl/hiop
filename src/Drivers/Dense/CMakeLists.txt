@@ -30,7 +30,7 @@ install(
 ##########################################################
 # CMake Tests
 ##########################################################
-add_test(NAME NlpDenseCons1_5H  COMMAND ${RUNCMD} "$<TARGET_FILE:NlpDenseConsEx1.exe>"  "500" "1.0" "-selfcheck")
+add_test(NAME NlpDenseCons1_5H  COMMAND ${RUNCMD} "$<TARGET_FILE:NlpDenseConsEx1.exe>"  "10" "1.0" "-selfcheck")
 add_test(NAME NlpDenseCons1_5K  COMMAND ${RUNCMD} "$<TARGET_FILE:NlpDenseConsEx1.exe>" "5000" "1.0" "-selfcheck")
 add_test(NAME NlpDenseCons1_50K COMMAND ${RUNCMD} "$<TARGET_FILE:NlpDenseConsEx1.exe>" "50000" "1.0" "-selfcheck")
 if(HIOP_USE_MPI)

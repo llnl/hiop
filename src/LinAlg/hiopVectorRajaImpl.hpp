@@ -762,6 +762,47 @@ void hiopVectorRaja<MEM, POL>::copyTo(double* dest) const
   this_nonconst->exec_space_.copy(dest, data_dev_, n_local_);
 }
 
+template<class MEM, class POL>
+void hiopVector<MEM, POL>::set_elem(const index_type& idx_global, const double& val)
+{
+  assert(idx_global>=0 && idx_global<n_);
+  assert(idx_global-glob_il_ < n_local_);
+  const index_type idx_local = idx_global - glob_il_;
+  assert(idx_local < n_local_);
+  if(idx_local>=0 && idx_global<glob_iu_) {
+    //data_[idx_local] = val;
+    exec_space_.copy(data_dev_+idx_local, &val, 1, exec_space_host_);
+  }
+}
+
+template<class MEM, class POL>
+double hiopVectorRaja<MEM, POL>::get_elem(const index_type& idx_global) const
+{
+  assert(idx_global>=0 && idx_global<n_);
+  assert(idx_global-glob_il_ < n_local_);
+  const index_type idx_local = idx_global - glob_il_;
+  assert(idx_local < n_local_);
+
+  double val;
+  if(idx_local>=0 && idx_global<glob_iu_) {
+    //val = data_dev_[idx_local];
+    exec_space_host.copy(&val, data_dev_+idx_local, 1, exec_space_);
+  } else {
+    val = 0.;
+  }
+#ifdef HIOP_USE_MPI
+  double valg;
+  //Bcast would be slightly more efficient but "root" rank is not known to the "other" ranks since
+  //we do not store the global index patitioning.
+  MPI_Allreduce(&val, &valg, 1, MPI_DOUBLE, MPI_SUM, comm_);
+  return valg;
+#else
+  return val;
+#endif
+
+}
+
+
 /**
  * @brief L2 vector norm.
  *

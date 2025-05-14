@@ -102,9 +102,16 @@ int main(int argc, char** argv)
   DenseConsEx1 problem(mesh_size, ratio);
   hiop::hiopNlpDenseConstraints nlp(problem);
 
+  if(mesh_size==10) {
+    nlp.options->SetStringValue("derivative_check", "first-order");
+    nlp.options->SetStringValue("derivative_check_print_all", "yes");
+  }
+
+  
   hiop::hiopAlgFilterIPM solver(&nlp);
   problem.set_solver(&solver);
 
+  
   hiop::hiopSolveStatus status = solver.run();
   objective = solver.getObjective();
 
