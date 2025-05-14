@@ -147,7 +147,7 @@ void hiopVectorCuda::set_to_random_uniform(double minv, double maxv)
 {
   double* data = data_;
   hiop::cuda::array_random_uniform_kernel(n_local_, data, minv, maxv);
-}  // namespace hiop
+}
 
 /// @brief Set all elements that are not zero in ix to  c, and the rest to 0
 void hiopVectorCuda::setToConstant_w_patternSelect(double c, const hiopVector& select)
@@ -157,6 +157,43 @@ void hiopVectorCuda::setToConstant_w_patternSelect(double c, const hiopVector& s
   componentMult(select);
 }
 
+void hiopVectorCuda::set_elem(const index_type& idx_global, const double& val)
+{
+  assert(idx_global>=0 && idx_global<n_);
+  assert(idx_global-glob_il_ < n_local_);
+  const index_type idx_local = idx_global - glob_il_;
+  assert(idx_local < n_local_);
+  if(idx_local>=0 && idx_global<glob_iu_) {
+    //data_[idx_local] = val;
+    exec_space_.copy(data_dev_+idx_local, &val, 1, exec_space_host_);
+  }
+}
+
+double hiopVectorCuda::get_elem(const index_type& idx_global) const
+{
+  assert(idx_global>=0 && idx_global<n_);
+  assert(idx_global-glob_il_ < n_local_);
+  const index_type idx_local = idx_global - glob_il_;
+  assert(idx_local < n_local_);
+
+  double val;
+  if(idx_local>=0 && idx_global<glob_iu_) {
+    //val = data_dev_[idx_local];
+    exec_space_host.copy(&val, data_dev_+idx_local, 1, exec_space_);
+  } else {
+    val = 0.;
+  }
+#ifdef HIOP_USE_MPI
+  double valg;
+  //Bcast would be slightly more efficient but "root" rank is not known to the "other" ranks since
+  //we do not store the global index patitioning.
+  MPI_Allreduce(&val, &valg, 1, MPI_DOUBLE, MPI_SUM, comm_);
+  return valg;
+#else
+  return val;
+#endif
+}
+  
 /// @brief Copy the elements of v
 void hiopVectorCuda::copyFrom(const hiopVector& v_in)
 {

@@ -799,7 +799,6 @@ double hiopVectorRaja<MEM, POL>::get_elem(const index_type& idx_global) const
 #else
   return val;
 #endif
-
 }
 
 
