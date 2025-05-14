@@ -165,7 +165,7 @@ void hiopVectorCuda::set_elem(const index_type& idx_global, const double& val)
   assert(idx_local < n_local_);
   if(idx_local>=0 && idx_global<glob_iu_) {
     //data_[idx_local] = val;
-    exec_space_.copy(data_dev_+idx_local, &val, 1, exec_space_host_);
+    exec_space_.copy(data_+idx_local, &val, 1, exec_space_host_);
   }
 }
 
@@ -179,7 +179,7 @@ double hiopVectorCuda::get_elem(const index_type& idx_global) const
   double val;
   if(idx_local>=0 && idx_global<glob_iu_) {
     //val = data_dev_[idx_local];
-    exec_space_host.copy(&val, data_dev_+idx_local, 1, exec_space_);
+    exec_space_host.copy(&val, data_+idx_local, 1, exec_space_);
   } else {
     val = 0.;
   }
@@ -975,10 +975,16 @@ hiopVector* hiopVectorCuda::new_copy() const
 }
 
 /// @brief copy data from host mirror to device
-void hiopVectorCuda::copyToDev() { exec_space_.copy(data_, data_host_mirror_, n_local_, exec_space_host_); }
+void hiopVectorCuda::copyToDev()
+{
+  exec_space_.copy(data_, data_host_mirror_, n_local_, exec_space_host_);
+}
 
 /// @brief copy data from device to host mirror
-void hiopVectorCuda::copyFromDev() { exec_space_host_.copy(data_host_mirror_, data_, n_local_, exec_space_); }
+void hiopVectorCuda::copyFromDev()
+{
+  exec_space_host_.copy(data_host_mirror_, data_, n_local_, exec_space_);
+}
 
 /// @brief copy data from host mirror to device
 void hiopVectorCuda::copyToDev() const

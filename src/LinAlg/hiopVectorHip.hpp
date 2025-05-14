@@ -387,10 +387,10 @@ private:
   size_type n_local_;
   mutable hiopVectorInt* idx_cumsum_;
 
-  /** needed for cuda **/
+  /** HIP Blas handle **/
   hipblasHandle_t handle_hipblas_;
 
-  /** copy constructor, for internal/private use only (it doesn't copy the elements.) */
+  /** Copy constructor, for internal/private use only (it doesn't copy the elements.) */
   hiopVectorHip(const hiopVectorHip&);
 };
 
