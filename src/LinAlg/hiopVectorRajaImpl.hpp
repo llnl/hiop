@@ -763,7 +763,7 @@ void hiopVectorRaja<MEM, POL>::copyTo(double* dest) const
 }
 
 template<class MEM, class POL>
-void hiopVector<MEM, POL>::set_elem(const index_type& idx_global, const double& val)
+void hiopVectorRaja<MEM, POL>::set_elem(const index_type& idx_global, const double& val)
 {
   assert(idx_global>=0 && idx_global<n_);
   assert(idx_global-glob_il_ < n_local_);

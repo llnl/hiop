@@ -179,7 +179,7 @@ double hiopVectorCuda::get_elem(const index_type& idx_global) const
   double val;
   if(idx_local>=0 && idx_global<glob_iu_) {
     //val = data_dev_[idx_local];
-    exec_space_host.copy(&val, data_+idx_local, 1, exec_space_);
+    exec_space_host_.copy(&val, data_+idx_local, 1, exec_space_);
   } else {
     val = 0.;
   }
