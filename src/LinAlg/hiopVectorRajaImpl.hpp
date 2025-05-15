@@ -770,8 +770,9 @@ void hiopVectorRaja<MEM, POL>::set_elem(const index_type& idx_global, const doub
 
   if(idx_local>=0 && idx_global<glob_iu_) {
     assert(idx_local < n_local_);
+    double* data = data_dev_;
     //data_[idx_local] = val;
-    exec_space_.copy(data_dev_+idx_local, &val, 1, exec_space_host_);
+    RAJA::forall<hiop_raja_exec>(RAJA::RangeSegment(idx_local, idx_local+1), RAJA_LAMBDA(RAJA::Index_type i) { data[i] = val; });
   }
 }
 
