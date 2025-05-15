@@ -377,7 +377,7 @@ public:
 
 private:
   ExecSpace<MemBackendHip, ExecPolicyHip> exec_space_;
-  ExecSpace<MemBackendCpp, ExecPolicySeq> exec_space_host_;
+  mutable ExecSpace<MemBackendCpp, ExecPolicySeq> exec_space_host_;
 
   MPI_Comm comm_;
   double* data_host_mirror_;
