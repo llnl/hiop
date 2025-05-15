@@ -784,8 +784,20 @@ double hiopVectorRaja<MEM, POL>::get_elem(const index_type& idx_global) const
   double val;
   if(idx_local>=0 && idx_global<glob_iu_) {
     assert(idx_local < n_local_);
-    //val = data_dev_[idx_local];
-    exec_space_host_.copy(&val, data_dev_+idx_local, 1, exec_space_);
+
+    //copyFromDev would copy unnecessary many elems
+    //this->copyFromDev();
+    
+    //one elem direct copy fails because UMPIRE does not recognize data_dev_+idx_local as a pointer he allocated!
+
+    //using one elem reduce
+    double* data = data_dev_;
+    RAJA::ReduceSum<hiop_raja_reduce, double> sum(0.0);
+    RAJA::forall<hiop_raja_exec>(
+      RAJA::RangeSegment(idx_local, idx_local+1),
+      RAJA_LAMBDA(RAJA::Index_type i) { sum += data[i]; });
+
+    val = sum.get();
   } else {
     val = 0.;
   }
