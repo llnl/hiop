@@ -139,41 +139,40 @@ public:
   /// Test set_elem method of HiOp vector
   bool vector_set_elem(hiop::hiopVector& x, const int rank)
   {
-    global_ordinal_type sz = x.get_size();
-    if(sz==0) {
-      return true;
-    }
-
-    //first set to zero, then set select entries to one and two
-    x.setToConstant(zero);
     int fail = 0;
-    if(sz==1) {
-      x.set_elem(0, three);
-    } else {
-      const global_ordinal_type idx1 = 1;
-      const global_ordinal_type idx2 = sz-1;
+    global_ordinal_type sz = x.get_size();
+    if(sz>0) {
+
+      //first set to zero, then set select entries to one and two
+      x.setToConstant(zero);
       
-      x.set_elem(idx1, two);
-      x.set_elem(idx2, one);
+      if(sz==1) {
+        x.set_elem(0, three);
+      } else {
+        const global_ordinal_type idx1 = 1;
+        const global_ordinal_type idx2 = sz-1;
+        
+        x.set_elem(idx1, two);
+        x.set_elem(idx2, one);
+      }
+      const real_type nrm1 = x.onenorm();
+      fail = (std::abs(nrm1-three) > std::numeric_limits<real_type>::epsilon());
     }
-    const real_type nrm1 = x.onenorm();
-    fail = (std::abs(nrm1-three) > std::numeric_limits<real_type>::epsilon());
+    printMessage(fail, __func__);
     return reduceReturn(fail, &x);
   }
 
-  /// Test get_elem of HiOpVector
+  /// Test get_elem of HiOp vector
   bool vector_get_elem(hiop::hiopVector& x, const int rank)
   {
-    global_ordinal_type sz = x.get_size();
-    if(sz==0) {
-      return true;
-    }
-
-    x.setToConstant(quarter);
-
     int fail = 0;
-    fail += (x.get_elem(0)!=quarter);
-    fail += (x.get_elem(sz-1)!=quarter);
+    global_ordinal_type sz = x.get_size();
+    if(sz>0) {
+      x.setToConstant(quarter);
+      fail += (x.get_elem(0)!=quarter);
+      fail += (x.get_elem(sz-1)!=quarter);
+    }
+    printMessage(fail, __func__);
     return reduceReturn(fail, &x);
   }
   

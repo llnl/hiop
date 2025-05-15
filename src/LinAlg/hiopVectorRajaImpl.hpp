@@ -766,10 +766,10 @@ template<class MEM, class POL>
 void hiopVectorRaja<MEM, POL>::set_elem(const index_type& idx_global, const double& val)
 {
   assert(idx_global>=0 && idx_global<n_);
-  assert(idx_global-glob_il_ < n_local_);
   const index_type idx_local = idx_global - glob_il_;
-  assert(idx_local < n_local_);
+
   if(idx_local>=0 && idx_global<glob_iu_) {
+    assert(idx_local < n_local_);
     //data_[idx_local] = val;
     exec_space_.copy(data_dev_+idx_local, &val, 1, exec_space_host_);
   }
@@ -779,14 +779,12 @@ template<class MEM, class POL>
 double hiopVectorRaja<MEM, POL>::get_elem(const index_type& idx_global) const
 {
   assert(idx_global>=0 && idx_global<n_);
-  assert(idx_global-glob_il_ < n_local_);
   const index_type idx_local = idx_global - glob_il_;
-  assert(idx_local < n_local_);
-
   double val;
   if(idx_local>=0 && idx_global<glob_iu_) {
+    assert(idx_local < n_local_);
     //val = data_dev_[idx_local];
-    exec_space_host.copy(&val, data_dev_+idx_local, 1, exec_space_);
+    exec_space_host_.copy(&val, data_dev_+idx_local, 1, exec_space_);
   } else {
     val = 0.;
   }

@@ -160,10 +160,9 @@ void hiopVectorCuda::setToConstant_w_patternSelect(double c, const hiopVector& s
 void hiopVectorCuda::set_elem(const index_type& idx_global, const double& val)
 {
   assert(idx_global>=0 && idx_global<n_);
-  assert(idx_global-glob_il_ < n_local_);
   const index_type idx_local = idx_global - glob_il_;
-  assert(idx_local < n_local_);
   if(idx_local>=0 && idx_global<glob_iu_) {
+    assert(idx_local < n_local_);
     //data_[idx_local] = val;
     exec_space_.copy(data_+idx_local, &val, 1, exec_space_host_);
   }
@@ -172,12 +171,11 @@ void hiopVectorCuda::set_elem(const index_type& idx_global, const double& val)
 double hiopVectorCuda::get_elem(const index_type& idx_global) const
 {
   assert(idx_global>=0 && idx_global<n_);
-  assert(idx_global-glob_il_ < n_local_);
   const index_type idx_local = idx_global - glob_il_;
-  assert(idx_local < n_local_);
 
   double val;
   if(idx_local>=0 && idx_global<glob_iu_) {
+    assert(idx_local < n_local_);
     //val = data_dev_[idx_local];
     exec_space_host_.copy(&val, data_+idx_local, 1, exec_space_);
   } else {

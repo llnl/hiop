@@ -329,7 +329,6 @@ public:
    */
   virtual double get_elem(const index_type& idx_global) const;
 
-  
   const ExecSpace<MEMBACKEND, EXECPOLICYRAJA>& exec_space() const { return exec_space_; }
   
 private:
@@ -341,7 +340,7 @@ private:
   // and transfers within and from `exec_space_host_` work with EXECPOLICYHOST (currently all such
   // combinations work).
   using EXECPOLICYHOST = hiop::ExecPolicySeq;
-  ExecSpace<MEMBACKENDHOST, EXECPOLICYHOST> exec_space_host_;
+  mutable ExecSpace<MEMBACKENDHOST, EXECPOLICYHOST> exec_space_host_;
 
   std::string mem_space_;
   MPI_Comm comm_;
