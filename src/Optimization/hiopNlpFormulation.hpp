@@ -351,6 +351,14 @@ protected:
   /// @brief internal NLP transformations that relaxes the bounds
   hiopBoundsRelaxer* relax_bounds_;
 
+  /**
+   * @brief Temporary disable all NLP transformations in the 'eval' functions.
+   * 
+   * Used by derivative checker to disable NLP transformations used by NlpFormulation's eval functions 
+   * and to allow working dirrectly with user NLP functions.
+   */
+  bool disable_nlp_transformations_;
+  
 #ifdef HIOP_USE_MPI
   // inter-process distribution of vectors
   index_type* vec_distrib_;
