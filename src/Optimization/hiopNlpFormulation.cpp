@@ -64,6 +64,7 @@
 
 #include <stdlib.h> /* exit, EXIT_FAILURE */
 #include <cassert>
+#include <sstream>
 
 using namespace std;
 namespace hiop
@@ -809,7 +810,7 @@ void hiopNlpFormulation::run_derivative_checker()
   //
   if(options->GetString("derivative_check") == "first-order") {
     
-    std::cout << "Starting derivative checker for gradient ..." << std::endl;
+    log->printf(hovWarning, "Starting derivative checker for gradient ...\n");
     size_t num_errs = 0;
     double f_ref;
     bret = interface_base.eval_f(nlp_transformations_.n_pre(), x_ref.local_data_const(), true, f_ref);
@@ -831,17 +832,18 @@ void hiopNlpFormulation::run_derivative_checker()
     // grad_fd = (f(x_pert) - f(x_ref)) / pert    
     for(index_type idx=0; idx<nlp_transformations_.n_pre(); ++idx) {
       const double val_ref = x_ref.get_elem(idx);
-      cout << "val =" << val_ref << std::endl;
+
       x_pert->copyFrom(x_ref);
-      x_pert->set_elem(idx, val_ref+pert*::std::max(::std::abs(val_ref), 1.0));
+      x_pert->set_elem(idx, val_ref+pert*max(abs(val_ref), 1.0));
+      
       //evaluate at the perturbed point
       double f_pert;
       bret = interface_base.eval_f(nlp_transformations_.n_pre(), x_pert->local_data_const(), true, f_pert);
 
       const double grad_fd = (f_pert-f_ref)/pert;
-      const double grad_ex = grad_exact->local_data()[idx];
-      const double scale = ::std::max(grad_ex, ::std::max(::std::abs(grad_fd), derivative_check_tolerance));
-      double rel_error = ::std::abs(grad_fd - grad_ex) / scale;
+      const double grad_ex = grad_exact->get_elem(idx);
+      const double scale = max(grad_ex, max(abs(grad_fd), derivative_check_tolerance));
+      double rel_error = abs(grad_fd - grad_ex) / scale;
 
       const bool b_err = rel_error > derivative_check_tolerance;
       char err_marker = ' ';
@@ -850,17 +852,24 @@ void hiopNlpFormulation::run_derivative_checker()
         num_errs++;
       }
       if(b_err || print_all) {
-        std::cout << err_marker << " grad[" << std::setw(5) << idx << "] "
-                  << "user " << std::fixed << std::setprecision(14) << std::setw(21) << grad_ex << "  "
-                  << "fd " << std::fixed << std::setprecision(14) << std::setw(21) << grad_fd
-                  << " relerr [" << std::scientific << std::setprecision(3) << std::setw(9) << rel_error << "]"
-                  << std::endl;
+        stringstream ss;
+        ss << err_marker << " grad[" << setw(5) << idx << "] "
+           << "user " << fixed << setprecision(14) << setw(21) << grad_ex << "  "
+           << "fd " << fixed << setprecision(14) << setw(21) << grad_fd
+           << " relerr [" << scientific << setprecision(3) << setw(9) << rel_error << "]";
+        log->printf(hovWarning, "%s\n", ss.str().c_str());
+        fflush(stdout);
       }
       
     }
-
-    std::cout << "Derivative checker for gradient finished: " << num_errs << " errors detected." << std::endl;
+    log->printf(hovWarning, "Derivative checker for gradient finished: %d errors detected.\n", num_errs);
     delete grad_exact;
+
+    // Jacobian
+    log->printf(hovWarning, "Starting derivative checker for Jacobian ...\n");
+    num_errs = 0;
+
+    log->printf(hovWarning, "Derivative checker for Jacobian finished: %d errors detected.\n", num_errs);
   }
 
   delete x_pert;
