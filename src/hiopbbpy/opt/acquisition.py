@@ -59,14 +59,16 @@ class EIacquisition(acquisition):
         sig = np.sqrt(self.gpsurrogate.variance(x))
 
         retval = []
-        if sig.size == 1 and np.abs(sig) > 1e-12:
+        if sig.size == 1 and np.abs(sig) > 1e-24:
             z = (y_min - pred) / sig
             retval = (y_min - pred) * norm.cdf(z) + sig * norm.pdf(z)
-            retval *= -1.
-        elif sig.size == 1 and np.abs(sig) <= 1e-12:
+        elif sig.size == 1 and np.abs(sig) <= 1e-24:
             retval = 0.0
         elif sig.size > 1:
             raise NotImplementedError("TODO --- Not implemented yet!")
+
+        ## instead of maximize EI, we minimize -EI
+        retval *= -1.
 
         return retval
 
@@ -79,7 +81,7 @@ class EIacquisition(acquisition):
         sig = np.sqrt(sig2)
 
         grad_EI = None
-        if sig.size == 1 and np.abs(sig) > 1e-12:
+        if sig.size == 1 and np.abs(sig) > 1e-24:
             dmean_dx = self.gpsurrogate.mean_gradient(x)
             dsig2_dx = self.gpsurrogate.variance_gradient(x)
             dsig_dx = 0.5 * dsig2_dx / sig
@@ -92,7 +94,7 @@ class EIacquisition(acquisition):
             dz_dx = -dmean_dx / sig - (y_min - mean) * dsig_dx / sig**2         
             grad_EI = -dmean_dx * ncdf + dsig_dx * npdf
             grad_EI *= -1.
-        elif sig.size == 1 and np.abs(sig) <= 1e-12:
+        elif sig.size == 1 and np.abs(sig) <= 1e-24:
             grad_EI = 0.0
         elif sig.size > 1:
             raise NotImplementedError("TODO --- Not implemented yet!")
