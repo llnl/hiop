@@ -762,8 +762,7 @@ bool hiopNlpFormulation::eval_grad_f(hiopVector& x, bool new_x, hiopVector& grad
 void hiopNlpFormulation::run_derivative_checker()
 {
   auto* it_hiop = new hiopIterate(this);
-  hiopVector* lambdas =
-    hiop::LinearAlgebraFactory::create_vector(options->GetString("mem_space"), n_cons_);
+  hiopVector* lambdas = this->alloc_dual_vec();
   assert(n_cons_ == it_hiop->get_yc()->get_size() + it_hiop->get_yd()->get_size());
 
   // finite difference (FD) check at initial point provided by the user 
@@ -866,15 +865,122 @@ void hiopNlpFormulation::run_derivative_checker()
     log->printf(hovWarning, "Derivative checker for gradient finished: %d errors detected.\n", num_errs);
     delete grad_exact;
 
-    // Jacobian
+    //
+    // Jacobian check
+    //
     log->printf(hovWarning, "Starting derivative checker for Jacobian ...\n");
     num_errs = 0;
-
     disable_nlp_transformations_ = true;
-    //hiopVector* a;
 
-    disable_nlp_transformations_ = false;
+    hiopVector* cons_ref = this->alloc_dual_vec();
+    if(temp_eq_ == nullptr) {
+      temp_eq_ = this->alloc_dual_eq_vec();
+    }
+    if(temp_ineq_ == nullptr) {
+      temp_ineq_ = this->alloc_dual_ineq_vec();
+    }
+    hiopVector& cons_c_ref = *temp_eq_;
+    hiopVector& cons_d_ref = *temp_ineq_;
+    
+    if(!this->eval_c_d(x_ref, true, cons_c_ref, cons_d_ref)) {
+      log->printf(hovError, "Derivative checker error: in user constraint function.\n");
+      return;
+    }
+    cons_ref->copy_from_two_vec_w_pattern(cons_c_ref,
+                                          *cons_eq_mapping_,
+                                          cons_d_ref,
+                                          *cons_ineq_mapping_);
+
+    cout << "aaaa evaluated c_d x_ref size=" << x_ref.get_size() 
+         << "\n"; fflush(stdout);
+    //evaluate "exact"/user Jacobian(s)
+    hiopMatrix* Jac_c_ref = this->alloc_Jac_c();
+    hiopMatrix* Jac_d_ref = this->alloc_Jac_d();
+
+    cout << "aaaa Jac c and d sizes: " << Jac_c_ref->m() << " " << Jac_d_ref->m()
+         << " columns: " << Jac_c_ref->n() << " " << Jac_d_ref->n() 
+         << "\n"; fflush(stdout);
+
+    if(!eval_Jac_c_d(x_ref, false, *Jac_c_ref, *Jac_d_ref)) {
+      log->printf(hovError, "Derivative checker error: in user Jacobian function.\n");
+      return;
+    }
+        cout << "aaaa evaluated JJJJJJJJacc_d\n"; fflush(stdout);
+        cout << "bbb cons_ref size" << cons_ref->get_local_size() << "\n"; fflush(stdout);
+    // perturbed constraint body
+    hiopVector* cons_pert = cons_ref->alloc_clone();
+            cout << "aaa cons_ref size" << cons_ref->get_local_size() << "\n"; fflush(stdout);
+    // ith column in the "exact" user Jacobian
+    hiopVector* Jac_ex_col = cons_ref->alloc_clone();
+    //perturbed equality/c constraint body
+    hiopVector* cons_c_pert = cons_c_ref.alloc_clone();
+    //perturbed inequality/d constraint body
+    hiopVector* cons_d_pert = cons_d_ref.alloc_clone();
+    // vector of all zero except ith position which is one
+    hiopVector* ei = x_ref.alloc_clone();
+
+    //main loop
+    for(index_type idx=0; idx<nlp_transformations_.n_pre(); ++idx) {
+      cout << "aaa evaluated c_d idx=" << idx << "\n"; fflush(stdout);
+      const double val_ref = x_ref.get_elem(idx);
+      x_pert->copyFrom(x_ref);
+      x_pert->set_elem(idx, val_ref+pert*max(abs(val_ref), 1.0));
+
+
+      
+      //eval at the perturbed point
+      this->eval_c_d(*x_pert, true, *cons_c_pert, *cons_d_pert);
+      cons_pert->copy_from_two_vec_w_pattern(*cons_c_pert, *cons_eq_mapping_, *cons_d_pert, *cons_ineq_mapping_);
+      // compute finite difference Jacobian (ith column)
+      hiopVector& Jac_fd_col = *cons_pert;
+      Jac_fd_col.axpy(-1.0, *cons_ref);
+      Jac_fd_col.scale(1/pert);
+
+
+      //we multiply Jacobian with ei=(0,...,1,...0) to get the ith column
+      ei->setToZero();
+      ei->set_elem(idx, 1.);
+      //reuse
+      hiopVector& Jac_ex_d_col = *cons_d_pert;
+      hiopVector& Jac_ex_c_col = *cons_c_pert;
+      Jac_c_ref->timesVec(0, Jac_ex_c_col, 1.0, *ei);
+      Jac_d_ref->timesVec(0, Jac_ex_d_col, 1.0, *ei);
+      Jac_ex_col->copy_from_two_vec_w_pattern(Jac_ex_c_col, *cons_eq_mapping_, Jac_ex_d_col, *cons_ineq_mapping_);
+
+      // compute error
+      for(index_type row=0; row<m(); ++row) {
+        const double Jac_fd_ij = Jac_fd_col.get_elem(row);
+        const double Jac_ex_ij = Jac_ex_col->get_elem(row);
+        const double scale = max(Jac_ex_ij, max(abs(Jac_fd_ij), derivative_check_tolerance));
+        double rel_error = abs(Jac_fd_ij - Jac_ex_ij) / scale;
+
+        const bool b_err = rel_error > derivative_check_tolerance;
+        char err_marker = ' ';
+        if(b_err) {
+          err_marker = '!';
+          num_errs++;
+        }
+        if(b_err || print_all) {
+          stringstream ss;
+          ss << err_marker << " Jac[" << setw(5) << row << "," << setw(5) << idx << "] "
+             << "user " << fixed << setprecision(14) << setw(21) << Jac_ex_ij << "  "
+             << "fd " << fixed << setprecision(14) << setw(21) << Jac_fd_ij
+             << " relerr [" << scientific << setprecision(3) << setw(9) << rel_error << "]";
+          log->printf(hovWarning, "%s\n", ss.str().c_str());
+          fflush(stdout);
+        }
+      } // end for j=1,..,m
+    }
     log->printf(hovWarning, "Derivative checker for Jacobian finished: %d errors detected.\n", num_errs);
+    disable_nlp_transformations_ = false;
+    delete Jac_ex_col;
+    delete ei;
+    delete Jac_d_ref;
+    delete Jac_c_ref;
+    delete cons_d_pert;
+    delete cons_c_pert;
+    delete cons_pert;
+    delete cons_ref;
   }
 
   delete x_pert;
@@ -1125,6 +1231,7 @@ bool hiopNlpFormulation::eval_Jac_c_d(hiopVector& x, bool new_x, hiopMatrix& Jac
         cons_body_ = this->alloc_dual_vec();
         // cons_body_ = new double[n_cons_];
         cons_Jac_ = alloc_Jac_cons();
+
       } else {
         cons_eval_type_ = 0;
         return false;
@@ -1136,10 +1243,11 @@ bool hiopNlpFormulation::eval_Jac_c_d(hiopVector& x, bool new_x, hiopMatrix& Jac
   }
 
   if(0 == cons_eval_type_) {
-    if(do_eval_Jac_c)
+    if(do_eval_Jac_c) {
       if(!eval_Jac_c(x, new_x, Jac_c)) {
         return false;
       }
+    }
     if(!eval_Jac_d(x, new_x, Jac_d)) {
       return false;
     }

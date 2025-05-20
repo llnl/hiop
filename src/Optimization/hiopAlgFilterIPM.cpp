@@ -349,7 +349,7 @@ int hiopAlgFilterIPMBase::startingProcedure(hiopIterate& it_ini,
     return false;
   }
 
-  [[maybe_unused]] const bool do_nlp_scaling = nlp->apply_scaling(c, d, gradf, Jac_c, Jac_d);
+  nlp->apply_scaling(c, d, gradf, Jac_c, Jac_d);
 
   nlp->runStats.tmSolverInternal.start();
   nlp->runStats.tmStartingPoint.start();
