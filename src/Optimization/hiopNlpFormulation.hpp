@@ -164,11 +164,23 @@ public:
   virtual hiopVector* alloc_dual_ineq_vec() const;
   virtual hiopVector* alloc_dual_vec() const;
   /* the implementation of the next two methods depends both on the interface and on the formulation */
+
+  /// @brief Allocate Jacobian of equalities in the internal (primal) size.
   virtual hiopMatrix* alloc_Jac_c() = 0;
+  /// @brief Allocate Jacobian of inequalities in the internal (primal) size.
   virtual hiopMatrix* alloc_Jac_d() = 0;
+  /// @brief Allocate Jacobian of constraints in the internal (primal) size.
   virtual hiopMatrix* alloc_Jac_cons() = 0;
+  /// @brief Allocate Jacobian of equalities in the user (primal) size.
+  virtual hiopMatrix* alloc_Jac_c_user() = 0;
+  /// @brief Allocate Jacobian of inequalities in the user (primal) size.
+  virtual hiopMatrix* alloc_Jac_d_user() = 0;
+  /// @brief Allocate Jacobian of constraints in the user (primal) size.
+  virtual hiopMatrix* alloc_Jac_cons_user() = 0;
+
   virtual hiopMatrix* alloc_Hess_Lagr() = 0;
 
+  
   virtual void user_callback_solution(hiopSolveStatus status,
                                       const hiopVector& x,
                                       hiopVector& z_L,
@@ -283,7 +295,12 @@ public:
   inline MPI_Comm get_comm() const { return comm_; }
   inline int get_rank() const { return rank_; }
   inline int get_num_ranks() const { return num_ranks_; }
-  inline index_type* getVecDistInfo() { return vec_distrib_; }
+
+  /// @brief Returns inter-process distribution of internal (primal) vectors.  
+  inline index_type* get_vector_distrib()
+  {
+    return vec_distrib_;
+  }
 #endif
 protected:
   /* Preprocess bounds in a form supported by the NLP formulation. Returns counts of
@@ -341,16 +358,21 @@ protected:
 
   /**
    * @brief Internal NLP transformations that supports fixing and relaxing variables as well as
-   * problem rescalings.
+   * problem rescaling(s).
    */
   hiopNlpTransformations nlp_transformations_;
 
-  // internal NLP transformations (currently gradient scaling implemented)
+  // @brief Gradient scaling NLP transformation
   hiopNLPObjGradScaling* nlp_scaling_;
 
-  /// @brief internal NLP transformations that relaxes the bounds
+  /// @brief NLP transformation that relaxes the bounds.
   hiopBoundsRelaxer* relax_bounds_;
 
+  /// @brief NLP transformation that removes fixed variables.
+  hiopFixedVarsRemover* fixed_vars_remover_;
+
+  /// @brief NLP transformation that relaxes bounds for the case when fixed variables are detected.
+  hiopFixedVarsRelaxer* fixed_vars_relaxer_;
   /**
    * @brief Temporary disable all NLP transformations in the 'eval' functions.
    * 
@@ -360,7 +382,7 @@ protected:
   bool disable_nlp_transformations_;
   
 #ifdef HIOP_USE_MPI
-  // inter-process distribution of vectors
+  // Inter-process distribution of vectors used internally, may differ from the user's one.
   index_type* vec_distrib_;
 #endif
 
@@ -452,10 +474,14 @@ public:
   virtual hiopMatrixDense* alloc_Jac_c();
   virtual hiopMatrixDense* alloc_Jac_d();
   virtual hiopMatrixDense* alloc_Jac_cons();
+  virtual hiopMatrixDense* alloc_Jac_c_user();
+  virtual hiopMatrixDense* alloc_Jac_d_user();
+  virtual hiopMatrixDense* alloc_Jac_cons_user();
+
   // returns HessianDiagPlusRowRank which (fakely) inherits from hiopMatrix
   virtual hiopMatrix* alloc_Hess_Lagr();
 
-  /* this is in general for a dense matrix with n_vars cols and a small number of
+  /* General method to allocate a dense matrix with n_vars cols and a small number of
    * 'nrows' rows. The second argument indicates how much total memory should the
    * matrix (pre)allocate.
    */
@@ -528,6 +554,39 @@ public:
     return new hiopMatrixSymBlockDiagMDS(nx_sparse, nx_dense, nnz_sparse_Hess_Lagr_SS, options->GetString("mem_space"));
   }
 
+  virtual hiopMatrix* alloc_Jac_c_user()
+  {
+    if(fixed_vars_remover_) {
+      assert(false && "at this moment we do not support removal of fixed variables with MDS problem structure.");
+      return nullptr;
+    }
+    assert(n_vars_ == nx_sparse + nx_dense);
+    return new hiopMatrixMDS(n_cons_eq_, nx_sparse, nx_dense, nnz_sparse_Jaceq, options->GetString("mem_space"));
+  }
+  virtual hiopMatrix* alloc_Jac_d_user()
+  {
+    if(fixed_vars_remover_) {
+      assert(false && "at this moment we do not support removal of fixed variables with MDS problem structure.");
+      return nullptr;
+    }
+    assert(n_vars_ == nx_sparse + nx_dense);
+    return new hiopMatrixMDS(n_cons_ineq_, nx_sparse, nx_dense, nnz_sparse_Jacineq, options->GetString("mem_space"));
+  }
+  virtual hiopMatrix* alloc_Jac_cons_user()
+  {
+    if(fixed_vars_remover_) {
+      assert(false && "at this moment we do not support removal of fixed variables with MDS problem structure.");
+      return nullptr;
+    }
+    assert(n_vars_ == nx_sparse + nx_dense);
+    return new hiopMatrixMDS(n_cons_,
+                             nx_sparse,
+                             nx_dense,
+                             nnz_sparse_Jaceq + nnz_sparse_Jacineq,
+                             options->GetString("mem_space"));
+  }
+
+  
   /** const accessors */
   virtual size_type nx_sp() const { return nx_sparse; }
   virtual size_type nx_de() const { return nx_dense; }
@@ -588,7 +647,6 @@ public:
                                                       n_cons_eq_,
                                                       n_vars_,
                                                       nnz_sparse_Jaceq_);
-    // return new hiopMatrixSparseTriplet(n_cons_eq_, n_vars_, nnz_sparse_Jaceq_);
   }
   virtual hiopMatrix* alloc_Jac_d()
   {
@@ -596,7 +654,6 @@ public:
                                                       n_cons_ineq_,
                                                       n_vars_,
                                                       nnz_sparse_Jacineq_);
-    // return new hiopMatrixSparseTriplet(n_cons_ineq_, n_vars_, nnz_sparse_Jacineq_);
   }
   virtual hiopMatrix* alloc_Jac_cons()
   {
@@ -604,13 +661,46 @@ public:
                                                       n_cons_,
                                                       n_vars_,
                                                       nnz_sparse_Jaceq_ + nnz_sparse_Jacineq_);
-    // return new hiopMatrixSparseTriplet(n_cons_, n_vars_, nnz_sparse_Jaceq_ + nnz_sparse_Jacineq_);
   }
   virtual hiopMatrix* alloc_Hess_Lagr()
   {
     return LinearAlgebraFactory::create_matrix_sym_sparse(options->GetString("mem_space"), n_vars_, nnz_sparse_Hess_Lagr_);
-    // return new hiopMatrixSymSparseTriplet(n_vars_, nnz_sparse_Hess_Lagr_);
   }
+
+  virtual hiopMatrix* alloc_Jac_c_user()
+  {
+    if(fixed_vars_remover_) {
+      assert(false && "at this moment we do not support removal of fixed variables for sparse problems.");
+      return nullptr;
+    }
+    return LinearAlgebraFactory::create_matrix_sparse(options->GetString("mem_space"),
+                                                      n_cons_eq_,
+                                                      n_vars_,
+                                                      nnz_sparse_Jaceq_);
+  }
+  virtual hiopMatrix* alloc_Jac_d_user()
+  {
+    if(fixed_vars_remover_) {
+      assert(false && "at this moment we do not support removal of fixed variables for sparse problems.");
+      return nullptr;
+    }
+    return LinearAlgebraFactory::create_matrix_sparse(options->GetString("mem_space"),
+                                                      n_cons_ineq_,
+                                                      n_vars_,
+                                                      nnz_sparse_Jacineq_);
+  }
+  virtual hiopMatrix* alloc_Jac_cons_user()
+  {
+    if(fixed_vars_remover_) {
+      assert(false && "at this moment we do not support removal of fixed variables for sparse problems.");
+      return nullptr;
+    }
+    return LinearAlgebraFactory::create_matrix_sparse(options->GetString("mem_space"),
+                                                      n_cons_,
+                                                      n_vars_,
+                                                      nnz_sparse_Jaceq_ + nnz_sparse_Jacineq_);
+  }
+  
   virtual size_type nx() const { return n_vars_; }
 
   // not inherited from NlpFormulation

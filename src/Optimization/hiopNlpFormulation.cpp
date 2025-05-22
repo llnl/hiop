@@ -145,6 +145,8 @@ hiopNlpFormulation::hiopNlpFormulation(hiopInterfaceBase& interface_, const char
   temp_x_ = nullptr;
   nlp_scaling_ = nullptr;
   relax_bounds_ = nullptr;
+  fixed_vars_remover_ = nullptr;
+  fixed_vars_relaxer_ = nullptr;
 }
 
 hiopNlpFormulation::~hiopNlpFormulation()
@@ -185,15 +187,39 @@ hiopNlpFormulation::~hiopNlpFormulation()
   delete temp_eq_;
   delete temp_ineq_;
   delete temp_x_;
-  /// nlp_scaling_ and relax_bounds_ are deleted inside nlp_transformations_
+  /// nlp_scaling_, relax_bounds_, fixed_vars_remover_, fixed_vars_relaxer_ are deleted by nlp_transformations_
 }
 
 bool hiopNlpFormulation::finalizeInitialization()
 {
   // check if there was a change in the user options that requires reinitialization of 'this'
   bool doinit = false;
+
   if(strFixedVars_ != options->GetString("fixed_var")) {
     doinit = true;
+    
+    if(strFixedVars_ == "remove") {
+      //remove fixed vars NLP transformation
+      assert(fixed_vars_remover_);
+      nlp_transformations_.remove(fixed_vars_remover_);
+      fixed_vars_remover_ = nullptr;
+    } else if(strFixedVars_ == "relax") {
+      //remove relaxers
+      assert(fixed_vars_relaxer_!=nullptr || relax_bounds_!=nullptr);
+      if(fixed_vars_relaxer_) {
+        nlp_transformations_.remove(fixed_vars_relaxer_);
+        fixed_vars_relaxer_ = nullptr;
+        assert(relax_bounds_==nullptr);
+      }
+      if(relax_bounds_) {
+        nlp_transformations_.remove(relax_bounds_);
+        relax_bounds_ = nullptr;
+        assert(fixed_vars_relaxer_==nullptr);
+      }
+    }
+
+    // save the new value of 'fixed_var' option
+    strFixedVars_ = options->GetString("fixed_var");
   }
   const double fixedVarTol = options->GetNumeric("fixed_var_tolerance");
   if(dFixedVarsTol_ != fixedVarTol) {
@@ -205,7 +231,8 @@ bool hiopNlpFormulation::finalizeInitialization()
   if(!doinit) {
     return true;
   }
-
+  log->printf(hovWarning, "Triggering partial reinitialization since some user options has changed.\n");
+  
   // Select memory space where to create linear algebra objects
   string mem_space = options->GetString("mem_space");
   log->printf(hovScalars, "NlpFormulation initialization: using mem_space='%s'\n", mem_space.c_str());
@@ -271,28 +298,27 @@ bool hiopNlpFormulation::finalizeInitialization()
   int ierr = MPI_Allreduce(&nfixed_vars_local, &nfixed_vars, 1, MPI_HIOP_SIZE_TYPE, MPI_SUM, comm_);
   assert(MPI_SUCCESS == ierr);
 #endif
-  hiopFixedVarsRemover* fixedVarsRemover = NULL;
+
   if(nfixed_vars > 0) {
-    log->printf(hovWarning, "Detected %lld fixed variables out of a total of %lld.\n", nfixed_vars, n_vars_);
+    log->printf(hovSummary, "Detected %lld fixed variables out of a total of %lld.\n", nfixed_vars, n_vars_);
 
     if(options->GetString("fixed_var") == "remove") {
       //
       // remove free variables
       //
-      log->printf(hovWarning, "Fixed variables will be removed internally.\n");
+      log->printf(hovSummary, "Fixed variables will be removed internally.\n");
 
-      fixedVarsRemover = new hiopFixedVarsRemover(this, *xl_, *xu_, fixedVarTol, nfixed_vars, nfixed_vars_local);
+      fixed_vars_remover_ = new hiopFixedVarsRemover(this, *xl_, *xu_, fixedVarTol, nfixed_vars, nfixed_vars_local);
 
 #ifdef HIOP_USE_MPI
-      fixedVarsRemover->setFSVectorDistrib(vec_distrib_, num_ranks_);
-      fixedVarsRemover->setMPIComm(comm_);
+      fixed_vars_remover_->set_fs_vector_distrib(vec_distrib_, num_ranks_);
 #endif
-      bret = fixedVarsRemover->setupDecisionVectorPart();
+      bret = fixed_vars_remover_->setupDecisionVectorPart();
       assert(bret && "error while removing fixed variables");
 
-      n_vars_ = fixedVarsRemover->rs_n();
+      n_vars_ = fixed_vars_remover_->rs_n();
 #ifdef HIOP_USE_MPI
-      index_type* vec_distrib_rs = fixedVarsRemover->allocRSVectorDistrib();
+      index_type* vec_distrib_rs = fixed_vars_remover_->alloc_rs_vector_distrib();
       delete[] vec_distrib_;
       vec_distrib_ = vec_distrib_rs;
 #endif
@@ -312,14 +338,14 @@ bool hiopNlpFormulation::finalizeInitialization()
       hiopVector* ixl_rs = xl_rs->alloc_clone();
       hiopVector* ixu_rs = xu_rs->alloc_clone();
 
-      fixedVarsRemover->copyFsToRs(*xl_, *xl_rs);
-      fixedVarsRemover->copyFsToRs(*xu_, *xu_rs);
-      fixedVarsRemover->copyFsToRs(*ixl_, *ixl_rs);
-      fixedVarsRemover->copyFsToRs(*ixu_, *ixu_rs);
+      fixed_vars_remover_->copyFsToRs(*xl_, *xl_rs);
+      fixed_vars_remover_->copyFsToRs(*xu_, *xu_rs);
+      fixed_vars_remover_->copyFsToRs(*ixl_, *ixl_rs);
+      fixed_vars_remover_->copyFsToRs(*ixu_, *ixu_rs);
 
       nlocal = xl_rs->get_local_size();
       hiopInterfaceBase::NonlinearityType* vars_type_rs = new hiopInterfaceBase::NonlinearityType[nlocal];
-      fixedVarsRemover->copyFsToRs(vars_type_, vars_type_rs);
+      fixed_vars_remover_->copyFsToRs(vars_type_, vars_type_rs);
 
       delete xl_;
       delete xu_;
@@ -336,30 +362,35 @@ bool hiopNlpFormulation::finalizeInitialization()
       n_bnds_upp_local_ -= nfixed_vars_local;
       n_bnds_lu_ -= nfixed_vars_local;
 
-      nlp_transformations_.append(fixedVarsRemover);
+      nlp_transformations_.append(fixed_vars_remover_);
     } else {
       /*
        * Relax fixed variables according to 2 conditions:
        * 1. bound_relax_perturb==0.0: Relax fixed variables according to fixed_var_perturb and fixed_var_tolerance.
        *    Other variables are not relaxed. hiopFixedVarsRelaxer is used to relax fixed var
-       * 2. bound_relax_perturb!=0.0: Later we will use hiopBoundsRelaxer to relax the variable and inequlity bounds,
+       * 2. bound_relax_perturb!=0.0: Later we will use hiopBoundsRelaxer to relax the variables and inequality bounds,
        *    according to bound_relax_perturb. It will also relax the fixed variables, hence we can skip relax fixed var here.
        */
-      if(options->GetString("fixed_var") == "relax" && options->GetNumeric("bound_relax_perturb") == 0.0) {
-        log->printf(hovWarning, "Fixed variables will be relaxed internally.\n");
-        auto* fixedVarsRelaxer = new hiopFixedVarsRelaxer(this, *xl_, *xu_, nfixed_vars, nfixed_vars_local);
-        fixedVarsRelaxer->setup();
+      if(options->GetString("fixed_var") == "relax" &&
+         options->GetNumeric("bound_relax_perturb") == 0.0 &&
+         options->GetString("elastic_mode")=="none") {
+        assert(nullptr==fixed_vars_relaxer_);
+        log->printf(hovSummary,
+                    "Fixed variables (bounds) will be relaxed internally with all other variables "
+                    "(fixed var strategy (1)).\n");
+        fixed_vars_relaxer_ = new hiopFixedVarsRelaxer(this, *xl_, *xu_, nfixed_vars, nfixed_vars_local);
+        fixed_vars_relaxer_->setup();
 
         const double fv_tol = options->GetNumeric("fixed_var_tolerance");
         const double fv_per = options->GetNumeric("fixed_var_perturb");
-        fixedVarsRelaxer->relax(fv_tol, fv_per, *xl_, *xu_);
+        fixed_vars_relaxer_->relax(fv_tol, fv_per, *xl_, *xu_);
 
-        nlp_transformations_.append(fixedVarsRelaxer);
+        nlp_transformations_.append(fixed_vars_relaxer_);
 
-      } else if(options->GetNumeric("bound_relax_perturb") == 0.0) {
+      } else if(options->GetNumeric("bound_relax_perturb") == 0.0 && options->GetString("elastic_mode")=="none") {
         log->printf(hovError,
-                    "detected fixed variables but HiOp was not instructed how to deal with them (option "
-                    "'fixed_var' is 'none').\n");
+                    "Fixed variables were detected but HiOp was not instructed how to deal with them (option "
+                    "'fixed_var' is 'none', option 'bound_relax_perturb' is 0.0, and 'elastic_mode' is 'none').\n");
         exit(EXIT_FAILURE);
       }
     }
@@ -372,11 +403,9 @@ bool hiopNlpFormulation::finalizeInitialization()
     return false;
   }
 
-  if(fixedVarsRemover) {
-    fixedVarsRemover->setupConstraintsPart(n_cons_eq_, n_cons_ineq_);
+  if(fixed_vars_remover_) {
+    fixed_vars_remover_->setupConstraintsPart(n_cons_eq_, n_cons_ineq_);
   }
-  // save the new value of 'fixed_var' option
-  strFixedVars_ = options->GetString("fixed_var");
 
   // compute the overall n_low and n_upp
 #ifdef HIOP_USE_MPI
@@ -393,17 +422,26 @@ bool hiopNlpFormulation::finalizeInitialization()
 #endif
 
   //
-  // relax bounds for simple bounds and constraints)
+  // relax bounds for simple bounds and constraints
   //
-  if(options->GetNumeric("bound_relax_perturb") > 0.0) {
+  if((options->GetNumeric("bound_relax_perturb")>0.0) || (options->GetString("elastic_mode")!="none")) {
+    if(nfixed_vars>0 && nullptr==fixed_vars_remover_) {
+      log->printf(hovSummary,
+                  "Fixed variables (bounds) will be relaxed internally together with the other variables.\n");
+    }
     relax_bounds_ = new hiopBoundsRelaxer(this, *xl_, *xu_, *dl_, *du_);
     relax_bounds_->setup();
     if(options->GetString("elastic_mode") == "none") {
-      relax_bounds_->relax(options->GetNumeric("bound_relax_perturb"), *xl_, *xu_, *dl_, *du_);
+      const double bound_relax_perturb = options->GetNumeric("bound_relax_perturb");
+      relax_bounds_->relax(bound_relax_perturb, *xl_, *xu_, *dl_, *du_);
+      log->printf(hovSummary, "Relaxing bounds simple strategy (2) - perturb=%g\n",  bound_relax_perturb);
     } else {
-      relax_bounds_->relax(options->GetNumeric("elastic_mode_bound_relax_initial"), *xl_, *xu_, *dl_, *du_);
+      const double bound_relax_perturb = options->GetNumeric("elastic_mode_bound_relax_initial");
+      relax_bounds_->relax(bound_relax_perturb, *xl_, *xu_, *dl_, *du_);
+      log->printf(hovSummary, "Relaxing bounds elastic strategy (3) - (initial) perturb=%g\n",  bound_relax_perturb);
     }
     nlp_transformations_.append(relax_bounds_);
+
   }
 
   // reset/release info and data related to one-call constraints evaluation
@@ -810,7 +848,7 @@ void hiopNlpFormulation::run_derivative_checker()
   //
   if(options->GetString("derivative_check") == "first-order") {
     
-    log->printf(hovWarning, "Starting derivative checker for gradient ...\n");
+    log->printf(hovSummary, "Starting derivative checker for gradient ...\n");
     size_t num_errs = 0;
     double f_ref;
     bret = interface_base.eval_f(nlp_transformations_.n_pre(), x_ref.local_data_const(), true, f_ref);
@@ -857,18 +895,18 @@ void hiopNlpFormulation::run_derivative_checker()
            << "user " << fixed << setprecision(14) << setw(21) << grad_ex << "  "
            << "fd " << fixed << setprecision(14) << setw(21) << grad_fd
            << " relerr [" << scientific << setprecision(3) << setw(9) << rel_error << "]";
-        log->printf(hovWarning, "%s\n", ss.str().c_str());
+        log->printf(hovSummary, "%s\n", ss.str().c_str());
         fflush(stdout);
       }
       
     }
-    log->printf(hovWarning, "Derivative checker for gradient finished: %d errors detected.\n", num_errs);
+    log->printf(hovSummary, "Derivative checker for gradient finished: %d errors detected.\n", num_errs);
     delete grad_exact;
 
     //
     // Jacobian check
     //
-    log->printf(hovWarning, "Starting derivative checker for Jacobian ...\n");
+    log->printf(hovSummary, "Starting derivative checker for Jacobian ...\n");
     num_errs = 0;
     disable_nlp_transformations_ = true;
 
@@ -891,25 +929,19 @@ void hiopNlpFormulation::run_derivative_checker()
                                           cons_d_ref,
                                           *cons_ineq_mapping_);
 
-    cout << "aaaa evaluated c_d x_ref size=" << x_ref.get_size() 
-         << "\n"; fflush(stdout);
     //evaluate "exact"/user Jacobian(s)
-    hiopMatrix* Jac_c_ref = this->alloc_Jac_c();
-    hiopMatrix* Jac_d_ref = this->alloc_Jac_d();
 
-    cout << "aaaa Jac c and d sizes: " << Jac_c_ref->m() << " " << Jac_d_ref->m()
-         << " columns: " << Jac_c_ref->n() << " " << Jac_d_ref->n() 
-         << "\n"; fflush(stdout);
+    //alocate Jacobians at the reference point - need to be in the user's sizes
+    hiopMatrix* Jac_c_ref = this->alloc_Jac_c_user();
+    hiopMatrix* Jac_d_ref = this->alloc_Jac_c_user();
 
     if(!eval_Jac_c_d(x_ref, false, *Jac_c_ref, *Jac_d_ref)) {
       log->printf(hovError, "Derivative checker error: in user Jacobian function.\n");
       return;
     }
-        cout << "aaaa evaluated JJJJJJJJacc_d\n"; fflush(stdout);
-        cout << "bbb cons_ref size" << cons_ref->get_local_size() << "\n"; fflush(stdout);
     // perturbed constraint body
     hiopVector* cons_pert = cons_ref->alloc_clone();
-            cout << "aaa cons_ref size" << cons_ref->get_local_size() << "\n"; fflush(stdout);
+
     // ith column in the "exact" user Jacobian
     hiopVector* Jac_ex_col = cons_ref->alloc_clone();
     //perturbed equality/c constraint body
@@ -921,12 +953,10 @@ void hiopNlpFormulation::run_derivative_checker()
 
     //main loop
     for(index_type idx=0; idx<nlp_transformations_.n_pre(); ++idx) {
-      cout << "aaa evaluated c_d idx=" << idx << "\n"; fflush(stdout);
+
       const double val_ref = x_ref.get_elem(idx);
       x_pert->copyFrom(x_ref);
       x_pert->set_elem(idx, val_ref+pert*max(abs(val_ref), 1.0));
-
-
       
       //eval at the perturbed point
       this->eval_c_d(*x_pert, true, *cons_c_pert, *cons_d_pert);
@@ -966,12 +996,12 @@ void hiopNlpFormulation::run_derivative_checker()
              << "user " << fixed << setprecision(14) << setw(21) << Jac_ex_ij << "  "
              << "fd " << fixed << setprecision(14) << setw(21) << Jac_fd_ij
              << " relerr [" << scientific << setprecision(3) << setw(9) << rel_error << "]";
-          log->printf(hovWarning, "%s\n", ss.str().c_str());
+          log->printf(hovSummary, "%s\n", ss.str().c_str());
           fflush(stdout);
         }
       } // end for j=1,..,m
     }
-    log->printf(hovWarning, "Derivative checker for Jacobian finished: %d errors detected.\n", num_errs);
+    log->printf(hovSummary, "Derivative checker for Jacobian finished: %d errors detected.\n", num_errs);
     disable_nlp_transformations_ = false;
     delete Jac_ex_col;
     delete ei;
@@ -1639,6 +1669,7 @@ void hiopNlpFormulation::adjust_bounds(const hiopIterate& it)
 
 void hiopNlpFormulation::reset_bounds(double bound_relax_perturb)
 {
+  assert(relax_bounds_);
   relax_bounds_->relax_from_ori(bound_relax_perturb, *xl_, *xu_, *dl_, *du_);
 }
 
@@ -1884,11 +1915,64 @@ bool hiopNlpDenseConstraints::eval_Jac_d(hiopVector& x, bool new_x, hiopMatrix& 
   }
 }
 
-hiopMatrixDense* hiopNlpDenseConstraints::alloc_Jac_c() { return alloc_multivector_primal(n_cons_eq_); }
+hiopMatrixDense* hiopNlpDenseConstraints::alloc_Jac_c()
+{
+  return alloc_multivector_primal(n_cons_eq_);
+}
 
-hiopMatrixDense* hiopNlpDenseConstraints::alloc_Jac_d() { return alloc_multivector_primal(n_cons_ineq_); }
+hiopMatrixDense* hiopNlpDenseConstraints::alloc_Jac_d()
+{
+  return alloc_multivector_primal(n_cons_ineq_);
+}
 
-hiopMatrixDense* hiopNlpDenseConstraints::alloc_Jac_cons() { return alloc_multivector_primal(n_cons_); }
+hiopMatrixDense* hiopNlpDenseConstraints::alloc_Jac_cons()
+{
+  return alloc_multivector_primal(n_cons_);
+}
+
+hiopMatrixDense* hiopNlpDenseConstraints::alloc_Jac_c_user()
+{
+  if(nullptr==fixed_vars_remover_) {      
+    return alloc_multivector_primal(n_cons_eq_);
+  }
+
+  index_type* vec_distrib_user = nullptr;
+  const size_type n_user = nlp_transformations_.n_pre();
+  assert(n_user == fixed_vars_remover_->fs_n() && "Somehow order or NLP transformations is incorrect.");
+#ifdef HIOP_USE_MPI
+  vec_distrib_user = fixed_vars_remover_->get_fs_vector_distrib();
+#endif
+  return LinearAlgebraFactory::create_matrix_dense("DEFAULT", n_cons_eq_, n_user, vec_distrib_user, comm_);
+}
+
+hiopMatrixDense* hiopNlpDenseConstraints::alloc_Jac_d_user()
+{
+  if(nullptr==fixed_vars_remover_) {
+    return alloc_multivector_primal(n_cons_ineq_);
+  }
+  index_type* vec_distrib_user = nullptr;
+  const size_type n_user = nlp_transformations_.n_pre();
+  assert(n_user == fixed_vars_remover_->fs_n() && "Somehow order or NLP transformations is incorrect.");
+#ifdef HIOP_USE_MPI
+  vec_distrib_user = fixed_vars_remover_->get_fs_vector_distrib();
+#endif
+  return LinearAlgebraFactory::create_matrix_dense("DEFAULT", n_cons_ineq_, n_user, vec_distrib_user, comm_);
+}
+
+hiopMatrixDense* hiopNlpDenseConstraints::alloc_Jac_cons_user()
+{
+  if(nullptr==fixed_vars_remover_) {
+    return alloc_multivector_primal(n_cons_);
+  }
+  index_type* vec_distrib_user = nullptr;
+  const size_type n_user = nlp_transformations_.n_pre();
+  assert(n_user == fixed_vars_remover_->fs_n() && "Somehow order or NLP transformations is incorrect.");
+#ifdef HIOP_USE_MPI
+  vec_distrib_user = fixed_vars_remover_->get_fs_vector_distrib();
+#endif
+  return LinearAlgebraFactory::create_matrix_dense("DEFAULT", n_cons_, n_user, vec_distrib_user, comm_);
+}
+
 
 hiopMatrix* hiopNlpDenseConstraints::alloc_Hess_Lagr()
 {
