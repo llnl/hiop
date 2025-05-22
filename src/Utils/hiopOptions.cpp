@@ -734,12 +734,13 @@ void hiopOptionsNLP::register_options()
     register_str_option("fixed_var",
                         "relax",
                         range,
-                        "Treatment of fixed variables: 'remove' from the problem, 'relax' bounds "
+                        "Treatment of fixed variables: 'remove' from the problem, 'relax' all bounds "
                         "by 'fixed_var_perturb', or 'none', in which case the HiOp will terminate "
                         "with an error message if fixed variables are detected (default 'relax'). "
                         "Value 'remove' is available only when 'compute_mode' is 'hybrid' or 'cpu'. "
-                        "A nonzero value of 'bound_relax_perturb' option will trigger a different bounds "
-                        "relaxation strategy, which will ignore value of 'fixed_var_perturb'.");
+                        "A nonzero value of 'bound_relax_perturb' option or the use of 'elastic_mode' "
+                        "option will trigger different bounds relaxations strategies that will "
+                        "ignore value of 'fixed_var_perturb'.");
     register_num_option("fixed_var_tolerance",
                         1e-15,
                         1e-30,
@@ -1147,8 +1148,7 @@ void hiopOptionsNLP::register_options()
                         "'tighten_bound' tightens the bounds when `mu` changes; "
                         "'correct_it' tightens the bounds and corrects the slacks and slack duals when `mu` changes; "
                         "'correct_it_adjust_bound' tightens the bounds, corrects the slacks and slack duals, "
-                        "and adjusts the bounds again from the modified iterate. Requires a positive value for '"
-                        "option 'bound_relax_perturb'.");
+                        "and adjusts the bounds again from the modified iterate.");
 
     range = {"mu_projected", "mu_scaled"};
     register_str_option("elastic_bound_strategy",
