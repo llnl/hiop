@@ -1935,14 +1935,14 @@ hiopMatrixDense* hiopNlpDenseConstraints::alloc_Jac_c_user()
   if(nullptr==fixed_vars_remover_) {      
     return alloc_multivector_primal(n_cons_eq_);
   }
-
-  index_type* vec_distrib_user = nullptr;
   const size_type n_user = nlp_transformations_.n_pre();
   assert(n_user == fixed_vars_remover_->fs_n() && "Somehow order or NLP transformations is incorrect.");
 #ifdef HIOP_USE_MPI
-  vec_distrib_user = fixed_vars_remover_->get_fs_vector_distrib();
-#endif
+  index_type* vec_distrib_user = fixed_vars_remover_->get_fs_vector_distrib();
   return LinearAlgebraFactory::create_matrix_dense("DEFAULT", n_cons_eq_, n_user, vec_distrib_user, comm_);
+#else
+  return LinearAlgebraFactory::create_matrix_dense("DEFAULT", n_cons_eq_, n_user);
+#endif
 }
 
 hiopMatrixDense* hiopNlpDenseConstraints::alloc_Jac_d_user()
@@ -1950,13 +1950,14 @@ hiopMatrixDense* hiopNlpDenseConstraints::alloc_Jac_d_user()
   if(nullptr==fixed_vars_remover_) {
     return alloc_multivector_primal(n_cons_ineq_);
   }
-  index_type* vec_distrib_user = nullptr;
   const size_type n_user = nlp_transformations_.n_pre();
   assert(n_user == fixed_vars_remover_->fs_n() && "Somehow order or NLP transformations is incorrect.");
 #ifdef HIOP_USE_MPI
-  vec_distrib_user = fixed_vars_remover_->get_fs_vector_distrib();
-#endif
+  index_type* vec_distrib_user = fixed_vars_remover_->get_fs_vector_distrib();
   return LinearAlgebraFactory::create_matrix_dense("DEFAULT", n_cons_ineq_, n_user, vec_distrib_user, comm_);
+#else
+  return LinearAlgebraFactory::create_matrix_dense("DEFAULT", n_cons_ineq_, n_user);
+#endif
 }
 
 hiopMatrixDense* hiopNlpDenseConstraints::alloc_Jac_cons_user()
@@ -1964,15 +1965,15 @@ hiopMatrixDense* hiopNlpDenseConstraints::alloc_Jac_cons_user()
   if(nullptr==fixed_vars_remover_) {
     return alloc_multivector_primal(n_cons_);
   }
-  index_type* vec_distrib_user = nullptr;
   const size_type n_user = nlp_transformations_.n_pre();
   assert(n_user == fixed_vars_remover_->fs_n() && "Somehow order or NLP transformations is incorrect.");
 #ifdef HIOP_USE_MPI
-  vec_distrib_user = fixed_vars_remover_->get_fs_vector_distrib();
-#endif
+  index_type* vec_distrib_user = fixed_vars_remover_->get_fs_vector_distrib();
   return LinearAlgebraFactory::create_matrix_dense("DEFAULT", n_cons_, n_user, vec_distrib_user, comm_);
+#else
+  return LinearAlgebraFactory::create_matrix_dense("DEFAULT", n_cons_, n_user);
+#endif
 }
-
 
 hiopMatrix* hiopNlpDenseConstraints::alloc_Hess_Lagr()
 {
