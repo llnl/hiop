@@ -804,7 +804,7 @@ void hiopNlpFormulation::run_derivative_checker()
   assert(n_cons_ == it_hiop->get_yc()->get_size() + it_hiop->get_yd()->get_size());
 
   // finite difference (FD) check at initial point provided by the user 
-  hiopVector* x0_for_user = nlp_transformations_.apply_inv_to_x(*it_hiop->get_x(), true);
+  hiopVector* x0_user = nlp_transformations_.apply_inv_to_x(*it_hiop->get_x(), true);
 
   double* zL0_for_user = it_hiop->get_zl()->local_data();
   double* zU0_for_user = it_hiop->get_zu()->local_data();
@@ -821,7 +821,7 @@ void hiopNlpFormulation::run_derivative_checker()
   bool slacks_avail = false;
   bool bret = interface_base.get_starting_point(nlp_transformations_.n_pre(),
                                                 n_cons_,
-                                                x0_for_user->local_data(),
+                                                x0_user->local_data(),
                                                 duals_avail,
                                                 zL0_for_user,
                                                 zU0_for_user,
@@ -830,18 +830,40 @@ void hiopNlpFormulation::run_derivative_checker()
                                                 d_for_user);
   //if above failed, try the other user-provided starting point method
   if(!bret) {
-    bret = interface_base.get_starting_point(nlp_transformations_.n_pre(), x0_for_user->local_data());
+    bret = interface_base.get_starting_point(nlp_transformations_.n_pre(), x0_user->local_data());
   }
   if(!bret) {
-    log->printf(hovError, "Derivate check failed due to failure(s) in user-provided starting point methods.");
-    return;
+    log->printf(hovError, "Derivate check error in user-provided starting point methods. Using vector of all zero.");
+    x0_user->setToConstant(0.0);
   }
   
-  hiopVector& x_ref = *x0_for_user;
+  hiopVector& x_ref = *x0_user;
   const double pert = options->GetNumeric("derivative_check_perturbation");
   const double derivative_check_tolerance = options->GetNumeric("derivative_check_tolerance");
   const bool print_all = ( options->GetString("derivative_check_print_all") != "no" );
   hiopVector* x_pert = x_ref.alloc_clone();
+
+  hiopVector* grad_exact = x_ref.alloc_clone();
+  bret = interface_base.eval_grad_f(nlp_transformations_.n_pre(),
+                                    x_ref.local_data_const(),
+                                    true,
+                                    grad_exact->local_data());
+  bool user_eval_err = false;
+  if(!bret) {
+    log->printf(hovError, "Derivative check error: in evaluating user gradient.");
+    user_eval_err = true;
+  }
+    
+  
+  //evaluate "exact"/user Jacobian(s)
+  //alocate Jacobians at the reference point - need to be in the user's sizes
+  hiopMatrix* Jac_c_ref = this->alloc_Jac_c_user();
+  hiopMatrix* Jac_d_ref = this->alloc_Jac_c_user();
+  
+  if(!eval_Jac_c_d(x_ref, true, *Jac_c_ref, *Jac_d_ref)) {
+    log->printf(hovError, "Derivative checker error: in user Jacobian function.\n");
+    user_eval_err = true;
+  }
 
   //
   // gradient and Jacobian
@@ -850,25 +872,17 @@ void hiopNlpFormulation::run_derivative_checker()
     
     log->printf(hovSummary, "Starting derivative checker for gradient ...\n");
     size_t num_errs = 0;
+
+    // objective function
     double f_ref;
     bret = interface_base.eval_f(nlp_transformations_.n_pre(), x_ref.local_data_const(), true, f_ref);
     if(!bret) {
       log->printf(hovError, "Derivative check error: in evaluating user objective.");
-      return;
-    }
-    
-    hiopVector* grad_exact = x_ref.alloc_clone();
-    bret = interface_base.eval_grad_f(nlp_transformations_.n_pre(),
-                                      x_ref.local_data_const(),
-                                      false,
-                                      grad_exact->local_data());
-    if(!bret) {
-      log->printf(hovError, "Derivative check error: in evaluating user gradient.");
-      return;
+      user_eval_err = true;
     }
     
     // grad_fd = (f(x_pert) - f(x_ref)) / pert    
-    for(index_type idx=0; idx<nlp_transformations_.n_pre(); ++idx) {
+    for(index_type idx=0; idx<nlp_transformations_.n_pre() && !user_eval_err; ++idx) {
       const double val_ref = x_ref.get_elem(idx);
 
       x_pert->copyFrom(x_ref);
@@ -877,7 +891,11 @@ void hiopNlpFormulation::run_derivative_checker()
       //evaluate at the perturbed point
       double f_pert;
       bret = interface_base.eval_f(nlp_transformations_.n_pre(), x_pert->local_data_const(), true, f_pert);
-
+      if(!bret) {
+        log->printf(hovError, "Derivative check error: in evaluating user objective.");
+        user_eval_err = true;
+        break;
+      }
       const double grad_fd = (f_pert-f_ref)/pert;
       const double grad_ex = grad_exact->get_elem(idx);
       const double scale = max(grad_ex, max(abs(grad_fd), derivative_check_tolerance));
@@ -900,119 +918,127 @@ void hiopNlpFormulation::run_derivative_checker()
       }
       
     }
-    log->printf(hovSummary, "Derivative checker for gradient finished: %d errors detected.\n", num_errs);
-    delete grad_exact;
+    if(user_eval_err) {
+      log->printf(hovSummary, "Derivative checker halted because of error(s) in user provided functions.");
+    } else {
+      log->printf(hovSummary, "Derivative checker for gradient finished: %d errors detected.\n", num_errs);
 
-    //
-    // Jacobian check
-    //
-    log->printf(hovSummary, "Starting derivative checker for Jacobian ...\n");
-    num_errs = 0;
-    disable_nlp_transformations_ = true;
-
-    hiopVector* cons_ref = this->alloc_dual_vec();
-    if(temp_eq_ == nullptr) {
-      temp_eq_ = this->alloc_dual_eq_vec();
-    }
-    if(temp_ineq_ == nullptr) {
-      temp_ineq_ = this->alloc_dual_ineq_vec();
-    }
-    hiopVector& cons_c_ref = *temp_eq_;
-    hiopVector& cons_d_ref = *temp_ineq_;
-    
-    if(!this->eval_c_d(x_ref, true, cons_c_ref, cons_d_ref)) {
-      log->printf(hovError, "Derivative checker error: in user constraint function.\n");
-      return;
-    }
-    cons_ref->copy_from_two_vec_w_pattern(cons_c_ref,
-                                          *cons_eq_mapping_,
-                                          cons_d_ref,
-                                          *cons_ineq_mapping_);
-
-    //evaluate "exact"/user Jacobian(s)
-
-    //alocate Jacobians at the reference point - need to be in the user's sizes
-    hiopMatrix* Jac_c_ref = this->alloc_Jac_c_user();
-    hiopMatrix* Jac_d_ref = this->alloc_Jac_c_user();
-
-    if(!eval_Jac_c_d(x_ref, false, *Jac_c_ref, *Jac_d_ref)) {
-      log->printf(hovError, "Derivative checker error: in user Jacobian function.\n");
-      return;
-    }
-    // perturbed constraint body
-    hiopVector* cons_pert = cons_ref->alloc_clone();
-
-    // ith column in the "exact" user Jacobian
-    hiopVector* Jac_ex_col = cons_ref->alloc_clone();
-    //perturbed equality/c constraint body
-    hiopVector* cons_c_pert = cons_c_ref.alloc_clone();
-    //perturbed inequality/d constraint body
-    hiopVector* cons_d_pert = cons_d_ref.alloc_clone();
-    // vector of all zero except ith position which is one
-    hiopVector* ei = x_ref.alloc_clone();
-
-    //main loop
-    for(index_type idx=0; idx<nlp_transformations_.n_pre(); ++idx) {
-
-      const double val_ref = x_ref.get_elem(idx);
-      x_pert->copyFrom(x_ref);
-      x_pert->set_elem(idx, val_ref+pert*max(abs(val_ref), 1.0));
+      //
+      // Jacobian check
+      //
+      log->printf(hovSummary, "Starting derivative checker for Jacobian ...\n");
+      num_errs = 0;
+      disable_nlp_transformations_ = true;
       
-      //eval at the perturbed point
-      this->eval_c_d(*x_pert, true, *cons_c_pert, *cons_d_pert);
-      cons_pert->copy_from_two_vec_w_pattern(*cons_c_pert, *cons_eq_mapping_, *cons_d_pert, *cons_ineq_mapping_);
-      // compute finite difference Jacobian (ith column)
-      hiopVector& Jac_fd_col = *cons_pert;
-      Jac_fd_col.axpy(-1.0, *cons_ref);
-      Jac_fd_col.scale(1/pert);
-
-
-      //we multiply Jacobian with ei=(0,...,1,...0) to get the ith column
-      ei->setToZero();
-      ei->set_elem(idx, 1.);
-      //reuse
-      hiopVector& Jac_ex_d_col = *cons_d_pert;
-      hiopVector& Jac_ex_c_col = *cons_c_pert;
-      Jac_c_ref->timesVec(0, Jac_ex_c_col, 1.0, *ei);
-      Jac_d_ref->timesVec(0, Jac_ex_d_col, 1.0, *ei);
-      Jac_ex_col->copy_from_two_vec_w_pattern(Jac_ex_c_col, *cons_eq_mapping_, Jac_ex_d_col, *cons_ineq_mapping_);
-
-      // compute error
-      for(index_type row=0; row<m(); ++row) {
-        const double Jac_fd_ij = Jac_fd_col.get_elem(row);
-        const double Jac_ex_ij = Jac_ex_col->get_elem(row);
-        const double scale = max(Jac_ex_ij, max(abs(Jac_fd_ij), derivative_check_tolerance));
-        double rel_error = abs(Jac_fd_ij - Jac_ex_ij) / scale;
-
-        const bool b_err = rel_error > derivative_check_tolerance;
-        char err_marker = ' ';
-        if(b_err) {
-          err_marker = '!';
-          num_errs++;
+      hiopVector* cons_ref = this->alloc_dual_vec();
+      if(temp_eq_ == nullptr) {
+        temp_eq_ = this->alloc_dual_eq_vec();
+      }
+      if(temp_ineq_ == nullptr) {
+        temp_ineq_ = this->alloc_dual_ineq_vec();
+      }
+      hiopVector& cons_c_ref = *temp_eq_;
+      hiopVector& cons_d_ref = *temp_ineq_;
+      
+      if(!this->eval_c_d(x_ref, true, cons_c_ref, cons_d_ref)) {
+        log->printf(hovError, "Derivative checker error: in user constraint function.\n");
+        user_eval_err = true;
+      }
+      cons_ref->copy_from_two_vec_w_pattern(cons_c_ref,
+                                            *cons_eq_mapping_,
+                                            cons_d_ref,
+                                            *cons_ineq_mapping_);
+      // perturbed constraint body
+      hiopVector* cons_pert = cons_ref->alloc_clone();
+      
+      // ith column in the "exact" user Jacobian
+      hiopVector* Jac_ex_col = cons_ref->alloc_clone();
+      //perturbed equality/c constraint body
+      hiopVector* cons_c_pert = cons_c_ref.alloc_clone();
+      //perturbed inequality/d constraint body
+      hiopVector* cons_d_pert = cons_d_ref.alloc_clone();
+      // vector of all zero except ith position which is one
+      hiopVector* ei = x_ref.alloc_clone();
+      
+      //main loop
+      for(index_type idx=0; idx<nlp_transformations_.n_pre() &&!user_eval_err; ++idx) {
+        
+        const double val_ref = x_ref.get_elem(idx);
+        x_pert->copyFrom(x_ref);
+        x_pert->set_elem(idx, val_ref+pert*max(abs(val_ref), 1.0));
+        
+        //eval at the perturbed point
+        if(!this->eval_c_d(*x_pert, true, *cons_c_pert, *cons_d_pert)) {
+          log->printf(hovError, "Derivative checker error: in user constraint function.\n");
+          user_eval_err = true;
         }
-        if(b_err || print_all) {
-          stringstream ss;
-          ss << err_marker << " Jac[" << setw(5) << row << "," << setw(5) << idx << "] "
-             << "user " << fixed << setprecision(14) << setw(21) << Jac_ex_ij << "  "
-             << "fd " << fixed << setprecision(14) << setw(21) << Jac_fd_ij
-             << " relerr [" << scientific << setprecision(3) << setw(9) << rel_error << "]";
-          log->printf(hovSummary, "%s\n", ss.str().c_str());
-          fflush(stdout);
-        }
-      } // end for j=1,..,m
-    }
-    log->printf(hovSummary, "Derivative checker for Jacobian finished: %d errors detected.\n", num_errs);
-    disable_nlp_transformations_ = false;
-    delete Jac_ex_col;
-    delete ei;
-    delete Jac_d_ref;
-    delete Jac_c_ref;
-    delete cons_d_pert;
-    delete cons_c_pert;
-    delete cons_pert;
-    delete cons_ref;
+        cons_pert->copy_from_two_vec_w_pattern(*cons_c_pert, *cons_eq_mapping_, *cons_d_pert, *cons_ineq_mapping_);
+        
+        // compute finite difference Jacobian (ith column)
+        hiopVector& Jac_fd_col = *cons_pert;
+        Jac_fd_col.axpy(-1.0, *cons_ref);
+        Jac_fd_col.scale(1/pert);
+
+        //we multiply Jacobian with ei=(0,...,1,...0) to get the ith column
+        ei->setToZero();
+        ei->set_elem(idx, 1.);
+        //reuse
+        hiopVector& Jac_ex_d_col = *cons_d_pert;
+        hiopVector& Jac_ex_c_col = *cons_c_pert;
+        Jac_c_ref->timesVec(0, Jac_ex_c_col, 1.0, *ei);
+        Jac_d_ref->timesVec(0, Jac_ex_d_col, 1.0, *ei);
+        Jac_ex_col->copy_from_two_vec_w_pattern(Jac_ex_c_col, *cons_eq_mapping_, Jac_ex_d_col, *cons_ineq_mapping_);
+        
+        // compute error
+        for(index_type row=0; row<m() && !user_eval_err; ++row) {
+          const double Jac_fd_ij = Jac_fd_col.get_elem(row);
+          const double Jac_ex_ij = Jac_ex_col->get_elem(row);
+          const double scale = max(Jac_ex_ij, max(abs(Jac_fd_ij), derivative_check_tolerance));
+          double rel_error = abs(Jac_fd_ij - Jac_ex_ij) / scale;
+          
+          const bool b_err = rel_error > derivative_check_tolerance;
+          char err_marker = ' ';
+          if(b_err) {
+            err_marker = '!';
+            num_errs++;
+          }
+          if(b_err || print_all) {
+            stringstream ss;
+            ss << err_marker << " Jac[" << setw(5) << row << "," << setw(5) << idx << "] "
+               << "user " << fixed << setprecision(14) << setw(21) << Jac_ex_ij << "  "
+               << "fd " << fixed << setprecision(14) << setw(21) << Jac_fd_ij
+               << " relerr [" << scientific << setprecision(3) << setw(9) << rel_error << "]";
+            log->printf(hovSummary, "%s\n", ss.str().c_str());
+            fflush(stdout);
+          }
+        } // end for j=1,..,m
+      }
+      if(user_eval_err) {
+        log->printf(hovSummary, "Derivative checker halted because of error(s) in user provided functions.");        
+      } else {
+        log->printf(hovSummary, "Derivative checker for Jacobian finished: %d errors detected.\n", num_errs);
+      }
+      delete Jac_ex_col;
+      delete ei;
+      delete cons_d_pert;
+      delete cons_c_pert;
+      delete cons_pert;
+      delete cons_ref;
+    } // end of Jacobian check
+  } //end of first-order check
+
+  //
+  // Second-order checks
+  //  
+  if(!user_eval_err && options->GetString("derivative_check") == "second-order") {
+    run_derivative_checker_order2(*x0_user, *grad_exact, *Jac_c_ref, *Jac_d_ref);
   }
-
+  
+  disable_nlp_transformations_ = false;
+  //clean up
+  delete Jac_d_ref;
+  delete Jac_c_ref;
+  delete grad_exact;  
   delete x_pert;
   delete it_hiop;
   delete lambdas;
@@ -2481,6 +2507,73 @@ bool hiopNlpSparse::finalizeInitialization()
   assert(nx == n_vars_);
   return hiopNlpFormulation::finalizeInitialization();
 }
+
+size_type hiopNlpSparse::run_derivative_checker_order2(hiopVector& x_ref,
+                                                       hiopVector& grad_ref,
+                                                       hiopMatrix& Jacc_ref,
+                                                       hiopMatrix& Jacd_ref)
+{
+  size_type num_errs=0;
+  if(options->GetString("derivative_check") != "second-order") {
+    return 0;
+  }
+  log->printf(hovSummary, "Starting derivative checker for Hessian ...\n");
+
+  // perturbation of x working vector
+  hiopVector* x_pert = x_ref.alloc_clone();
+  // gradient at perturbed x
+  hiopVector* grad_pert = grad_ref.alloc_clone();
+  //user "exact" Hessian
+  auto* Hess_exact = alloc_Hess_Lagr();
+
+  bool user_eval_err = false; 
+  
+  //
+  //objective Hessian first
+  //
+  //evaluate 
+  double obj_factor = 1.5;
+  hiopVector* lambda_eq = this->alloc_dual_eq_vec();
+  hiopVector* lambda_ineq = this->alloc_dual_ineq_vec();
+  lambda_eq->setToZero();
+  lambda_ineq->setToZero();
+
+  if(!eval_Hess_Lagr(x_ref, true, obj_factor, *lambda_eq, *lambda_ineq, true, *Hess_exact)) {
+    log->printf(hovError, "Derivative checker (2nd order) error in user Hessian function.\n");
+    user_eval_err = true;
+  }
+
+  for(index_type i=0; i<n() && !user_eval_err; i++) {
+    
+  }
+
+  if(user_eval_err) {
+    log->printf(hovSummary, "Derivative checker for Objective Hessian finished: %d errors detected.\n", num_errs);
+  } else {
+    
+  }
+  delete grad_pert;
+  
+  //
+  // constraints Hessian
+  //
+  // Jacobians at perturbed x
+  hiopMatrix* Jacc_pert = Jacc_ref.alloc_clone();
+  hiopMatrix* Jacd_pert = Jacd_ref.alloc_clone();
+
+
+  //cleanup
+  delete Jacd_pert;
+  delete Jacc_pert;
+  delete lambda_eq;
+  delete lambda_ineq;
+  delete Hess_exact;
+  delete x_pert;
+
+  return num_errs;
+}
+
+
 
 /////////////////////////////////////////////////////////////
 //   hiopNlpSparseIneq

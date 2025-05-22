@@ -125,9 +125,13 @@ public:
    */
   void run_derivative_checker();
 protected:
-  // calls specific hiopInterfaceXXX::eval_Jac_cons and deals with specializations of hiopMatrix arguments
+  ///@brief Second-order derivative checker specialized to NLP formulations
+  virtual size_type run_derivative_checker_order2(hiopVector& x_ref,
+                                               hiopVector& grad_ref,
+                                               hiopMatrix& Jacc_ref,
+                                               hiopMatrix& Jacd_ref) = 0;
+  // Calls specific hiopInterfaceXXX::eval_Jac_cons and deals with specializations of hiopMatrix arguments
   virtual bool eval_Jac_c_d_interface_impl(hiopVector& x, bool new_x, hiopMatrix& Jac_c, hiopMatrix& Jac_d) = 0;
-
 public:
   virtual bool eval_Hess_Lagr(const hiopVector& x,
                               bool new_x,
@@ -163,7 +167,8 @@ public:
   virtual hiopVector* alloc_dual_eq_vec() const;
   virtual hiopVector* alloc_dual_ineq_vec() const;
   virtual hiopVector* alloc_dual_vec() const;
-  /* the implementation of the next two methods depends both on the interface and on the formulation */
+  
+  /* the implementation of the next methods depends both on the interface and on the formulation */
 
   /// @brief Allocate Jacobian of equalities in the internal (primal) size.
   virtual hiopMatrix* alloc_Jac_c() = 0;
@@ -451,6 +456,16 @@ public:
   virtual bool eval_Jac_d(hiopVector& x, bool new_x, double* Jac_d);
 
 protected:
+
+  size_type run_derivative_checker_order2(hiopVector& x_ref,
+                                          hiopVector& grad_ref,
+                                          hiopMatrix& Jacc_ref,
+                                          hiopMatrix& Jacd_ref)
+  {
+    log->printf(hovSummary, "Derivative checks of (user) Hessian is skipped since it is not provided by user.\n");
+    return 0;
+  }
+  
   // calls specific hiopInterfaceXXX::eval_Jac_cons and deals with specializations of
   // hiopMatrix arguments
   virtual bool eval_Jac_c_d_interface_impl(hiopVector& x, bool new_x, hiopMatrix& Jac_c, hiopMatrix& Jac_d);
@@ -513,7 +528,20 @@ public:
   virtual bool eval_Jac_c(hiopVector& x, bool new_x, hiopMatrix& Jac_c);
   virtual bool eval_Jac_d(hiopVector& x, bool new_x, hiopMatrix& Jac_d);
 
+  void run_derivative_checker()
+  {
+    hiopNlpFormulation::run_derivative_checker();
+  }
 protected:
+  size_type run_derivative_checker_order2(hiopVector& x_ref,
+                                          hiopVector& grad_ref,
+                                          hiopMatrix& Jacc_ref,
+                                          hiopMatrix& Jacd_ref)
+  {
+    log->printf(hovWarning, "Checks for second-order derivatives are not implemented for MDS and are skipped.\n");
+    return 0;
+  }
+
   // calls specific hiopInterfaceXXX::eval_Jac_cons and deals with specializations of hiopMatrix arguments
   virtual bool eval_Jac_c_d_interface_impl(hiopVector& x, bool new_x, hiopMatrix& Jac_c, hiopMatrix& Jac_d);
 
@@ -626,9 +654,16 @@ public:
   virtual bool eval_Jac_c(hiopVector& x, bool new_x, hiopMatrix& Jac_c);
   virtual bool eval_Jac_d(hiopVector& x, bool new_x, hiopMatrix& Jac_d);
 
+  void run_derivative_checker();
+
 protected:
   // calls specific hiopInterfaceXXX::eval_Jac_cons and deals with specializations of hiopMatrix arguments
   virtual bool eval_Jac_c_d_interface_impl(hiopVector& x, bool new_x, hiopMatrix& Jac_c, hiopMatrix& Jac_d);
+
+  size_type run_derivative_checker_order2(hiopVector& x_ref,
+                                          hiopVector& grad_ref,
+                                          hiopMatrix& Jacc_ref,
+                                          hiopMatrix& Jacd_ref);
 
 public:
   virtual bool eval_Hess_Lagr(const hiopVector& x,
