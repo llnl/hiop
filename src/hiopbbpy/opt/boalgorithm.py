@@ -143,10 +143,11 @@ class BOAlgorithm(BOAlgorithmBase):
         for ii in range(self.n_start):
             success = False
             # Generate random starting point if x0 is not provided
-            if x0 is None and self.prob is not None:
+            if self.prob is not None:
                 x0 = self.prob.sample(1)[0]
             else:
                 x0 = np.array([uniform(b[0], b[1]) for b in self.bounds])
+
             xopt, yout, success = self.acqf_minimizer_callback(acqf_callback, x0)
 
             if success:
@@ -218,6 +219,8 @@ class BOAlgorithm(BOAlgorithmBase):
           
           y_new = self.evaluator.run(self.prob.evaluate, x_train[-self.batch_size:])
           y_train = np.vstack([y_train, y_new])
+          #print(f'x_new = {x_new}')
+          #print(f'y_new = {y_new}')
           
           # Save the new sample points and objective evaluations
           for j in range(1, self.batch_size+1):
