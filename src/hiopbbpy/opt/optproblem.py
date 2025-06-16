@@ -7,7 +7,7 @@ Convert a Scipy optimization problem to an Ipopt problem.
 Parameters:
     objective (callable): Objective function.
     gradient (callable): Gradient of the objective.
-    constraints_list: Scipy-styple list of dicts with 'type', 'fun', and optional 'jac'.
+    constraints_list: Scipy-style list of dicts with 'type', 'fun', and optional 'jac'.
     xbounds (list of tuple): Variable bounds [(x0_lb, x0_ub), ...]
     
 Returns:
