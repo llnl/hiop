@@ -14,7 +14,7 @@ from ..surrogate_modeling.gp import GaussianProcess
 from .acquisition import LCBacquisition, EIacquisition
 from ..problems.problem import Problem
 from .optproblem import IpoptProb
-from smt.applications.ego import Evaluator
+from ..utils.util import Evaluator
 
 # A base class defining a general framework for Bayesian Optimization
 class BOAlgorithmBase:
@@ -225,10 +225,17 @@ class BOAlgorithm(BOAlgorithmBase):
                 self.x_hist.append(x_train[-j].flatten())
                 self.y_hist.append(y_train[-j].flatten())
             if self.batch_size == 1:
-                print(f"Sample point X: {x_train[-self.batch_size:]}, Observation Y: {y_new}")
+                print(f"Sample point X:")
             else:
-                print(f"Sample points X: {x_train[-self.batch_size:]}, Observations Y: {y_new}")
-
+                print(f"Sample points X:")
+            for j in range(self.batch_size):
+                print(f"{x_train[-j-1]}")
+            if self.batch_size == 1:
+                print(f"\nObservation Y:")
+            else:
+                print(f"\nObservations Y:")
+            for j in range(self.batch_size):
+                print(f"{y_new[-j-1]}")
 
         # Save the optimal results and all the training data
         self.idx_opt = np.argmin(self.y_hist)

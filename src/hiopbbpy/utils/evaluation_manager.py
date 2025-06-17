@@ -27,7 +27,6 @@ def is_running_with_mpi():
 # Loads MPIPoolExecutor if MPI is available
 if is_running_with_mpi():
     from mpi4py.futures import MPIPoolExecutor, wait
-
     _EVALUATION_MANAGER_USES_MPI4PY = True
 else:
     _EVALUATION_MANAGER_USES_MPI4PY = False
