@@ -3,6 +3,7 @@ set(hiopDenseEx_INTERFACE_HEADERS
   NlpDenseConsEx2.hpp
   NlpDenseConsEx3.hpp
   NlpDenseConsEx4.hpp
+  NlpDenseConsRajaEx2.hpp
   )
 
 add_executable(NlpDenseConsEx1.exe NlpDenseConsEx1.cpp NlpDenseConsEx1Driver.cpp)
@@ -16,6 +17,13 @@ target_link_libraries(NlpDenseConsEx3.exe HiOp::HiOp)
 
 add_executable(NlpDenseConsEx4.exe NlpDenseConsEx4.cpp NlpDenseConsEx4Driver.cpp)
 target_link_libraries(NlpDenseConsEx4.exe HiOp::HiOp)
+
+if(HIOP_USE_RAJA)
+  add_executable(NlpDenseConsRajaEx2.exe
+                 NlpDenseConsRajaEx2.cpp
+                 DenseRajaEx2MiniDriver.cpp)
+  target_link_libraries(NlpDenseConsRajaEx2.exe HiOp::HiOp)
+endif()
 
 if(HIOP_BUILD_FORTRAN_EXAMPLE)
   add_executable(NlpDenseConsFEx1.exe NlpDenseConsFEx1.F90)
@@ -63,3 +71,7 @@ if(HIOP_BUILD_FORTRAN_EXAMPLE)
   add_test(NAME NlpDenseFinterface COMMAND ${RUNCMD} "$<TARGET_FILE:NlpDenseConsFEx1.exe>")
 endif()
 
+if(HIOP_USE_RAJA)
+  add_test(NAME NlpDenseConsRaja2_mini
+           COMMAND ${RUNCMD} "$<TARGET_FILE:NlpDenseConsRajaEx2.exe>" 32)
+endif()
