@@ -21,7 +21,7 @@ target_link_libraries(NlpDenseConsEx4.exe HiOp::HiOp)
 if(HIOP_USE_RAJA)
   add_executable(NlpDenseConsRajaEx2.exe
                  NlpDenseConsRajaEx2.cpp
-                 DenseRajaEx2MiniDriver.cpp)
+                 NlpDenseConsRajaEx2Driver.cpp)
   target_link_libraries(NlpDenseConsRajaEx2.exe HiOp::HiOp)
 endif()
 
