@@ -877,7 +877,7 @@ void hiopNlpFormulation::run_derivative_checker()
     double f_ref;
     bret = interface_base.eval_f(nlp_transformations_.n_pre(), x_ref.local_data_const(), true, f_ref);
     if(!bret) {
-      log->printf(hovError, "Derivative check error: in evaluating user objective.");
+      log->printf(hovError, "Derivative check error: in evaluating user objective.\n");
       user_eval_err = true;
     }
     
@@ -892,7 +892,7 @@ void hiopNlpFormulation::run_derivative_checker()
       double f_pert;
       bret = interface_base.eval_f(nlp_transformations_.n_pre(), x_pert->local_data_const(), true, f_pert);
       if(!bret) {
-        log->printf(hovError, "Derivative check error: in evaluating user objective.");
+        log->printf(hovError, "Derivative check error: in evaluating user objective.\n");
         user_eval_err = true;
         break;
       }
@@ -919,7 +919,7 @@ void hiopNlpFormulation::run_derivative_checker()
       
     }
     if(user_eval_err) {
-      log->printf(hovSummary, "Derivative checker halted because of error(s) in user provided functions.");
+      log->printf(hovSummary, "Derivative checker halted because of error(s) in user provided functions.\n");
     } else {
       log->printf(hovSummary, "Derivative checker for gradient finished: %d errors detected.\n", num_errs);
 
@@ -961,7 +961,7 @@ void hiopNlpFormulation::run_derivative_checker()
       hiopVector* ei = x_ref.alloc_clone();
       
       //main loop
-      for(index_type idx=0; idx<nlp_transformations_.n_pre() &&!user_eval_err; ++idx) {
+      for(index_type idx=0; idx<nlp_transformations_.n_pre() && !user_eval_err; ++idx) {
         
         const double val_ref = x_ref.get_elem(idx);
         x_pert->copyFrom(x_ref);
@@ -993,7 +993,7 @@ void hiopNlpFormulation::run_derivative_checker()
         for(index_type row=0; row<m() && !user_eval_err; ++row) {
           const double Jac_fd_ij = Jac_fd_col.get_elem(row);
           const double Jac_ex_ij = Jac_ex_col->get_elem(row);
-          const double scale = max(Jac_ex_ij, max(abs(Jac_fd_ij), derivative_check_tolerance));
+          const double scale = max(abs(Jac_ex_ij), max(abs(Jac_fd_ij), derivative_check_tolerance));
           double rel_error = abs(Jac_fd_ij - Jac_ex_ij) / scale;
           
           const bool b_err = rel_error > derivative_check_tolerance;
@@ -1011,7 +1011,7 @@ void hiopNlpFormulation::run_derivative_checker()
             log->printf(hovSummary, "%s\n", ss.str().c_str());
             fflush(stdout);
           }
-        } // end for j=1,..,m
+        } // end for row=1,..,m
       }
       if(user_eval_err) {
         log->printf(hovSummary, "Derivative checker halted because of error(s) in user provided functions.");        
@@ -2523,13 +2523,17 @@ size_type hiopNlpSparse::run_derivative_checker_order2(hiopVector& x_ref,
   hiopVector* x_pert = x_ref.alloc_clone();
   // gradient at perturbed x
   hiopVector* grad_pert = grad_ref.alloc_clone();
+  // ei vector used to get columns of the Hessian(s0
+  hiopVector* ei = x_ref.alloc_clone();
+  // vector to store a column of the Hessian
+  hiopVector* Hess_ex_col = x_ref.alloc_clone();
   //user "exact" Hessian
   auto* Hess_exact = alloc_Hess_Lagr();
 
   bool user_eval_err = false; 
   
   //
-  //objective Hessian first
+  //objective reference Hessian first
   //
   //evaluate 
   double obj_factor = 1.5;
@@ -2543,12 +2547,64 @@ size_type hiopNlpSparse::run_derivative_checker_order2(hiopVector& x_ref,
     user_eval_err = true;
   }
 
-  for(index_type i=0; i<n() && !user_eval_err; i++) {
+  const double pert = options->GetNumeric("derivative_check_perturbation");
+  const double derivative_check_tolerance = options->GetNumeric("derivative_check_tolerance");
+  const bool print_all = ( options->GetString("derivative_check_print_all") != "no" );
+
+  
+  for(index_type idx=0; idx<n() && !user_eval_err; idx++) {
+    const double val_ref = x_ref.get_elem(idx);
+    x_pert->copyFrom(x_ref);
+    x_pert->set_elem(idx, val_ref+pert*max(abs(val_ref), 1.0));
+
+    //evaluate gradient (of objective)
+    if(!interface_base.eval_grad_f(nlp_transformations_.n_pre(),
+                                   x_pert->local_data_const(),
+                                   true,
+                                   grad_pert->local_data())) {
+      user_eval_err = true;
+      log->printf(hovError, "Derivative check error: in evaluating user gradient at perturbed point.\n");
+      break;
+    }
+
+    hiopVector& Hess_fd_col = *grad_pert;
+    Hess_fd_col.axpy(-1.0, grad_ref);
+    Hess_fd_col.scale(1/pert);
     
+    //obtain 'idx' column of the Hessian
+    ei->setToZero();
+    ei->set_elem(idx, 1.);
+    Hess_exact->timesVec(0, *Hess_ex_col, 1.0, *ei);
+
+    //loop over (i,j) <- (idx,row)
+    for(index_type row=0; row<n() && !user_eval_err; row++) {
+      const double Hess_fd_ij = Hess_fd_col.get_elem(row);
+      const double Hess_ex_ij = Hess_ex_col->get_elem(row);
+      const double scale = max(abs(Hess_ex_ij), max(abs(Hess_fd_ij), derivative_check_tolerance));
+      double rel_error = abs(Hess_fd_ij-Hess_ex_ij) / scale;
+
+      const bool b_err = rel_error > derivative_check_tolerance;
+      char err_marker = ' ';
+      if(b_err) {
+        err_marker = '!';
+        num_errs++;
+      }
+      if(b_err || print_all) {
+        stringstream ss;
+        ss << err_marker << " Hess[" << setw(5) << idx << "," << setw(5) << row << "] "
+           << "user " << fixed << setprecision(14) << setw(21) << Hess_ex_ij << "  "
+           << "fd " << fixed << setprecision(14) << setw(21) << Hess_fd_ij
+           << " relerr [" << scientific << setprecision(3) << setw(9) << rel_error << "]";
+        log->printf(hovSummary, "%s\n", ss.str().c_str());
+        fflush(stdout);
+
+      }
+    } // end for row=1,2,...
   }
 
-  if(user_eval_err) {
+  if(!user_eval_err) {
     log->printf(hovSummary, "Derivative checker for Objective Hessian finished: %d errors detected.\n", num_errs);
+    
   } else {
     
   }
@@ -2568,8 +2624,10 @@ size_type hiopNlpSparse::run_derivative_checker_order2(hiopVector& x_ref,
   delete lambda_eq;
   delete lambda_ineq;
   delete Hess_exact;
+  delete Hess_ex_col;
+  delete ei;
   delete x_pert;
-
+  
   return num_errs;
 }
 

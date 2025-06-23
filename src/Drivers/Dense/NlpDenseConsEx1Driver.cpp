@@ -101,10 +101,10 @@ int main(int argc, char** argv)
 
   DenseConsEx1 problem(mesh_size, ratio);
   hiop::hiopNlpDenseConstraints nlp(problem);
-  
+
   hiop::hiopAlgFilterIPM solver(&nlp);
   problem.set_solver(&solver);
-  
+
   hiop::hiopSolveStatus status = solver.run();
   objective = solver.getObjective();
 
