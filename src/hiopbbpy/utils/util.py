@@ -30,59 +30,59 @@ from .evaluation_manager import EvaluationManager, is_running_with_mpi
 
 
 def check_required_keys(user_dict, required_keys):
-    for key in required_keys:
-        if key not in user_dict:
-            raise KeyError(f"Missing required key: '{key}'")
+  for key in required_keys:
+    if key not in user_dict:
+      raise KeyError(f"Missing required key: '{key}'")
 
 
 class Evaluator(object):
+  """
+  An interface for evaluation of a function at x points (nsamples of dimension nx).
+  User can derive this interface and override the run() method to implement custom multiprocessing.
+  """
+
+  def run(self, fun, x):
     """
-    An interface for evaluation of a function at x points (nsamples of dimension nx).
-    User can derive this interface and override the run() method to implement custom multiprocessing.
+    Evaluates fun at x.
+
+    Parameters
+    ---------
+    fun : function to evaluate: (nsamples, nx) -> (nsample, 1)
+
+    x : np.ndarray[nsamples, nx]
+        nsamples points of nx dimensions.
+
+    Returns
+    -------
+    np.ndarray[nsample, 1]
+        fun evaluations at the nsamples points.
+
     """
-
-    def run(self, fun, x):
-        """
-        Evaluates fun at x.
-
-        Parameters
-        ---------
-        fun : function to evaluate: (nsamples, nx) -> (nsample, 1)
-
-        x : np.ndarray[nsamples, nx]
-            nsamples points of nx dimensions.
-
-        Returns
-        -------
-        np.ndarray[nsample, 1]
-            fun evaluations at the nsamples points.
-
-        """
-        return fun(x)
+    return fun(x)
 
 
 class MPIEvaluator(Evaluator):
-    """
-    A wrapper of the evaluation_manager code.
-    Note that application codes application.py that use this Evaluator should be run as
-    env MPI4PY_FUTURES_MAX_WORKERS=8 mpiexec -n 1 python application.py
-    Also, the application code should have a "main" section wrapped in
-    if __name__ == "__main__":
-    """
-    def __init__(self):
-        self.manager = EvaluationManager()
-        if is_running_with_mpi():
-            self.executor_type = "mpi"
-        else:
-            self.executor_type = "cpu"
-    def __del__(self):
-        del self.manager
-    def run(self, fun, Xin):
-        nevals = Xin.shape[0]
-        self.manager.submit_tasks(fun, [np.atleast_2d(Xin[i]) for i in range(nevals)], execute_at=self.executor_type)
-        self.manager.sync()
-        Xout, Fout = self.manager.retrieve_results()
-        Y = np.ndarray((nevals, 1))
-        Y[:,0] = np.array(Fout)[:,0,0]
-        return Y
+  """
+  A wrapper of the evaluation_manager code.
+  Note that application codes application.py that use this Evaluator should be run as
+  env MPI4PY_FUTURES_MAX_WORKERS=8 mpiexec -n 1 python application.py
+  Also, the application code should have a "main" section wrapped in
+  if __name__ == "__main__":
+  """
+  def __init__(self):
+    self.manager = EvaluationManager()
+    if is_running_with_mpi():
+      self.executor_type = "mpi"
+    else:
+      self.executor_type = "cpu"
+  def __del__(self):
+    del self.manager
+  def run(self, fun, Xin):
+    nevals = Xin.shape[0]
+    self.manager.submit_tasks(fun, [np.atleast_2d(Xin[i]) for i in range(nevals)], execute_at=self.executor_type)
+    self.manager.sync()
+    Xout, Fout = self.manager.retrieve_results()
+    Y = np.ndarray((nevals, 1))
+    Y[:,0] = np.array(Fout)[:,0,0]
+    return Y
 

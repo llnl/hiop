@@ -14,23 +14,23 @@ from collections import deque
 
 
 def is_running_with_mpi():
-    """Returns True if the code is running in an MPI environment."""
-    _MPI_RANK_ENV_VARS = [
-        "OMPI_COMM_WORLD_RANK",  # Open MPI
-        "PMI_RANK",  # MPICH, Intel MPI, Cray MPI
-        "MPI_RANK",  # Intel MPI (sometimes)
-        "MV2_COMM_WORLD_RANK",  # MVAPICH
-    ]
-    return any(var in os.environ for var in _MPI_RANK_ENV_VARS)
+  """Returns True if the code is running in an MPI environment."""
+  _MPI_RANK_ENV_VARS = [
+      "OMPI_COMM_WORLD_RANK",  # Open MPI
+      "PMI_RANK",  # MPICH, Intel MPI, Cray MPI
+      "MPI_RANK",  # Intel MPI (sometimes)
+      "MV2_COMM_WORLD_RANK",  # MVAPICH
+  ]
+  return any(var in os.environ for var in _MPI_RANK_ENV_VARS)
 
 
 # Loads MPIPoolExecutor if MPI is available
 if is_running_with_mpi():
-    from mpi4py.futures import MPIPoolExecutor, wait
-    _EVALUATION_MANAGER_USES_MPI4PY = True
+  from mpi4py.futures import MPIPoolExecutor, wait
+  _EVALUATION_MANAGER_USES_MPI4PY = True
 else:
-    _EVALUATION_MANAGER_USES_MPI4PY = False
-    from concurrent.futures import wait
+  _EVALUATION_MANAGER_USES_MPI4PY = False
+  from concurrent.futures import wait
 
 
 class EvaluationManager:

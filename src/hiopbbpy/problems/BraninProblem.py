@@ -19,28 +19,27 @@ from numpy.random import uniform
 
 # define the Branin problem class
 class BraninProblem(Problem):
-    def __init__(self, constraints=[]):
-        ndim = 2
-        xlimits = np.array([[-5.0, 10], [0.0, 15]]) 
-        name = 'Branin'
-        super().__init__(ndim, xlimits, name=name, constraints=constraints)
-            
-    def _evaluate(self, x: np.ndarray) -> np.ndarray:
-        
-        ne, nx = x.shape
-        assert nx == self.ndim
-        
-        y = np.zeros((ne, 1), complex)
-        b = 5.1 / (4.0 * (np.pi) ** 2)
-        c = 5.0 / np.pi
-        r = 6.0
-        s = 10.0
-        t = 1.0 / (8.0 * np.pi)
-        
-        arg1 = (x[:,1] - b * x[:,0]**2 + c * x[:,0] - r)
-        y[:,0] = arg1**2 + s * (1 - t) * np.cos(x[:,0]) + s
-        
-        return y
+  def __init__(self, constraints=[]):
+    ndim = 2
+    xlimits = np.array([[-5.0, 10], [0.0, 15]]) 
+    name = 'Branin'
+    super().__init__(ndim, xlimits, name=name, constraints=constraints)
+          
+  def _evaluate(self, x: np.ndarray) -> np.ndarray:
+    ne, nx = x.shape
+    assert nx == self.ndim
+    
+    y = np.zeros((ne, 1), complex)
+    b = 5.1 / (4.0 * (np.pi) ** 2)
+    c = 5.0 / np.pi
+    r = 6.0
+    s = 10.0
+    t = 1.0 / (8.0 * np.pi)
+    
+    arg1 = (x[:,1] - b * x[:,0]**2 + c * x[:,0] - r)
+    y[:,0] = arg1**2 + s * (1 - t) * np.cos(x[:,0]) + s
+    
+    return y
 
 
 
