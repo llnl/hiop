@@ -19,6 +19,7 @@ warnings.filterwarnings("ignore")
 from hiopbbpy.surrogate_modeling import smtKRG
 from hiopbbpy.opt import BOAlgorithm
 from hiopbbpy.problems import BraninProblem, LpNormProblem
+from hiopbbpy.utils import MPIEvaluator
 
 
 # Get user input for the number of repetitions from command-line arguments
@@ -75,44 +76,42 @@ cu = np.zeros(3)
 # 'trust-constr' method supports vector-valued constraints
 user_constraint_dict = {'cons': cons_vec, 'jac': cons_jac_vec, 'cl': cl, 'cu': cu}
 
-retval = 0
-for prob_type in prob_type_l:
-   print()
-   if prob_type == "LpNorm":
-      problem = LpNormProblem(nx, xlimits)
-   else:
-      problem = BraninProblem()
-   problem.set_constraints(user_constraint_dict) #use user_constraint_dict or user_constraint_list
 
-   for acq_type in acq_type_l:
-      print("Problem name: ", problem.name)
-      print("Acquisition type: ", acq_type)
-
-      ### initial training set
-      x_train = problem.sample(n_samples)
-      y_train = problem.evaluate(x_train)
-
-      ### Define the GP surrogate model
-      gp_model = smtKRG(theta, xlimits, nx)
-      gp_model.train(x_train, y_train)
-   
-      options = {
-        'acquisition_type': acq_type,
-        'bo_maxiter': 10,
-        'opt_solver': 'IPOPT',  #"SLSQP" "IPOPT" "trust-constr"
-        'batch_size': 1,
-        'solver_options': {
-           'max_iter': 200,
-           'print_level': 1
-           }
-      }
-   
-      # Instantiate and run Bayesian Optimization
-      bo = BOAlgorithm(problem, gp_model, x_train, y_train, options = options) #EI or LCB
-      bo.optimize()
-
-sys.exit(retval)
-
-
-
-
+if __name__ == "__main__":
+    for prob_type in prob_type_l:
+       print()
+       # ----- evaluator
+       evaluator = MPIEvaluator() 
+       if prob_type == "LpNorm":
+          problem = LpNormProblem(nx, xlimits)
+       else:
+          problem = BraninProblem()
+       problem.set_constraints(user_constraint_dict) #use user_constraint_dict or user_constraint_list
+    
+       for acq_type in acq_type_l:
+          print("Problem name: ", problem.name)
+          print("Acquisition type: ", acq_type)
+    
+          ### initial training set
+          x_train = problem.sample(n_samples)
+          y_train = evaluator.run(problem.evaluate, x_train)
+    
+          ### Define the GP surrogate model
+          gp_model = smtKRG(theta, xlimits, nx)
+          gp_model.train(x_train, y_train)
+       
+          options = {
+            'acquisition_type': acq_type,
+            'bo_maxiter': 10,
+            'opt_solver': 'IPOPT',  #"SLSQP" "IPOPT" "trust-constr"
+            'batch_size': 3,
+            'solver_options': {
+               'max_iter': 200,
+               'print_level': 1
+               },
+            'evaluator': evaluator
+          }
+       
+          # Instantiate and run Bayesian Optimization
+          bo = BOAlgorithm(problem, gp_model, x_train, y_train, options = options) #EI or LCB
+          bo.optimize()
