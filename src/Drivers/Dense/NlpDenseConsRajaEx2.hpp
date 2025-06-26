@@ -2,7 +2,6 @@
 #define HIOP_EXAMPLE_DENSE_RAJA_EX2
 
 #include "hiopInterface.hpp"
-#include <RAJA/RAJA.hpp>
 
 #ifdef HIOP_USE_MPI
 #include <mpi.h>
@@ -13,19 +12,6 @@
 
 using size_type  = hiop::size_type;
 using index_type = hiop::index_type;
-
-#ifdef HIOP_USE_CUDA
-#include "ExecPoliciesRajaCudaImpl.hpp"
-using exec_pol   = hiop::ExecRajaPoliciesBackend<hiop::ExecPolicyRajaCuda>::hiop_raja_exec;
-using reduce_pol = hiop::ExecRajaPoliciesBackend<hiop::ExecPolicyRajaCuda>::hiop_raja_reduce;
-#elif defined(HIOP_USE_HIP)
-#include "ExecPoliciesRajaHipImpl.hpp"
-using exec_pol   = hiop::ExecRajaPoliciesBackend<hiop::ExecPolicyRajaHip>::hiop_raja_exec;
-using reduce_pol = hiop::ExecRajaPoliciesBackend<hiop::ExecPolicyRajaHip>::hiop_raja_reduce;
-#else
-using exec_pol   = RAJA::seq_exec;
-using reduce_pol = RAJA::seq_reduce;
-#endif
 
 /**
  * @brief RAJA-enabled implementation of the DenseConsEx2 example.

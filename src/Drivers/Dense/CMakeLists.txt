@@ -19,6 +19,13 @@ add_executable(NlpDenseConsEx4.exe NlpDenseConsEx4.cpp NlpDenseConsEx4Driver.cpp
 target_link_libraries(NlpDenseConsEx4.exe HiOp::HiOp)
 
 if(HIOP_USE_RAJA)
+  if(HIOP_USE_GPU AND HIOP_USE_CUDA)
+    set_source_files_properties(
+      NlpDenseConsRajaEx2.cpp
+      NlpDenseConsRajaEx2Driver.cpp
+      PROPERTIES LANGUAGE CUDA
+    )
+  endif()
   add_executable(NlpDenseConsRajaEx2.exe
                  NlpDenseConsRajaEx2.cpp
                  NlpDenseConsRajaEx2Driver.cpp)

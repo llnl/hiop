@@ -1,7 +1,24 @@
 #include "NlpDenseConsRajaEx2.hpp"
 #include <cmath>
 #include <cstring>
+#include <umpire/Allocator.hpp>
+#include <umpire/ResourceManager.hpp>
 #include <RAJA/RAJA.hpp>
+#include <hiopMatrixDenseRowMajor.hpp>
+#include <hiopMatrixDenseRaja.hpp>
+
+#ifdef HIOP_USE_CUDA
+#include "ExecPoliciesRajaCudaImpl.hpp"
+using exec_pol   = hiop::ExecRajaPoliciesBackend<hiop::ExecPolicyRajaCuda>::hiop_raja_exec;
+using reduce_pol = hiop::ExecRajaPoliciesBackend<hiop::ExecPolicyRajaCuda>::hiop_raja_reduce;
+#elif defined(HIOP_USE_HIP)
+#include "ExecPoliciesRajaHipImpl.hpp"
+using exec_pol   = hiop::ExecRajaPoliciesBackend<hiop::ExecPolicyRajaHip>::hiop_raja_exec;
+using reduce_pol = hiop::ExecRajaPoliciesBackend<hiop::ExecPolicyRajaHip>::hiop_raja_reduce;
+#else
+using exec_pol   = RAJA::seq_exec;
+using reduce_pol = RAJA::seq_reduce;
+#endif
 
 DenseConsRajaEx2::DenseConsRajaEx2(int n, bool unconstrained)
   : n_vars_(n), n_cons_(4), unconstrained_(unconstrained)
