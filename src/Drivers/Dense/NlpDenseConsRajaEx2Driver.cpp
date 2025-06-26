@@ -6,10 +6,14 @@
 #include <string>
 #include <cmath>
 
+#ifdef HIOP_USE_CUDA
+#include <cuda_runtime.h>
+#endif
+
 using namespace hiop;
 
-static bool self_check(size_type n, double obj_value);
-static bool self_check_uncon(size_type n, double obj_value);
+static bool self_check(int rank, size_type n, double obj_value);
+static bool self_check_uncon(int rank, size_type n, double obj_value);
 
 static bool parse_arguments(int argc, char** argv,
                             size_type& n,
@@ -50,6 +54,21 @@ int main(int argc, char** argv)
   MPI_Init(&argc, &argv);
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 #endif
+#ifdef HIOP_USE_CUDA
+  int dev = -1;
+  cudaError_t err = cudaGetDevice(&dev);
+  if(err == cudaSuccess) {
+    cudaDeviceProp prop;
+    cudaGetDeviceProperties(&prop, dev);
+    if(rank == 0) {
+      std::cout << "[CUDA CHECK] Using device " << dev << ": " << prop.name << std::endl;
+    }
+  } else {
+    if(rank == 0) {
+      std::cout << "[CUDA CHECK] cudaGetDevice failed: " << cudaGetErrorString(err) << std::endl;
+    }
+  }
+#endif
 
   bool do_selfcheck, unconstrained;
   size_type n;
@@ -77,9 +96,9 @@ int main(int argc, char** argv)
 
   if(do_selfcheck) {
     if(!unconstrained) {
-      if(!self_check(n, obj_value)) return -1;
+      if(!self_check(rank, n, obj_value)) return -1;
     } else {
-      if(!self_check_uncon(n, obj_value)) return -1;
+      if(!self_check_uncon(rank, n, obj_value)) return -1;
     }
   } else if(rank == 0) {
     printf("Optimal objective: %22.14e. Status: %d\n", obj_value, status);
@@ -91,7 +110,7 @@ int main(int argc, char** argv)
   return 0;
 }
 
-static bool self_check(size_type n, double objval)
+static bool self_check(int rank, size_type n, double objval)
 {
   const size_type n_saved[] = {500, 5000, 50000};
   const double    obj_saved[] = {1.56251020819349e-02,
@@ -113,7 +132,7 @@ static bool self_check(size_type n, double objval)
   return false;
 }
 
-static bool self_check_uncon(size_type n, double objval)
+static bool self_check_uncon(int rank, size_type n, double objval)
 {
   const size_type n_saved[] = {500, 5000, 50000};
   const double    obj_saved[] = {1.56250004019985e-02,
