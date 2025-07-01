@@ -5,6 +5,8 @@
 #include <cstdlib>
 #include <string>
 #include <cmath>
+#include <cstdio>    // for printf
+#include <iostream>  // for std::cout
 
 #ifdef HIOP_USE_CUDA
 #include <cuda_runtime.h>
@@ -20,31 +22,28 @@ static bool parse_arguments(int argc, char** argv,
                             bool& do_selfcheck,
                             bool& unconstrained)
 {
-  do_selfcheck = false;
+  do_selfcheck  = false;
   unconstrained = false;
-  n = 50000;
+  n             = 50000;
   switch(argc) {
-    case 1:
-      return true;
+    case 1: return true;
     case 4:
       if(std::string(argv[3]) == "-selfcheck") do_selfcheck = true;
       // fallthrough
     case 3:
       if(std::string(argv[2]) == "-unconstrained") unconstrained = true;
-      else if(std::string(argv[2]) == "-selfcheck") do_selfcheck = true;
+      else if(std::string(argv[2]) == "-selfcheck")      do_selfcheck = true;
       // fallthrough
     case 2:
       n = std::atoi(argv[1]);
-      if(n <= 0) return false;
-      return true;
-    default:
-      return false;
+      return (n > 0);
+    default: return false;
   }
 }
 
 static void usage(const char* exeName)
 {
-  printf("Usage: %s [problem_size] [-unconstrained] [-selfcheck]\n", exeName);
+  std::printf("Usage: %s [problem_size] [-unconstrained] [-selfcheck]\n", exeName);
 }
 
 int main(int argc, char** argv)
@@ -54,18 +53,19 @@ int main(int argc, char** argv)
   MPI_Init(&argc, &argv);
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 #endif
+
 #ifdef HIOP_USE_CUDA
-  int dev = -1;
+  int dev{-1};
   cudaError_t err = cudaGetDevice(&dev);
-  if(err == cudaSuccess) {
-    cudaDeviceProp prop;
-    cudaGetDeviceProperties(&prop, dev);
-    if(rank == 0) {
-      std::cout << "[CUDA CHECK] Using device " << dev << ": " << prop.name << std::endl;
-    }
-  } else {
-    if(rank == 0) {
-      std::cout << "[CUDA CHECK] cudaGetDevice failed: " << cudaGetErrorString(err) << std::endl;
+  if(rank==0) {
+    if(err==cudaSuccess) {
+      cudaDeviceProp prop;
+      cudaGetDeviceProperties(&prop, dev);
+      std::cout << "[CUDA CHECK] Using device " << dev
+                << ": " << prop.name << "\n";
+    } else {
+      std::cout << "[CUDA CHECK] cudaGetDevice failed: "
+                << cudaGetErrorString(err) << "\n";
     }
   }
 #endif
@@ -80,14 +80,16 @@ int main(int argc, char** argv)
     return 1;
   }
 
-  DenseConsRajaEx2 nlp_interface(n, unconstrained);
+  DenseConsRajaEx2     nlp_interface(n, unconstrained);
   hiopNlpDenseConstraints nlp(nlp_interface);
-  hiopAlgFilterIPM solver(&nlp);
-  hiopSolveStatus status = solver.run();
-  double obj_value = solver.getObjective();
+  hiopAlgFilterIPM       solver(&nlp);
+  hiopSolveStatus        status = solver.run();
+  double                 objv   = solver.getObjective();
 
   if(status < 0) {
-    if(rank == 0) printf("Solver returned negative status %d (obj=%18.12e)\n", status, obj_value);
+    if(rank==0) std::printf(
+      "Solver returned negative status %d (obj=%18.12e)\n",
+      status, objv);
 #ifdef HIOP_USE_MPI
     MPI_Finalize();
 #endif
@@ -95,13 +97,18 @@ int main(int argc, char** argv)
   }
 
   if(do_selfcheck) {
-    if(!unconstrained) {
-      if(!self_check(rank, n, obj_value)) return -1;
-    } else {
-      if(!self_check_uncon(rank, n, obj_value)) return -1;
+    bool ok = unconstrained
+            ? self_check_uncon(rank, n, objv)
+            : self_check(rank,     n, objv);
+    if(!ok) {
+#ifdef HIOP_USE_MPI
+      MPI_Finalize();
+#endif
+      return -1;
     }
-  } else if(rank == 0) {
-    printf("Optimal objective: %22.14e. Status: %d\n", obj_value, status);
+  } else if(rank==0) {
+    std::printf("Optimal objective: %18.12e. Status: %d\n",
+                objv, status);
   }
 
 #ifdef HIOP_USE_MPI
@@ -110,46 +117,58 @@ int main(int argc, char** argv)
   return 0;
 }
 
-static bool self_check(int rank, size_type n, double objval)
+static bool self_check(int rank, size_type n, double objv)
 {
-  const size_type n_saved[] = {500, 5000, 50000};
-  const double    obj_saved[] = {1.56251020819349e-02,
-                                 1.56251019995139e-02,
-                                 1.56251028980352e-02};
+  const size_type n_saved[] = {  500,   5000,   50000 };
+  const double obj_saved[] = { 
+    1.56251020819349e-02, 
+    1.56251019995139e-02, 
+    1.56251028980352e-02 
+  };
   const double relerr = 1e-6;
-  for(int i = 0; i < 3; ++i) {
-    if(n_saved[i] == n) {
-      if(fabs((obj_saved[i] - objval)/(1 + obj_saved[i])) > relerr) {
-        if(rank == 0) printf("selfcheck failure for n=%lld: got %%18.12e vs %%18.12e\n", (long long)n, objval, obj_saved[i]);
+  for(int i=0;i<3;i++) {
+    if(n_saved[i]==n) {
+      double err = std::fabs(obj_saved[i] - objv)/(1 + obj_saved[i]);
+      if(err > relerr) {
+        if(rank==0) std::printf(
+          "selfcheck failure for n=%lld: got %18.12e vs %18.12e\n",
+          (long long)n, objv, obj_saved[i]);
         return false;
-      } else {
-        if(rank == 0) printf("selfcheck success (%%d digits)\n", (int)(-log10(relerr)));
-        return true;
       }
+      if(rank==0) std::printf(
+        "selfcheck success (%d digits)\n",
+        (int)(-std::log10(relerr)));
+      return true;
     }
   }
-  if(rank == 0) printf("no saved result for n=%%lld, got %%18.12e\n", (long long)n, objval);
+  if(rank==0) std::printf(
+    "no saved result for n=%lld, got %18.12e\n",
+    (long long)n, objv);
   return false;
 }
 
-static bool self_check_uncon(int rank, size_type n, double objval)
+static bool self_check_uncon(int rank, size_type n, double objv)
 {
-  const size_type n_saved[] = {500, 5000, 50000};
-  const double    obj_saved[] = {1.56250004019985e-02,
-                                 1.56250035348275e-02,
-                                 1.56250304912460e-02};
+  const size_type n_saved[] = {  500,   5000,   50000 };
+  const double    obj_saved[] = { 1.5625000e-2, 1.5625004e-2, 1.5625030e-2 };
   const double relerr = 1e-6;
-  for(int i = 0; i < 3; ++i) {
-    if(n_saved[i] == n) {
-      if(fabs((obj_saved[i] - objval)/(1 + obj_saved[i])) > relerr) {
-        if(rank == 0) printf("selfcheck failure (uncon) for n=%%lld: got %%18.12e vs %%18.12e\n", (long long)n, objval, obj_saved[i]);
+  for(int i=0;i<3;i++) {
+    if(n_saved[i]==n) {
+      double err = std::fabs(obj_saved[i] - objv)/(1 + obj_saved[i]);
+      if(err > relerr) {
+        if(rank==0) std::printf(
+          "selfcheck failure (uncon) for n=%lld: got %18.12e vs %18.12e\n",
+          (long long)n, objv, obj_saved[i]);
         return false;
-      } else {
-        if(rank == 0) printf("selfcheck success (uncon, %%d digits)\n", (int)(-log10(relerr)));
-        return true;
       }
+      if(rank==0) std::printf(
+        "selfcheck success (uncon, %d digits)\n",
+        (int)(-std::log10(relerr)));
+      return true;
     }
   }
-  if(rank == 0) printf("no saved result (uncon) for n=%%lld, got %%18.12e\n", (long long)n, objval);
+  if(rank==0) std::printf(
+    "no saved result (uncon) for n=%lld, got %18.12e\n",
+    (long long)n, objv);
   return false;
 }
