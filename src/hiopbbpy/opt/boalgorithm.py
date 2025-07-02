@@ -24,7 +24,8 @@ class BOAlgorithmBase:
     self.xtrain = None            # Training data
     self.ytrain = None            # Training data
     self.prob   = None            # Problem structure
-    self.obj_evaluator = Evaluator()  # compute control objective evaluations
+    self.obj_evaluator = Evaluator()  # (batch) objective function evaluations
+    self.opt_evaluator = Evaluator()  # (multi-start) local optimizer evaluations
     self.bo_maxiter = 20          # Maximum number of Bayesian optimization steps
     self.n_start = 10             # estimating acquisition global optima by determining local optima n_start times and then determining the discrete max of that set
     self.batch_size = 1           # batch size
@@ -93,8 +94,11 @@ class BOAlgorithm(BOAlgorithmBase):
     assert batch_size > 0, f"batch_size {batch_size} is not strictly positive"
     self.setAcquisitionType(acquisition_type, batch_size)
 
-    self.obj_evaluator = options.get('evaluator', self.obj_evaluator)
+    self.obj_evaluator = options.get('obj_evaluator', self.obj_evaluator)
     assert isinstance(self.obj_evaluator, Evaluator)
+    
+    self.opt_evaluator = options.get('opt_evaluator', self.opt_evaluator)
+    assert isinstance(self.opt_evaluator, Evaluator)
 
     if options and 'opt_solver' in options:
       opt_solver = options['opt_solver']
@@ -135,7 +139,7 @@ class BOAlgorithm(BOAlgorithmBase):
     acqf_obj_callback = lambda x: float(np.array(acqf.evaluate(np.atleast_2d(x))).flat[0])
     acqf_callback = {'obj': acqf_obj_callback}
     if acqf.has_gradient == True:
-      acqf_grad_callback = lambda x: np.array(acqf.eval_g(np.atleast_2d(x)))
+      acqf_grad_callback = lambda x: np.array(acqf.eval_g(np.atleast_2d(x))).flatten()
       acqf_callback['grad'] = acqf_grad_callback
 
     x_all = []
