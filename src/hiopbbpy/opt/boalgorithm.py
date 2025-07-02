@@ -24,7 +24,7 @@ class BOAlgorithmBase:
     self.xtrain = None            # Training data
     self.ytrain = None            # Training data
     self.prob   = None            # Problem structure
-    self.evaluator = Evaluator()  # compute control objective evaluations
+    self.obj_evaluator = Evaluator()  # compute control objective evaluations
     self.bo_maxiter = 20          # Maximum number of Bayesian optimization steps
     self.n_start = 10             # estimating acquisition global optima by determining local optima n_start times and then determining the discrete max of that set
     self.batch_size = 1           # batch size
@@ -93,8 +93,8 @@ class BOAlgorithm(BOAlgorithmBase):
     assert batch_size > 0, f"batch_size {batch_size} is not strictly positive"
     self.setAcquisitionType(acquisition_type, batch_size)
 
-    self.evaluator = options.get('evaluator', self.evaluator)
-    assert isinstance(self.evaluator, Evaluator)
+    self.obj_evaluator = options.get('evaluator', self.obj_evaluator)
+    assert isinstance(self.obj_evaluator, Evaluator)
 
     if options and 'opt_solver' in options:
       opt_solver = options['opt_solver']
@@ -217,7 +217,7 @@ class BOAlgorithm(BOAlgorithmBase):
           # Update training set with the virtual point
           y_train_virtual = np.vstack([y_train_virtual, y_virtual])
       
-      y_new = self.evaluator.run(self.prob.evaluate, x_train[-self.batch_size:])
+      y_new = self.obj_evaluator.run(self.prob.evaluate, x_train[-self.batch_size:])
       y_train = np.vstack([y_train, y_new])
       
       # Save the new sample points and objective evaluations
