@@ -91,19 +91,45 @@ bool DenseConsRajaEx2::get_vars_info(const size_type& n,
   index_type end   = col_partition_[my_rank_ + 1];
   index_type nloc  = end - start;
 
-  RAJA::forall<exec_pol>(RAJA::RangeSegment(start, end), RAJA_LAMBDA(index_type i) {
-    index_type li = i - start;
-    if (i == 0) {
-      xlow[li] = -INF; xupp[li] = INF;
-    } else if (i == 1) {
-      xlow[li] = 0.0;  xupp[li] = INF;
-    } else if (i == 2) {
-      xlow[li] = 1.5;  xupp[li] = 10.0;
-    } else {
-      xlow[li] = 0.5;  xupp[li] = INF;
-    }
+  /* ---------- 1. special variable x0 (global i = 0) ---------- */
+  if(start == 0)      // only the rank that owns i = 0 does this
+  {
+    xlow[0] = -INF;
+    xupp[0] =  INF;
+    type[0] = hiopNonlinear;
+  }
+
+  /* ---------- 2. special variable x1 (global i = 1) ---------- */
+  if(start <= 1 && 1 < end)
+  {
+    index_type li = 1 - start;
+    xlow[li] = 0.0;
+    xupp[li] = INF;
     type[li] = hiopNonlinear;
-  });
+  }
+
+  /* ---------- 3. special variable x2 (global i = 2) ---------- */
+  if(start <= 2 && 2 < end)
+  {
+    index_type li = 2 - start;
+    xlow[li] = 1.5;
+    xupp[li] = 10.0;
+    type[li] = hiopNonlinear;
+  }
+
+  /* ---------- 4. generic variables x3 … x_{n-1} -------------- */
+  index_type generic_beg = std::max<index_type>(3, start);     // first generic idx in *global* space
+  if(generic_beg < end)                                        // skip kernel if no generic vars
+  {
+    RAJA::forall<exec_pol>(
+      RAJA::RangeSegment(generic_beg, end),                    // global indices ≥3 on this rank
+      RAJA_LAMBDA(index_type ig) {
+        index_type li = ig - start;                            // local index
+        xlow[li] = 0.5;
+        xupp[li] = INF;
+        type[li] = hiopNonlinear;
+      });
+  }
 
   return true;
 }
@@ -176,13 +202,13 @@ bool DenseConsRajaEx2::eval_grad_f(const size_type& n,
   return true;
 }
 
-// === Constraint evaluation ===
-bool DenseConsRajaEx2::eval_cons(const size_type& n,
-                                 const size_type& m,
+// === Constraint evaluation (branch-free kernel) ===
+bool DenseConsRajaEx2::eval_cons(const size_type& /*n*/,
+                                 const size_type& /*m*/,
                                  const size_type& num_cons,
                                  const index_type* idx_cons,
                                  const double* x,
-                                 bool new_x,
+                                 bool /*new_x*/,
                                  double* cons)
 {
   index_type start = col_partition_[my_rank_];
@@ -191,28 +217,44 @@ bool DenseConsRajaEx2::eval_cons(const size_type& n,
 
   std::fill(cons, cons + num_cons, 0.0);
 
-  for (size_type j = 0; j < num_cons; ++j) {
-    index_type ci = idx_cons[j];
-    RAJA::ReduceSum<reduce_pol, double> sum(0.0);
+  // workspace reused across constraints
+  static std::vector<double> mult_buffer;
+  if(mult_buffer.size() < static_cast<size_t>(nloc))
+    mult_buffer.resize(nloc);
+
+  for(size_type j = 0; j < num_cons; ++j)
+  {
+    /* ---------- 1. Build multiplier array on host ---------- */
+    std::fill(mult_buffer.begin(), mult_buffer.begin() + nloc, 1.0);
+
+    switch(idx_cons[j])
+    {
+      case 1: if(nloc > 0) mult_buffer[0] = 2.0;                           break;
+      case 2: if(nloc > 0) mult_buffer[0] = 2.0;
+              if(nloc > 1) mult_buffer[1] = 0.5;                           break;
+      case 3: if(nloc > 0) mult_buffer[0] = 4.0;
+              if(nloc > 1) mult_buffer[1] = 2.0;
+              if(nloc > 2) mult_buffer[2] = 2.0;                           break;
+      default: /* ci==0 → multipliers remain 1.0 */                        break;
+    }
+
+    /* ---------- 2. Launch branch-free RAJA kernel ---------- */
+    const double* mult_d = mult_buffer.data();   // ptr captured by value
+    RAJA::ReduceSum<reduce_pol,double> sum(0.0);
 
     RAJA::forall<exec_pol>(
-      RAJA::RangeSegment(start, end),
-      RAJA_LAMBDA(index_type i) {
-        index_type li = i - start;
-        double xi = x[li];
-        switch (ci) {
-          case 0: sum += xi; break;
-          case 1: sum += (i == 0 ? 2.0 * xi : xi); break;
-          case 2: sum += (i == 0 ? 2.0 * xi : (i == 1 ? 0.5 * xi : xi)); break;
-          case 3: sum += (i == 0 ? 4.0 * xi : (i <= 2 ? 2.0 * xi : xi)); break;
-        }
+      RAJA::RangeSegment(0, nloc),
+      RAJA_LAMBDA(index_type li)
+      {
+        sum += x[li] * mult_d[li];
       });
 
     cons[j] = sum.get();
   }
 
 #ifdef HIOP_USE_MPI
-  if (num_cons > 0) {
+  if(num_cons > 0)
+  {
     std::vector<double> tmp(num_cons);
     MPI_Allreduce(cons, tmp.data(), num_cons, MPI_DOUBLE, MPI_SUM, comm_);
     std::memcpy(cons, tmp.data(), num_cons * sizeof(double));
@@ -231,28 +273,51 @@ bool DenseConsRajaEx2::eval_Jac_cons(const size_type& n,
                                      bool /*new_x*/,
                                      double* Jac)
 {
-  index_type start = col_partition_[my_rank_];
+  index_type start = col_partition_[my_rank_];           // first global var on this rank
   index_type end   = col_partition_[my_rank_ + 1];
-  index_type nloc  = end - start;
+  index_type nloc  = end - start;                        // # local variables
 
-  RAJA::forall<exec_pol>(
-    RAJA::RangeSegment(0, num_cons * nloc),
-    RAJA_LAMBDA(index_type idx) {
-      index_type ci = idx / nloc;
-      index_type lj = idx % nloc;
-      index_type gi = idx_cons[ci];
-      double v = 1.0;
+  /* -------- persistent host buffer for one Jacobian row -------- */
+  static std::vector<double> row_buff;
+  if(row_buff.size() < static_cast<size_t>(nloc))
+    row_buff.resize(nloc);
 
-      if (gi == 1) {
-        v = (lj == 0 ? 2.0 : 1.0);
-      } else if (gi == 2) {
-        v = (lj == 0 ? 2.0 : (lj == 1 ? 0.5 : 1.0));
-      } else if (gi == 3) {
-        v = (lj == 0 ? 4.0 : (lj <= 2 ? 2.0 : 1.0));
-      }
+  for(size_type j = 0; j < num_cons; ++j)
+  {
+    const int ci = idx_cons[j];                          // constraint index (0..3)
 
-      Jac[ci * nloc + lj] = v;
-    });
+    /* ---------- 1. Build row values on host ------------- */
+    std::fill(row_buff.begin(), row_buff.begin() + nloc, 1.0);   // default
+
+    switch(ci)
+    {
+      case 1:
+        if(start == 0) row_buff[0] = 2.0;                               // x0 multiplier
+        break;
+
+      case 2:
+        if(start == 0) row_buff[0] = 2.0;                               // x0
+        if(start <= 1 && 1 < end) row_buff[1 - start] = 0.5;            // x1
+        break;
+
+      case 3:
+        if(start == 0) row_buff[0] = 4.0;                               // x0
+        if(start <= 1 && 1 < end) row_buff[1 - start] = 2.0;            // x1
+        if(start <= 2 && 2 < end) row_buff[2 - start] = 2.0;            // x2
+        break;
+
+      default: /* ci == 0 → already all ones */                        break;
+    }
+
+    /* ---------- 2. Branch-free copy into Jacobian slice ------------ */
+    const double* row_d = row_buff.data();               // ptr captured by value
+
+    RAJA::forall<exec_pol>(
+      RAJA::RangeSegment(0, nloc),
+      RAJA_LAMBDA(index_type li) {
+        Jac[j * nloc + li] = row_d[li];                  // row-major slice
+      });
+  }
 
   return true;
 }
