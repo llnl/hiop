@@ -87,13 +87,15 @@ HessianDiagPlusRowRank::HessianDiagPlusRowRank(hiopNlpDenseConstraints* nlp_in, 
       nlp_(nlp_in),
       matrix_changed_(false)
 {
+  mem_space_ = nlp_->options->GetString("mem_space");
+  
   DhInv_ = nlp_->alloc_primal_vec();
   St_ = nlp_->alloc_multivector_primal(0, l_max_);
   Yt_ = St_->alloc_clone();  // faster than nlp_->alloc_multivector_primal(...);
   // these are local
-  L_ = LinearAlgebraFactory::create_matrix_dense("DEFAULT", 0, 0);
-  D_ = LinearAlgebraFactory::create_vector("DEFAULT", 0);
-  V_ = LinearAlgebraFactory::create_matrix_dense("DEFAULT", 0, 0);
+  L_ = LinearAlgebraFactory::create_matrix_dense(mem_space_, 0, 0);
+  D_ = LinearAlgebraFactory::create_vector(mem_space_, 0);
+  V_ = LinearAlgebraFactory::create_matrix_dense(mem_space_, 0, 0);
 
   // the previous iteration
   it_prev_ = new hiopIterate(nlp_);
@@ -103,7 +105,8 @@ HessianDiagPlusRowRank::HessianDiagPlusRowRank(hiopNlpDenseConstraints* nlp_in, 
 
   // internal buffers for memory pool (none of them should be in n)
 #ifdef HIOP_USE_MPI
-  buff_kxk_ = new double[nlp_->m() * nlp_->m()];
+  //buff_kxk_ = new double[nlp_->m() * nlp_->m()];
+  buff_kxk_ = LinearAlgebraFactory::create_matrix_dense(mem_space_, nlp_->m(), nlp_->m());
   buff_2lxk_ = new double[nlp_->m() * 2 * l_max_];
   buff1_lxlx3_ = new double[3 * l_max_ * l_max_];
   buff2_lxlx3_ = new double[3 * l_max_ * l_max_];
@@ -189,7 +192,7 @@ HessianDiagPlusRowRank::~HessianDiagPlusRowRank()
   delete Jac_c_prev_;
   delete Jac_d_prev_;
 
-  delete[] buff_kxk_;
+  delete buff_kxk_;
   delete[] buff_2lxk_;
   delete[] buff1_lxlx3_;
   delete[] buff2_lxlx3_;
@@ -623,11 +626,15 @@ void HessianDiagPlusRowRank::sym_mat_times_inverse_times_mattrans(double beta,
   S2Y2.copyBlockFromMatrix(0, l, Y1);
 #ifdef HIOP_USE_MPI
   int ierr;
+  
   ierr = MPI_Allreduce(S2Y2.local_data(), buff_2lxk_, 2 * l * k, MPI_DOUBLE, MPI_SUM, nlp_->get_comm());
   assert(ierr == MPI_SUCCESS);
-  ierr = MPI_Allreduce(W.local_data(), buff_kxk_, k * k, MPI_DOUBLE, MPI_SUM, nlp_->get_comm());
+  W.copyFromDev();
+  ierr = MPI_Allreduce(W.local_data_host(), buff_kxk_.local_data_host(), k * k, MPI_DOUBLE, MPI_SUM, nlp_->get_comm());
   assert(ierr == MPI_SUCCESS);
   S2Y2.copyFrom(buff_2lxk_);
+
+  buff_kxk_.copyFromDev();
   W.copyFrom(buff_kxk_);
   // also copy S1 and Y1
   S1.copyFromMatrixBlock(S2Y2, 0, 0);

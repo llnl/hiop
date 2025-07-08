@@ -72,6 +72,14 @@ public:
   virtual void copyFrom(const hiopMatrixDense& dm) { assert(false && "not implemented in base class"); }
   virtual void copyFrom(const double* buffer) { assert(false && "not implemented in base class"); }
 
+  virtual void copyToDev()
+  {
+  }
+
+  virtual void copyFromDev()
+  {
+  }
+  
   /**
    *  @brief copy to a double array
    *

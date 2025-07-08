@@ -198,7 +198,7 @@ private:
   void updateInternalBFGSRepresentation();
 
   // internals buffers, mostly for MPIAll_reduce
-  double* buff_kxk_;   // size = num_constraints^2
+  hiopMatrixDense* buff_kxk_;   // size = num_constraints^2
   double* buff_2lxk_;  // size = 2 x q-Newton mem size x num_constraints
   double* buff1_lxlx3_;
   double* buff2_lxlx3_;
@@ -295,6 +295,8 @@ private:
   void solve_with_V(hiopVector& rhs_s, hiopVector& rhs_y);
   void solve_with_V(hiopMatrixDense& rhs);
 
+  std::string mem_space_;
+  
 private:
   HessianDiagPlusRowRank() {};
   HessianDiagPlusRowRank(const HessianDiagPlusRowRank&) {};
