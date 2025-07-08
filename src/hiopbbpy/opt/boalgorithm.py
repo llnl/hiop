@@ -119,14 +119,14 @@ class BOAlgorithm(BOAlgorithmBase):
 
   # Method to set up a callback function to minimize the acquisition function
   def _setup_acqf_minimizer_callback(self):
-    self.acqf_minimizer_callback = lambda fun, x0: minimizer(fun, x0, self.opt_solver, self.bounds, self.prob.constraints, self.solver_options)
+    return lambda fun, x0: minimizer(fun, x0, self.opt_solver, self.bounds, self.prob.constraints, self.solver_options)
 
   # Method to train the GP model
   def _train_surrogate(self, x_train, y_train):
     self.gpsurrogate.train(x_train, y_train)
 
   # Method to find the best next sampling point via optimizing the acquisition function
-  def _find_best_point(self, x_train, y_train, x0 = None):
+  def _find_best_point(self, x_train, y_train, minimizer_callback, x0 = None):
     self._train_surrogate(x_train, y_train)
 
     if self.acquisition_type == "LCB":
@@ -144,25 +144,25 @@ class BOAlgorithm(BOAlgorithmBase):
 
     x_all = []
     y_all = []
+    acqf_minimizer_callback2 = lambda xinit : [minimizer_callback(acqf_callback, xin) for xin in xinit]
+
+
+    #for ii in range(self.n_start):
+    if self.prob is not None:
+      x0_pts = np.array([self.prob.sample(1)[0] for _ in range(self.n_start)])
+    else:
+      x0_pts = np.array([[uniform(b[0], b[1]) for b in self.bounds] for _ in range(self.n_start)])
+    opt_output = self.opt_evaluator.run(acqf_minimizer_callback2, x0_pts)
     for ii in range(self.n_start):
       success = False
-      # Generate random starting point if x0 is not provided
-      if self.prob is not None:
-        x0 = self.prob.sample(1)[0]
-      else:
-        x0 = np.array([uniform(b[0], b[1]) for b in self.bounds])
-
-      xopt, yout, success = self.acqf_minimizer_callback(acqf_callback, x0)
-
+      xopt, yopt, success = opt_output[ii]
       if success:
         x_all.append(xopt)
-        y_all.append(yout)
-
+        y_all.append(yopt) 
     if not x_all:
       raise RuntimeError("Optimization failed for all initial points — no solution found.")
 
     best_xopt = x_all[np.argmin(np.array(y_all))]
-
     return best_xopt
   
   def _get_virtual_point(self, x):
@@ -195,7 +195,7 @@ class BOAlgorithm(BOAlgorithmBase):
     y_train = self.ytrain
     
     n_init_sample = np.size(x_train, 0)
-    self._setup_acqf_minimizer_callback()
+    minimizer_callback = self._setup_acqf_minimizer_callback()
 
     self.x_hist = []
     self.y_hist = []
@@ -207,7 +207,7 @@ class BOAlgorithm(BOAlgorithmBase):
       y_train_virtual = y_train.copy() # old training + batch_size num of virtual points
       for j in range(self.batch_size):
         # Get a new sample point
-        x_new = self._find_best_point(x_train, y_train_virtual)
+        x_new = self._find_best_point(x_train, y_train_virtual, minimizer_callback)
         
         # Update training sample points
         x_train         = np.vstack([x_train,         x_new    ])
