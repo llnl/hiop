@@ -316,6 +316,11 @@ public:
     return nullptr;
   }
 
+  virtual double* local_data_host()
+  {
+    return local_data();
+  }
+
 public:
   virtual size_type m() const { return m_local_; }
   virtual size_type n() const { return n_global_; }
