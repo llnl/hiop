@@ -68,9 +68,15 @@ class MPIEvaluator(Evaluator):
   env MPI4PY_FUTURES_MAX_WORKERS=8 mpiexec -n 1 python application.py
   Also, the application code should have a "main" section wrapped in
   if __name__ == "__main__":
+  Expecting the function evaluations to return an array.
+  Fout has then the structure of
+  [[eval0], [[eval1]], [eval2],...]]
+  We reformat to 
+  [eval0, eval1, eval2,...]
   """
-  def __init__(self):
+  def __init__(self, function_mode=True):
     self.manager = EvaluationManager()
+    self.function_mode = function_mode
     if is_running_with_mpi():
       self.executor_type = "mpi"
     else:
@@ -82,7 +88,10 @@ class MPIEvaluator(Evaluator):
     self.manager.submit_tasks(fun, [np.atleast_2d(Xin[i]) for i in range(nevals)], execute_at=self.executor_type)
     self.manager.sync()
     Xout, Fout = self.manager.retrieve_results()
-    Y = np.ndarray((nevals, 1))
-    Y[:,0] = np.array(Fout)[:,0,0]
+    if self.function_mode:
+      Y = np.ndarray((nevals, 1))
+      Y[:,0] = np.array(Fout)[:,0,0]
+    else:
+      Y = [Fi[0] for Fi in Fout]
     return Y
 
