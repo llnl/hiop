@@ -130,7 +130,7 @@ HessianDiagPlusRowRank::HessianDiagPlusRowRank(hiopNlpDenseConstraints* nlp_in, 
   n_vec1_ = DhInv_->alloc_clone();
   n_vec2_ = DhInv_->alloc_clone();
 
-  V_work_vec_ = LinearAlgebraFactory::create_vector("DEFAULT", 0);
+  V_work_vec_ = LinearAlgebraFactory::create_vector(mem_space_, 0);
   V_ipiv_vec_ = nullptr;
   V_ipiv_size_ = -1;
 
@@ -235,8 +235,8 @@ void HessianDiagPlusRowRank::alloc_for_limited_mem(const size_type& mem_length)
   Yt_ = St_->alloc_clone();
 
   // these are local
-  L_ = LinearAlgebraFactory::create_matrix_dense("DEFAULT", mem_length, mem_length);
-  D_ = LinearAlgebraFactory::create_vector("DEFAULT", mem_length);
+  L_ = LinearAlgebraFactory::create_matrix_dense(mem_space_, mem_length, mem_length);
+  D_ = LinearAlgebraFactory::create_vector(mem_space_, mem_length);
 }
 
 bool HessianDiagPlusRowRank::update_logbar_diag(const hiopVector& Dx)
@@ -436,15 +436,15 @@ void HessianDiagPlusRowRank::updateInternalBFGSRepresentation()
   // grow L,D, andV if needed
   if(L_->m() != l) {
     delete L_;
-    L_ = LinearAlgebraFactory::create_matrix_dense("DEFAULT", l, l);
+    L_ = LinearAlgebraFactory::create_matrix_dense(mem_space_, l, l);
   }
   if(D_->get_size() != l) {
     delete D_;
-    D_ = LinearAlgebraFactory::create_vector("DEFAULT", l);
+    D_ = LinearAlgebraFactory::create_vector(mem_space_, l);
   }
   if(V_->m() != 2 * l) {
     delete V_;
-    V_ = LinearAlgebraFactory::create_matrix_dense("DEFAULT", 2 * l, 2 * l);
+    V_ = LinearAlgebraFactory::create_matrix_dense(mem_space_, 2 * l, 2 * l);
   }
 
   //-- block (2,2)
@@ -705,7 +705,7 @@ void HessianDiagPlusRowRank::factorizeV()
     if(V_work_vec_ != nullptr) {
       delete V_work_vec_;
     }
-    V_work_vec_ = LinearAlgebraFactory::create_vector("DEFAULT", lwork);
+    V_work_vec_ = LinearAlgebraFactory::create_vector(mem_space_, lwork);
   } else {
     assert(V_work_vec_);
   }
@@ -738,7 +738,7 @@ void HessianDiagPlusRowRank::solve_with_V(hiopVector& rhs_s, hiopVector& rhs_y)
 #ifdef HIOP_DEEPCHECKS
   nlp_->log->write("HessianDiagPlusRowRank::solve_with_V: RHS IN 's' part: ", rhs_s, hovMatrices);
   nlp_->log->write("HessianDiagPlusRowRank::solve_with_V: RHS IN 'y' part: ", rhs_y, hovMatrices);
-  hiopVector* rhs_saved = LinearAlgebraFactory::create_vector("DEFAULT", rhs_s.get_size() + rhs_y.get_size());
+  hiopVector* rhs_saved = LinearAlgebraFactory::create_vector(mem_space_, rhs_s.get_size() + rhs_y.get_size());
   rhs_saved->copyFromStarting(0, rhs_s);
   rhs_saved->copyFromStarting(l, rhs_y);
 #endif
@@ -815,8 +815,8 @@ void HessianDiagPlusRowRank::solve_with_V(hiopMatrixDense& rhs)
 
   hiopMatrixDense& sol = rhs;  // matrix of solutions
   /// TODO: get rid of these uses of specific hiopVector implementation
-  hiopVector* x = LinearAlgebraFactory::create_vector("DEFAULT", rhs.n());  // again, keep in mind rhs is transposed
-  hiopVector* r = LinearAlgebraFactory::create_vector("DEFAULT", rhs.n());
+  hiopVector* x = LinearAlgebraFactory::create_vector(mem_space_, rhs.n());  // again, keep in mind rhs is transposed
+  hiopVector* r = LinearAlgebraFactory::create_vector(mem_space_, rhs.n());
 
   double resnorm = 0.0;
   for(int k = 0; k < rhs.m(); k++) {
@@ -852,7 +852,7 @@ void HessianDiagPlusRowRank::growL(const int& lmem_curr, const int& lmem_max, co
 #endif
   // newL = [   L     0]
   //        [ Y^T*s   0]
-  hiopMatrixDense* newL = LinearAlgebraFactory::create_matrix_dense("DEFAULT", l + 1, l + 1);
+  hiopMatrixDense* newL = LinearAlgebraFactory::create_matrix_dense(mem_space_, l + 1, l + 1);
   assert(newL);
   // copy from L to newL
   newL->copyBlockFromMatrix(0, 0, *L_);
@@ -881,7 +881,7 @@ void HessianDiagPlusRowRank::growD(const int& lmem_curr, const int& lmem_max, co
   assert(l == lmem_curr);
   assert(lmem_max >= l);
 
-  hiopVector* Dnew = LinearAlgebraFactory::create_vector("DEFAULT", l + 1);
+  hiopVector* Dnew = LinearAlgebraFactory::create_vector(mem_space_, l + 1);
   double* Dnew_vec = Dnew->local_data();
   memcpy(Dnew_vec, D_->local_data_const(), l * sizeof(double));
   Dnew_vec[l] = sTy;
@@ -943,7 +943,7 @@ hiopVector& HessianDiagPlusRowRank::new_l_vec1(int l)
   if(l_vec1_ != nullptr) {
     delete l_vec1_;
   }
-  l_vec1_ = LinearAlgebraFactory::create_vector("DEFAULT", l);
+  l_vec1_ = LinearAlgebraFactory::create_vector(mem_space_, l);
   return *l_vec1_;
 }
 
@@ -955,7 +955,7 @@ hiopVector& HessianDiagPlusRowRank::new_l_vec2(int l)
   if(l_vec2_ != nullptr) {
     delete l_vec2_;
   }
-  l_vec2_ = LinearAlgebraFactory::create_vector("DEFAULT", l);
+  l_vec2_ = LinearAlgebraFactory::create_vector(mem_space_, l);
   return *l_vec2_;
 }
 
@@ -969,7 +969,7 @@ hiopMatrixDense& HessianDiagPlusRowRank::new_lxl_mat1(int l)
       lxl_mat1_ = nullptr;
     }
   }
-  lxl_mat1_ = LinearAlgebraFactory::create_matrix_dense("DEFAULT", l, l);
+  lxl_mat1_ = LinearAlgebraFactory::create_matrix_dense(mem_space_, l, l);
   return *lxl_mat1_;
 }
 
@@ -985,7 +985,7 @@ hiopMatrixDense& HessianDiagPlusRowRank::new_kx2l_mat1(int k, int l)
       kx2l_mat1_ = nullptr;
     }
   }
-  kx2l_mat1_ = LinearAlgebraFactory::create_matrix_dense("DEFAULT", k, twol);
+  kx2l_mat1_ = LinearAlgebraFactory::create_matrix_dense(mem_space_, k, twol);
   return *kx2l_mat1_;
 }
 
@@ -1000,7 +1000,7 @@ hiopMatrixDense& HessianDiagPlusRowRank::new_kxl_mat1(int k, int l)
       kxl_mat1_ = nullptr;
     }
   }
-  kxl_mat1_ = LinearAlgebraFactory::create_matrix_dense("DEFAULT", k, l);
+  kxl_mat1_ = LinearAlgebraFactory::create_matrix_dense(mem_space_, k, l);
   return *kxl_mat1_;
 }
 
@@ -1020,7 +1020,7 @@ hiopMatrixDense& HessianDiagPlusRowRank::new_S1(const hiopMatrixDense& X, const 
     S1_ = nullptr;
   }
   if(nullptr == S1_) {
-    S1_ = LinearAlgebraFactory::create_matrix_dense("DEFAULT", k, l);
+    S1_ = LinearAlgebraFactory::create_matrix_dense(mem_space_, k, l);
   }
   return *S1_;
 }
@@ -1041,7 +1041,7 @@ hiopMatrixDense& HessianDiagPlusRowRank::new_Y1(const hiopMatrixDense& X, const 
     Y1_ = nullptr;
   }
   if(nullptr == Y1_) {
-    Y1_ = LinearAlgebraFactory::create_matrix_dense("DEFAULT", k, l);
+    Y1_ = LinearAlgebraFactory::create_matrix_dense(mem_space_, k, l);
   }
   return *Y1_;
 }
