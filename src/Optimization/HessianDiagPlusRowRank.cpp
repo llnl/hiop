@@ -452,7 +452,8 @@ void HessianDiagPlusRowRank::updateInternalBFGSRepresentation()
   sym_mat_times_diag_times_mattrans_local(0.0, DpYtDhInvY, 1.0, *Yt_, *DhInv_);
 #ifdef HIOP_USE_MPI
   const size_t buffsize = l * l * sizeof(double);
-  memcpy(buff1_lxlx3_, DpYtDhInvY.local_data(), buffsize);
+  DpYtDhInvY.copyFromDev();
+  memcpy(buff1_lxlx3_, DpYtDhInvY.local_data_host(), buffsize);
 #else
   DpYtDhInvY.addDiagonal(1., *D_);
   V_->copyBlockFromMatrix(l, l, DpYtDhInvY);
@@ -465,7 +466,8 @@ void HessianDiagPlusRowRank::updateInternalBFGSRepresentation()
   B0DhInv.scale(sigma_);
   mat_times_diag_times_mattrans_local(StB0DhInvYmL, *St_, B0DhInv, *Yt_);
 #ifdef HIOP_USE_MPI
-  memcpy(buff1_lxlx3_ + l * l, StB0DhInvYmL.local_data(), buffsize);
+  StB0DhInvYmL.copyFromDev();
+  memcpy(buff1_lxlx3_ + l * l, StB0DhInvYmL.local_data_host(), buffsize);
 #else
   // substract L
   StB0DhInvYmL.addMatrix(-1.0, *L_);
@@ -480,7 +482,8 @@ void HessianDiagPlusRowRank::updateInternalBFGSRepresentation()
   hiopMatrixDense& StDS = DpYtDhInvY;  // a rename
   sym_mat_times_diag_times_mattrans_local(0.0, StDS, 1.0, *St_, theDiag);
 #ifdef HIOP_USE_MPI
-  memcpy(buff1_lxlx3_ + 2 * l * l, DpYtDhInvY.local_data(), buffsize);
+  DpYtDhInvY.copyFromDev();
+  memcpy(buff1_lxlx3_ + 2 * l * l, DpYtDhInvY.local_data_host(), buffsize);
 #else
   V_->copyBlockFromMatrix(0, 0, StDS);
 #endif
@@ -752,8 +755,12 @@ void HessianDiagPlusRowRank::solve_with_V(hiopVector& rhs_s, hiopVector& rhs_y)
   rhs.copyFromStarting(0, rhs_s);
   rhs.copyFromStarting(l, rhs_y);
 
+#ifndef HIOP_USE_GPU
   DSYTRS(&uplo, &N, &one, V_->local_data(), &lda, V_ipiv_vec_, rhs.local_data(), &N, &info);
-
+#else
+  //call magma or cublas equivalent
+  
+#endif
   if(info < 0) {
     nlp_->log->printf(hovError,
                       "HessianDiagPlusRowRank::solve_with_V error: %d arg to dsytrf has an illegal value\n",
@@ -802,6 +809,7 @@ void HessianDiagPlusRowRank::solve_with_V(hiopMatrixDense& rhs)
 #ifdef HIOP_DEEPCHECKS
   assert(N == rhs.n());
 #endif
+  //george - cublas or magma via ifdef
   DSYTRS(&uplo, &N, &nrhs, V_->local_data(), &lda, V_ipiv_vec_, rhs.local_data(), &ldb, &info);
 
   if(info < 0) {
@@ -860,12 +868,14 @@ void HessianDiagPlusRowRank::growL(const int& lmem_curr, const int& lmem_max, co
   double* newL_mat = newL->local_data();  // doing the rest here
   const double* YTs_vec = YTs.local_data_const();
   // for(int j=0; j<l; j++) newL_mat[l][j] = YTs_vec[j];
+  //george -> use one of the copyFrom methods of MatrixDense
   for(int j = 0; j < l; j++) {
     newL_mat[l * (l + 1) + j] = YTs_vec[j];
   }
 
   // and the zero entries of the last column
   // for(int i=0; i<l+1; i++) newL_mat[i][l] = 0.0;
+  //george -> look for a method in MatrixDense set a row to zero.
   for(int i = 0; i < l + 1; i++) {
     newL_mat[i * (l + 1) + l] = 0.0;
   }
@@ -884,6 +894,7 @@ void HessianDiagPlusRowRank::growD(const int& lmem_curr, const int& lmem_max, co
   hiopVector* Dnew = LinearAlgebraFactory::create_vector(mem_space_, l + 1);
   double* Dnew_vec = Dnew->local_data();
   memcpy(Dnew_vec, D_->local_data_const(), l * sizeof(double));
+  //george -> look for a set_elem method
   Dnew_vec[l] = sTy;
 
   delete D_;
@@ -925,6 +936,25 @@ void HessianDiagPlusRowRank::updateL(const hiopVector& YTs, const double& sTy)
   // L_mat[lm1][lm1]=0.0;
   L_mat[lm1 * l + lm1] = 0.0;
 }
+
+//D_ is an hiopVector
+//this shifts each entry forward by one element in vector D_ and sets the last element to input parameter sTy
+//hiopVector does not provide this functionality
+// need to
+// 1. add a new method hiopVector::shift_elems(const size_type& shift=-1)
+// 2. implement this method for all childs/instantiations of hiopVector: hiopVectorPar, hiopVectorRaja, hiopVectorCuda, hiopVectorHip
+// 3. use set_elem method to do D_vec[l - 1] = sTy;
+//
+// use https://github.com/LLNL/hiop/pull/731/files , which does it for set_elem as an example. 
+// HessianDiagPlusRowRank::updateD will look like
+// {
+//   const size_type l = D_->get_size(); 
+//   D_->shift_elems(-1);
+//   D_->set_elem(l-1, sTy);
+// }
+//
+
+
 void HessianDiagPlusRowRank::updateD(const double& sTy)
 {
   int l = D_->get_size();
