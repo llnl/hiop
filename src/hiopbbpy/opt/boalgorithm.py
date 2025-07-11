@@ -135,7 +135,7 @@ class BOAlgorithm(BOAlgorithmBase):
         acqf_obj_callback = lambda x: float(np.array(acqf.evaluate(np.atleast_2d(x))).flat[0])
         acqf_callback = {'obj': acqf_obj_callback}
         if acqf.has_gradient == True:
-            acqf_grad_callback = lambda x: np.array(acqf.eval_g(np.atleast_2d(x)))
+            acqf_grad_callback = lambda x: np.array(acqf.eval_g(np.atleast_2d(x))).flatten()
             acqf_callback['grad'] = acqf_grad_callback
 
         x_all = []
