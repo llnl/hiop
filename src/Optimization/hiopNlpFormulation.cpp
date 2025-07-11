@@ -1031,7 +1031,8 @@ void hiopNlpFormulation::run_derivative_checker()
   // Second-order checks
   //  
   if(!user_eval_err && options->GetString("derivative_check") == "second-order") {
-    run_derivative_checker_order2(*x0_user, *grad_exact, *Jac_c_ref, *Jac_d_ref);
+    //TODO - finish 2nd order derivatives (Hessian of Lagrangian) check
+    //run_derivative_checker_order2(*x0_user, *grad_exact, *Jac_c_ref, *Jac_d_ref);
   }
   
   disable_nlp_transformations_ = false;
@@ -2613,7 +2614,7 @@ size_type hiopNlpSparse::run_derivative_checker_order2(hiopVector& x_ref,
   //
   // constraints Hessian
   //
-  // Jacobians at perturbed x
+  // Jacobians at perturbed x (TODO)
   hiopMatrix* Jacc_pert = Jacc_ref.alloc_clone();
   hiopMatrix* Jacd_pert = Jacd_ref.alloc_clone();
 
