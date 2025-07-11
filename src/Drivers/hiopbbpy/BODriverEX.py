@@ -80,7 +80,7 @@ if __name__ == "__main__":
   for prob_type in prob_type_l:
     print()
     # ----- evaluator
-    evaluator = MPIEvaluator() 
+    obj_evaluator = MPIEvaluator() 
     opt_evaluator = MPIEvaluator(function_mode=False)
     if prob_type == "LpNorm":
       problem = LpNormProblem(nx, xlimits)
@@ -94,7 +94,7 @@ if __name__ == "__main__":
    
       ### initial training set
       x_train = problem.sample(n_samples)
-      y_train = evaluator.run(problem.evaluate, x_train)
+      y_train = obj_evaluator.run(problem.evaluate, x_train)
    
       ### Define the GP surrogate model
       gp_model = smtKRG(theta, xlimits, nx)
@@ -109,7 +109,7 @@ if __name__ == "__main__":
            'max_iter': 200,
            'print_level': 1
            },
-        'evaluator': evaluator,
+        'obj_evaluator': obj_evaluator,
         'opt_evaluator': opt_evaluator
       }
     
