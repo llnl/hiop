@@ -34,7 +34,18 @@ jobs:
         run: |
           source ~/.bashrc
           conda activate base
-          python -c "import cyipopt; print('cyipopt OK')"
+          python -c "import cyipopt; print('cyipopt install OK')"
+      
+      - name: Install mpi4py via conda
+        run: |
+          conda init bash
+          conda install -c conda-forge mpi4py mpich 
+      
+      - name: Verify mpi4py installation
+        run: |
+          source ~/.bashrc
+          conda activate base
+          python -c "import mpi4py; print('mpi4py install OK')"
 
       - name: Install HiOpBBPy
         run: |
@@ -44,7 +55,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install .
 
-      - name: Run Tests
+      - name: Run BO Test
         run: |
           source ~/.bashrc
           conda activate base
