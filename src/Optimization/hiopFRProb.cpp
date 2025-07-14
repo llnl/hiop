@@ -1397,7 +1397,7 @@ hiopFRProbDense::hiopFRProbDense(hiopAlgFilterIPMBase& solver_base)
   m_eq_ = nlp_base_->m_eq();
   m_ineq_ = nlp_base_->m_ineq();
 #ifdef HIOP_USE_MPI
-  vec_distrib_base_ = nlp_base_->getVecDistInfo();
+  vec_distrib_base_ = nlp_base_->get_vector_distrib();
 #endif
   n_ = n_x_ + 2 * m_eq_ + 2 * m_ineq_;
   m_ = m_eq_ + m_ineq_;
@@ -1432,7 +1432,7 @@ hiopFRProbDense::hiopFRProbDense(hiopAlgFilterIPMBase& solver_base)
 #ifdef HIOP_USE_MPI
   if(vec_distrib_base_) {
     for(int i = 0; i < comm_size_; ++i) {
-      col_partition_[i] = nlp_base_->getVecDistInfo()[i];
+      col_partition_[i] = nlp_base_->get_vector_distrib()[i];
     }
   }
   if(col_partition_) {

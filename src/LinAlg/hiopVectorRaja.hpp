@@ -307,8 +307,30 @@ public:
 
   virtual bool is_equal(const hiopVector& vec) const;
 
-  const ExecSpace<MEMBACKEND, EXECPOLICYRAJA>& exec_space() const { return exec_space_; }
+    /** 
+   * @brief Set element with index 'idx_global' to value 'val'.
+   *
+   * @pre idx_global must be a valid (global) index
+   *
+   * @note Avoid using this method repeatedly in performance-oriented part of the code since 
+   * cpu-device communication occurs for device implementations.
+   */
+  virtual void set_elem(const index_type& idx_global, const double& val);
 
+  /** 
+   * @brief Returns value of element with index 'idx_global'.
+   *
+   * The element is returned on all rank in MPI-based implementations.
+   * 
+   * @pre idx_global must be a valid (global) index
+   *
+   * @note Avoid using this method repeatedly in performance-oriented part of the code since 
+   * cpu-device or inter-process communication occurs.
+   */
+  virtual double get_elem(const index_type& idx_global) const;
+
+  const ExecSpace<MEMBACKEND, EXECPOLICYRAJA>& exec_space() const { return exec_space_; }
+  
 private:
   ExecSpace<MEMBACKEND, EXECPOLICYRAJA> exec_space_;
   using MEMBACKENDHOST = typename MEMBACKEND::MemBackendHost;
@@ -318,7 +340,7 @@ private:
   // and transfers within and from `exec_space_host_` work with EXECPOLICYHOST (currently all such
   // combinations work).
   using EXECPOLICYHOST = hiop::ExecPolicySeq;
-  ExecSpace<MEMBACKENDHOST, EXECPOLICYHOST> exec_space_host_;
+  mutable ExecSpace<MEMBACKENDHOST, EXECPOLICYHOST> exec_space_host_;
 
   std::string mem_space_;
   MPI_Comm comm_;

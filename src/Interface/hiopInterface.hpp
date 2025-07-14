@@ -256,7 +256,10 @@ public:
    *
    *  @note When MPI is enabled, every rank populates @p cons since the constraints are not distributed.
    */
-  virtual bool eval_cons(const size_type& n, const size_type& m, const double* x, bool new_x, double* cons) { return false; }
+  virtual bool eval_cons(const size_type& n, const size_type& m, const double* x, bool new_x, double* cons)
+  {
+    return false;
+  }
 
   /** Passes the communicator, defaults to MPI_COMM_WORLD (dummy for non-MPI builds)  */
   virtual bool get_MPI_comm(MPI_Comm& comm_out)
