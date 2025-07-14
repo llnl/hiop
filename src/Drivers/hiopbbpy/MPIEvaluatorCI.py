@@ -73,3 +73,5 @@ if __name__ == "__main__":
 
   # Clean up
   del manager
+  retval = 0
+  sys.exit(retval)
