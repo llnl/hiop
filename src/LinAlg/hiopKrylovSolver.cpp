@@ -432,7 +432,8 @@ bool hiopBiCGStabSolver::solve(hiopVector* b)
 
   flag_ = 1;
   double imin = 0.;          // iteration at which minimal residual is achieved
-  double tolb = tol_ * n2b;  // relative tolerance
+  // guard tolerance against small residuals
+  double tolb = tol_ * std::max(1., n2b);  
 
   xmin_->copyFrom(*xk_);
 
