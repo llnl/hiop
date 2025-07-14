@@ -980,7 +980,7 @@ bool hiopKKTLinSys::compute_directions_w_IR(const hiopResidual* resid, hiopItera
   kkt_opr_->reset_curr_iter(iter_);
 
   double tol =
-      std::min(mu_ * nlp_->options->GetNumeric("ir_outer_tol_factor"), nlp_->options->GetNumeric("ir_outer_tol_min"));
+    std::min(mu_ * nlp_->options->GetNumeric("ir_outer_tol_factor"), nlp_->options->GetNumeric("ir_outer_tol_min"));
   bicgIR_->set_max_num_iter(nlp_->options->GetInteger("ir_outer_maxit"));
   bicgIR_->set_tol(tol);
   bicgIR_->set_x0(0.0);
