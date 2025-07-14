@@ -992,6 +992,28 @@ public:
    */
   virtual bool is_equal(const hiopVector& vec) const = 0;
 
+  /** 
+   * @brief Set element with index 'idx_global' to value 'val'.
+   *
+   * @pre idx_global must be a valid (global) index
+   *
+   * @note Avoid using this method repeatedly in performance-oriented part of the code since 
+   * cpu-device communication occurs for device implementations.
+   */
+  virtual void set_elem(const index_type& idx_global, const double& val) = 0;
+
+  /** 
+   * @brief Returns value of element with index 'idx_global'.
+   *
+   * The element is returned on all rank in MPI-based implementations.
+   * 
+   * @pre idx_global must be a valid (global) index
+   *
+   * @note Avoid using this method repeatedly in performance-oriented part of the code since 
+   * cpu-device or inter-process communication occurs.
+   */
+  virtual double get_elem(const index_type& idx_global) const = 0;
+  
 protected:
   size_type n_;  // we assume sequential data
 protected:

@@ -98,14 +98,14 @@ hiopFixedVarsRemover::~hiopFixedVarsRemover()
 
 #ifdef HIOP_USE_MPI
 /* saves the inter-process distribution of (primal) vectors distribution */
-void hiopFixedVarsRemover::setFSVectorDistrib(index_type* vec_distrib_in, int num_ranks)
+void hiopFixedVarsRemover::set_fs_vector_distrib(index_type* vec_distrib_in, int num_ranks)
 {
   assert(vec_distrib_in != NULL);
   fs_vec_distrib.resize(num_ranks + 1);
   std::copy(vec_distrib_in, vec_distrib_in + num_ranks + 1, fs_vec_distrib.begin());
 };
 /* allocates and returns the reduced-space column partitioning to be used internally by HiOp */
-index_type* hiopFixedVarsRemover::allocRSVectorDistrib()
+index_type* hiopFixedVarsRemover::alloc_rs_vector_distrib()
 {
   size_type nlen = fs_vec_distrib.size();  // nlen==nranks+1
   assert(nlen >= 1);
@@ -118,6 +118,7 @@ index_type* hiopFixedVarsRemover::allocRSVectorDistrib()
 
 #ifdef HIOP_USE_MPI
   int ierr;
+  MPI_Comm comm = nlp_->get_comm();
 #ifdef HIOP_DEEPCHECKS
   int nRanks = -1;
   ierr = MPI_Comm_size(comm, &nRanks);
@@ -172,26 +173,10 @@ bool hiopFixedVarsRemover::setupConstraintsPart(const int& neq, const int& nineq
   assert(Jacc_fs == NULL && "should not be allocated at this point");
   assert(Jacd_fs == NULL && "should not be allocated at this point");
 
-#ifdef HIOP_USE_MPI
-  if(fs_vec_distrib.size()) {
-    Jacc_fs = LinearAlgebraFactory::create_matrix_dense(nlp_->options->GetString("mem_space"),
-                                                        neq,
-                                                        n_fs,
-                                                        fs_vec_distrib.data(),
-                                                        comm);
-    Jacd_fs = LinearAlgebraFactory::create_matrix_dense(nlp_->options->GetString("mem_space"),
-                                                        nineq,
-                                                        n_fs,
-                                                        fs_vec_distrib.data(),
-                                                        comm);
-  } else {
-    Jacc_fs = LinearAlgebraFactory::create_matrix_dense(nlp_->options->GetString("mem_space"), neq, n_fs, NULL, comm);
-    Jacd_fs = LinearAlgebraFactory::create_matrix_dense(nlp_->options->GetString("mem_space"), nineq, n_fs, NULL, comm);
-  }
-#else
-  Jacc_fs = LinearAlgebraFactory::create_matrix_dense(nlp_->options->GetString("mem_space"), neq, n_fs);
-  Jacd_fs = LinearAlgebraFactory::create_matrix_dense(nlp_->options->GetString("mem_space"), nineq, n_fs);
-#endif
+  Jacc_fs = dynamic_cast<hiopMatrixDense*>(nlp_->alloc_Jac_c_user());
+  assert(neq == Jacc_fs->m());
+  Jacd_fs = dynamic_cast<hiopMatrixDense*>(nlp_->alloc_Jac_d_user());
+  assert(nineq == Jacd_fs->m());
   return true;
 }
 

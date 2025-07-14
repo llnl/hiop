@@ -346,7 +346,29 @@ public:
 
   /// @brief check if `this` vector is identical to `vec`
   virtual bool is_equal(const hiopVector& vec) const;
+  
+  /** 
+   * @brief Set element with index 'idx_global' to value 'val'.
+   *
+   * @pre idx_global must be a valid (global) index
+   *
+   * @note Avoid using this method repeatedly in performance-oriented part of the code since 
+   * cpu-device communication occurs for device implementations.
+   */
+  virtual void set_elem(const index_type& idx_global, const double& val);
 
+  /** 
+   * @brief Returns value of element with index 'idx_global'.
+   *
+   * The element is returned on all rank in MPI-based implementations.
+   * 
+   * @pre idx_global must be a valid (global) index
+   *
+   * @note Avoid using this method repeatedly in performance-oriented part of the code since 
+   * cpu-device or inter-process communication occurs.
+   */
+  virtual double get_elem(const index_type& idx_global) const;
+  
   /* functions for this class */
   inline MPI_Comm get_mpi_comm() const { return comm_; }
 
@@ -355,7 +377,7 @@ public:
 
 private:
   ExecSpace<MemBackendHip, ExecPolicyHip> exec_space_;
-  ExecSpace<MemBackendCpp, ExecPolicySeq> exec_space_host_;
+  mutable ExecSpace<MemBackendCpp, ExecPolicySeq> exec_space_host_;
 
   MPI_Comm comm_;
   double* data_host_mirror_;
@@ -365,10 +387,10 @@ private:
   size_type n_local_;
   mutable hiopVectorInt* idx_cumsum_;
 
-  /** needed for cuda **/
+  /** HIP Blas handle **/
   hipblasHandle_t handle_hipblas_;
 
-  /** copy constructor, for internal/private use only (it doesn't copy the elements.) */
+  /** Copy constructor, for internal/private use only (it doesn't copy the elements.) */
   hiopVectorHip(const hiopVectorHip&);
 };
 

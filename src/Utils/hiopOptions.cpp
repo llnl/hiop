@@ -732,12 +732,15 @@ void hiopOptionsNLP::register_options()
     range[1] = "relax";
     range[2] = "none";
     register_str_option("fixed_var",
-                        "none",
+                        "relax",
                         range,
-                        "Treatment of fixed variables: 'remove' from the problem, 'relax' bounds "
+                        "Treatment of fixed variables: 'remove' from the problem, 'relax' all bounds "
                         "by 'fixed_var_perturb', or 'none', in which case the HiOp will terminate "
-                        "with an error message if fixed variables are detected (default 'none'). "
-                        "Value 'remove' is available only when 'compute_mode' is 'hybrid' or 'cpu'.");
+                        "with an error message if fixed variables are detected (default 'relax'). "
+                        "Value 'remove' is available only when 'compute_mode' is 'hybrid' or 'cpu'. "
+                        "A nonzero value of 'bound_relax_perturb' option or the use of 'elastic_mode' "
+                        "option will trigger different bounds relaxations strategies that will "
+                        "ignore value of 'fixed_var_perturb'.");
     register_num_option("fixed_var_tolerance",
                         1e-15,
                         1e-30,
@@ -1145,7 +1148,7 @@ void hiopOptionsNLP::register_options()
                         "'tighten_bound' tightens the bounds when `mu` changes; "
                         "'correct_it' tightens the bounds and corrects the slacks and slack duals when `mu` changes; "
                         "'correct_it_adjust_bound' tightens the bounds, corrects the slacks and slack duals, "
-                        "and adjusts the bounds again from the modified iterate");
+                        "and adjusts the bounds again from the modified iterate.");
 
     range = {"mu_projected", "mu_scaled"};
     register_str_option("elastic_bound_strategy",
@@ -1290,6 +1293,33 @@ void hiopOptionsNLP::register_options()
         "On (re)start the NLP solver will load checkpoint file "
         "specified by 'checkpoint_file' option.";
     register_str_option("checkpoint_load_on_start", range[1], range, msgclos);
+  }
+
+  //
+  // Derivative checker
+  // 
+  {
+    vector<string> range = {"no", "first-order", "second-order"};
+    constexpr char msg_der[] =
+      "Check user-provided derivatives using finite differences and report comparison. "
+      "";
+    register_str_option("derivative_check", range[0], range, msg_der);
+
+    constexpr char msg_pert[] =
+      "Finite difference perturbation of 'x' variable entries, relative to entry's values.";
+    register_num_option("derivative_check_perturbation", 1e-8, 1e-20, 1000, msg_pert);
+
+    constexpr char msg_tol[] =
+      "Tolerance for marking a mismatch between user-provided derivative and finite difference, "
+      "relative to derivative value provided by the user.";
+    register_num_option("derivative_check_tolerance", 1e-4, 1e-20, 1000, msg_tol);
+      
+    range = {"no", "yes"};
+    constexpr char msg_printall[] =
+      "Print the comparison of user-provided derivatives and finite difference approximation "
+      "for all, including when no mismatch occurs.";
+    register_str_option("derivative_check_print_all", range[0], range, msg_printall);
+
   }
 }
 void hiopOptionsNLP::ensure_consistence()
