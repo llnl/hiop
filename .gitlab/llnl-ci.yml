@@ -112,7 +112,8 @@ variables:
       echo "CUSTOM_CI_BUILDS_DIR = ${CUSTOM_CI_BUILDS_DIR}"
       set -xv
       cd "$CUSTOM_CI_BUILDS_DIR"
-      srun -N 1 --exclusive --reserv=ci python src/Drivers/hiopbbpy/BODriverEX.py
+      salloc --time=2:00 --nodes=1 --partition=pbatch --reserv=ci --ntasks=1 \
+        bash -c 'python src/Drivers/hiopbbpy/BODriverEX.py'
       res=$?
       exit $res
   after_script:
@@ -123,30 +124,30 @@ variables:
       rm -rf "scripts/$CI_RUNNER_SHORT_TOKEN"
 
 # For LLNL/dane CI
-#build_on_dane:
-#  extends:
-#    - .dane
-#    - .llnl_script_template
+build_on_dane:
+  extends:
+    - .dane
+    - .llnl_script_template
 
 # For LLNL/dane CI
-#test_on_dane:
-#  extends:
-#    - .dane
-#    - .llnl_test_script_template
-#  needs: ['build_on_dane']
+test_on_dane:
+  extends:
+    - .dane
+    - .llnl_test_script_template
+  needs: ['build_on_dane']
 
 # For LLNL/lassen CI
-#build_on_lassen:
-#  extends:
-#    - .lassen
-#    - .llnl_script_template
+build_on_lassen:
+  extends:
+    - .lassen
+    - .llnl_script_template
 
 # For LLNL/lassen CI
-#test_on_lassen:
-#  extends:
-#    - .lassen
-#    - .llnl_test_jsrun_script
-#  needs: ['build_on_lassen']
+test_on_lassen:
+  extends:
+    - .lassen
+    - .llnl_test_jsrun_script
+  needs: ['build_on_lassen']
 
 # For LLNL/dane CI
 build_on_dane_hiopbbpy:
