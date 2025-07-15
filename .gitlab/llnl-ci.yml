@@ -9,7 +9,15 @@ include:
     file: 'id_tokens.yml'
 
 variables:
-  GIT_SUBMODULE_STRATEGY: recursive
+    GIT_SUBMODULE_STRATEGY: recursive
+    GIT_CONFIG_COUNT: 1
+    GIT_CONFIG_KEY_0: credential.helper
+    GIT_CONFIG_VALUE_0: ''
+
+default:
+ hooks:
+   pre_get_sources_script:
+     - module --latest load git     # currently at LC, this would load 2.45.0
 
 .dane: 
   tags:
@@ -149,19 +157,19 @@ test_on_dane:
   extends:
     - .dane
     - .llnl_script_test
-  needs: ['build_on_dane_hiopbbpy']
+  needs: ['build_on_dane']
 
 build_on_dane_hiopbbpy:
   extends:
     - .dane
     - .llnl_build_python
-  needs: ['build_on_dane']
+  needs: ['config_on_dane']
 
 test_on_dane_hiopbbpy:
   extends:
     - .dane
     - .llnl_test_hiopbbpy
-  needs: ['test_on_dane']
+  needs: ['build_on_dane_hiopbbpy']
 
 clean_on_dane:
   extends:
