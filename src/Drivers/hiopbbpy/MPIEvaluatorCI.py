@@ -8,6 +8,7 @@ Authors:    Tucker Hartland <hartland1@llnl.gov>
 import logging
 import argparse
 import time
+import sys
 from hiopbbpy.utils import EvaluationManager, is_running_with_mpi
 
 def _fn_for_test(x, sleep_time=0.1):
