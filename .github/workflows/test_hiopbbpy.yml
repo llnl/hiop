@@ -59,5 +59,12 @@ jobs:
         run: |
           source ~/.bashrc
           conda activate base
-          python src/Drivers/hiopbbpy/BODriverCI.py 10
+          python src/Drivers/hiopbbpy/BODriverCI.py -nrepeat 10
+        continue-on-error: false
+      
+      - name: Run MPI Evaluator Test
+        run: |
+          source ~/.bashrc
+          conda activate base
+          python src/Drivers/hiopbbpy/MPIEvaluatorCI.py
         continue-on-error: false
