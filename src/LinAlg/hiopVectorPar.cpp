@@ -187,6 +187,24 @@ double hiopVectorPar::get_elem(const index_type& idx_global) const
 #endif
 }
 
+void hiopVectorPar::shift_elems(const size_type& shift)
+{
+  if(shift == 0 || n_ == 0) return;
+
+  if(shift < 0) {
+    // Shift left by abs(shift). Last elements will be undefined.
+    size_type abs_shift = static_cast<size_type>(-shift);
+    if(abs_shift >= n_) return;
+    std::memmove(data_, data_ + abs_shift, (n_ - abs_shift) * sizeof(double));
+    // Caller is responsible for updating the last abs_shift elements.
+  } else {
+    // Shift right. First shift elements will be undefined.
+    if(shift >= n_) return;
+    std::memmove(data_ + shift, data_, (n_ - shift) * sizeof(double));
+    // Caller is responsible for updating the first shift elements.
+  }
+}
+
 void hiopVectorPar::copyFrom(const hiopVector& v_in)
 {
   const hiopVectorPar& v = dynamic_cast<const hiopVectorPar&>(v_in);

@@ -812,6 +812,34 @@ double hiopVectorRaja<MEM, POL>::get_elem(const index_type& idx_global) const
 #endif
 }
 
+template<class MEM, class POL>
+void hiopVectorRaja<MEM, POL>::shift_elems(const size_type& shift)
+{
+  if(shift == 0 || n_ == 0) return;
+
+  double* data = data_dev_;
+
+  if(shift < 0) {
+    size_type abs_shift = static_cast<size_type>(-shift);
+    if(abs_shift >= n_) return;
+
+    RAJA::forall<hiop_raja_exec>(
+      RAJA::RangeSegment(0, n_ - abs_shift),
+      RAJA_LAMBDA(RAJA::Index_type i) {
+        data[i] = data[i + abs_shift];
+      });
+    // The last abs_shift elements are left undefined.
+  } else {
+    if(shift >= n_) return;
+
+    RAJA::forall<hiop_raja_exec>(
+      RAJA::RangeSegment(0, n_ - shift),
+      RAJA_LAMBDA(RAJA::Index_type i) {
+        data[n_ - 1 - i] = data[n_ - 1 - i - shift];
+      });
+    // The first shift elements are left undefined.
+  }
+}
 
 /**
  * @brief L2 vector norm.

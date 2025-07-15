@@ -812,8 +812,15 @@ void HessianDiagPlusRowRank::solve_with_V(hiopMatrixDense& rhs)
 #ifdef HIOP_DEEPCHECKS
   assert(N == rhs.n());
 #endif
-  //george - cublas or magma via ifdef
+
+#ifdef HIOP_USE_GPU
+  // TODO: Call MAGMA, cuSolver, or device-side solver
+  // magma_dsytrs or cusolverDnDsytrs, etc.
+  // If not implemented, assert or throw.
+  assert(false && "Device linear solve not implemented yet");
+#else
   DSYTRS(&uplo, &N, &nrhs, V_->local_data(), &lda, V_ipiv_vec_, rhs.local_data(), &ldb, &info);
+#endif
 
   if(info < 0) {
     nlp_->log->printf(hovError,
@@ -957,15 +964,11 @@ void HessianDiagPlusRowRank::updateL(const hiopVector& YTs, const double& sTy)
 // }
 //
 
-
 void HessianDiagPlusRowRank::updateD(const double& sTy)
 {
-  int l = D_->get_size();
-  double* D_vec = D_->local_data();
-  for(int i = 0; i < l - 1; i++) {
-    D_vec[i] = D_vec[i + 1];
-  }
-  D_vec[l - 1] = sTy;
+  const size_type l = D_->get_size();
+  D_->shift_elems(-1);     // Shift all elements left by one
+  D_->set_elem(l - 1, sTy); // Set the new value at the end
 }
 
 hiopVector& HessianDiagPlusRowRank::new_l_vec1(int l)

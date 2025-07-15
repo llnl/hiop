@@ -307,7 +307,7 @@ public:
 
   virtual bool is_equal(const hiopVector& vec) const;
 
-    /** 
+  /** 
    * @brief Set element with index 'idx_global' to value 'val'.
    *
    * @pre idx_global must be a valid (global) index
@@ -328,6 +328,12 @@ public:
    * cpu-device or inter-process communication occurs.
    */
   virtual double get_elem(const index_type& idx_global) const;
+
+  /**
+   * @brief Shift elements in the vector forward/backward by the given amount. Negative means left.
+   * The shifted-in element should be undefined (fill as needed after).
+   */
+  virtual void shift_elems(const size_type& shift = -1);
 
   const ExecSpace<MEMBACKEND, EXECPOLICYRAJA>& exec_space() const { return exec_space_; }
   

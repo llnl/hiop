@@ -321,7 +321,12 @@ public:
    */
   virtual double get_elem(const index_type& idx_global) const;
 
-  
+  /**
+   * @brief Shift elements in the vector forward/backward by the given amount. Negative means left.
+   * The shifted-in element should be undefined (fill as needed after).
+   */
+  virtual void shift_elems(const size_type& shift = -1);
+
   /**
    * @brief accessor to the execution policy
    */
