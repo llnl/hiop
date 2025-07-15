@@ -74,8 +74,8 @@ class MPIEvaluator(Evaluator):
   We reformat to 
   [eval0, eval1, eval2,...]
   """
-  def __init__(self, function_mode=True):
-    self.manager = EvaluationManager()
+  def __init__(self, function_mode=True,cpu_executor=None, mpi_executor=None):
+    self.manager = EvaluationManager(cpu_executor,mpi_executor)
     self.function_mode = function_mode
     if is_running_with_mpi():
       self.executor_type = "mpi"

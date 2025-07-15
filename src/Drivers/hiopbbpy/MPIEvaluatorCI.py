@@ -10,6 +10,7 @@ import argparse
 import time
 import sys
 from hiopbbpy.utils import EvaluationManager, is_running_with_mpi
+from concurrent.futures import ThreadPoolExecutor
 
 def _fn_for_test(x, sleep_time=0.1):
   if is_running_with_mpi():
@@ -43,7 +44,8 @@ if __name__ == "__main__":
   logging.basicConfig(level=logging.INFO)
 
   # Create manager
-  manager = EvaluationManager()
+  cpu_executor = ThreadPoolExecutor()
+  manager = EvaluationManager(cpu_executor=cpu_executor)
 
   # Submit tasks to the manager
   t0 = time.perf_counter()
