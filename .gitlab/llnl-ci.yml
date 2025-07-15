@@ -79,29 +79,84 @@ variables:
       cd "$CUSTOM_CI_BUILDS_DIR/.."
       rm -rf "$CUSTOM_CI_BUILDS_DIR"
       rm -rf "scripts/$CI_RUNNER_SHORT_TOKEN"
-      
-# For LLNL/dane CI
-build_on_dane:
-  extends:
-    - .dane
-    - .llnl_script_template
+
+
+
+.llnl_build_python: 
+  stage: build
+  script:
+    - |
+      # Don't clean up this working directory - we need some of these files for
+      # testing
+      source /usr/workspace/hiop/dane/venv/envDane.sh
+      source /usr/workspace/hiop/dane/venv/hiopbbpy-ci/bin/activate
+      echo "CI_PIPELINE_ID = ${CI_PIPELINE_ID}"
+      echo "CI_JOB_ID = ${CI_JOB_ID}"
+      echo "CUSTOM_CI_BUILDS_DIR = ${CUSTOM_CI_BUILDS_DIR}"
+      set -xv
+      mkdir -p "$CUSTOM_CI_BUILDS_DIR"
+      cp -R ./* "$CUSTOM_CI_BUILDS_DIR"
+      cd "$CUSTOM_CI_BUILDS_DIR"
+      pip install . || exit 1
+
+.llnl_test_hiopbbpy: 
+  stage: test
+  variables:
+    GIT_STRATEGY: none
+  script:
+    - |
+      source /usr/workspace/hiop/dane/venv/envDane.sh
+      source /usr/workspace/hiop/dane/venv/hiopbbpy-ci/bin/activate
+      echo "CI_PIPELINE_ID = ${CI_PIPELINE_ID}"
+      echo "CI_JOB_ID = ${CI_JOB_ID}"
+      echo "CUSTOM_CI_BUILDS_DIR = ${CUSTOM_CI_BUILDS_DIR}"
+      set -xv
+      cd "$CUSTOM_CI_BUILDS_DIR"
+      srun -N 1 --exclusive --reserv=ci python src/Drivers/hiopbbpy/BODriverEX.py
+      res=$?
+      exit $res
+  after_script:
+    - |
+      cd "$CUSTOM_CI_BUILDS_DIR/.."
+      sleep 15
+      rm -rf "$CUSTOM_CI_BUILDS_DIR"
+      rm -rf "scripts/$CI_RUNNER_SHORT_TOKEN"
 
 # For LLNL/dane CI
-test_on_dane:
+#build_on_dane:
+#  extends:
+#    - .dane
+#    - .llnl_script_template
+
+# For LLNL/dane CI
+#test_on_dane:
+#  extends:
+#    - .dane
+#    - .llnl_test_script_template
+#  needs: ['build_on_dane']
+
+# For LLNL/lassen CI
+#build_on_lassen:
+#  extends:
+#    - .lassen
+#    - .llnl_script_template
+
+# For LLNL/lassen CI
+#test_on_lassen:
+#  extends:
+#    - .lassen
+#    - .llnl_test_jsrun_script
+#  needs: ['build_on_lassen']
+
+# For LLNL/dane CI
+build_on_dane_hiopbbpy:
   extends:
     - .dane
-    - .llnl_test_script_template
-  needs: ['build_on_dane']
+    - .llnl_build_python
 
-# For LLNL/lassen CI
-build_on_lassen:
+# For LLNL/dane CI
+test_on_dane_hiopbbpy:
   extends:
-    - .lassen
-    - .llnl_script_template
-
-# For LLNL/lassen CI
-test_on_lassen:
-  extends:
-    - .lassen
-    - .llnl_test_jsrun_script
-  needs: ['build_on_lassen']
+    - .dane
+    - .llnl_test_hiopbbpy
+  needs: ['build_on_dane_hiopbbpy']
