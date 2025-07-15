@@ -818,26 +818,25 @@ void hiopVectorRaja<MEM, POL>::shift_elems(const size_type& shift)
   if(shift == 0 || n_ == 0) return;
 
   double* data = data_dev_;
-
+  const auto_type n = n_;
+  
   if(shift < 0) {
     size_type abs_shift = static_cast<size_type>(-shift);
-    if(abs_shift >= n_) return;
+    if(abs_shift >= n) return;
 
     RAJA::forall<hiop_raja_exec>(
       RAJA::RangeSegment(0, n_ - abs_shift),
       RAJA_LAMBDA(RAJA::Index_type i) {
         data[i] = data[i + abs_shift];
-      });
-    // The last abs_shift elements are left undefined.
+      });    
   } else {
-    if(shift >= n_) return;
+    if(shift >= n) return;
 
     RAJA::forall<hiop_raja_exec>(
-      RAJA::RangeSegment(0, n_ - shift),
+      RAJA::RangeSegment(0, n - shift),
       RAJA_LAMBDA(RAJA::Index_type i) {
-        data[n_ - 1 - i] = data[n_ - 1 - i - shift];
+        data[n - 1 - i] = data[n_ - 1 - i - shift];
       });
-    // The first shift elements are left undefined.
   }
 }
 
