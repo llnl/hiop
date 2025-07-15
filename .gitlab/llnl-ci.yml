@@ -149,19 +149,19 @@ test_on_dane:
   extends:
     - .dane
     - .llnl_script_test
-  needs: ['build_on_dane']
+  needs: ['build_on_dane_hiopbbpy']
 
 build_on_dane_hiopbbpy:
   extends:
     - .dane
     - .llnl_build_python
-  needs: ['config_on_dane']
+  needs: ['build_on_dane']
 
 test_on_dane_hiopbbpy:
   extends:
     - .dane
     - .llnl_test_hiopbbpy
-  needs: ['build_on_dane_hiopbbpy']
+  needs: ['test_on_dane']
 
 clean_on_dane:
   extends:
