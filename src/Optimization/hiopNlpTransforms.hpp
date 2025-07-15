@@ -146,6 +146,10 @@ protected:
  *
  * applyInvToXXX: takes XXX as seen by the user calling code and returns the corresponding
  * reduced-space XXX object.
+ * 
+ * This class currently works only for the quasi-Newton solver and NlpDenseConstraints formulation. 
+ * Additional work is needed for NlpSparse formulation to source the transformations to sparse linear
+ * algebra matrix classes.
  */
 class hiopFixedVarsRemover : public hiopNlpTransformation
 {
@@ -263,11 +267,17 @@ public:
   bool setupDecisionVectorPart();
   bool setupConstraintsPart(const int& neq, const int& nineq);
 #ifdef HIOP_USE_MPI
-  /* saves the inter-process distribution of (primal) vectors distribution */
-  void setFSVectorDistrib(index_type* vec_distrib, int num_ranks);
-  /* allocates and returns the reduced-space column partitioning to be used internally by HiOp */
-  index_type* allocRSVectorDistrib();
-  inline void setMPIComm(const MPI_Comm& commIn) { comm = commIn; }
+  /// @brief Saves the inter-process distribution of user/fs (primal) vectors.
+  void set_fs_vector_distrib(index_type* vec_distrib, int num_ranks);
+
+  /// @brief Returns the inter-process distribution of user/fs (primal) vectors.
+  inline index_type* get_fs_vector_distrib()
+  {
+    return fs_vec_distrib.data();
+  }
+  
+  /// @brief Computes, allocates, and returns the distribution of reduced-space/internal (primal) vectors.
+  index_type* alloc_rs_vector_distrib();
 #endif
   /* "copies" a full space vector to a reduced space vector */
   void copyFsToRs(const hiopVector& fsVec, hiopVector& rsVec);
@@ -287,10 +297,6 @@ public:
   }
 
 protected:
-#if 0  // old interface
-  void applyToArray   (const double* vec_rs, double* vec_fs);
-  void applyInvToArray(const double* vec_fs, double* vec_rs);
-#endif
   void apply_inv_to_vector(const hiopVector* vec_rs, hiopVector* vec_fs);
   void apply_to_vector(const hiopVector* vec_fs, hiopVector* vec_rs);
 
@@ -308,15 +314,21 @@ protected:
 
   // working buffer used to hold the full-space (user's) vector of decision variables and other optimiz objects
   hiopVector *x_fs, *grad_fs;
-  // working buffers for the full-space Jacobians
-  hiopMatrixDense *Jacc_fs, *Jacd_fs;
+  // Full-space Jacobian of equality constraints
+  hiopMatrixDense* Jacc_fs;
+  // Full-space Jacobian of inequality constraints
+  hiopMatrixDense* Jacd_fs;
 
+  // Reference to reduced-space Jacobian of equality constraints, part of the NlpFormulation class
   hiopMatrixDense* Jacc_rs_ref;
+  // Reference to reduced-space Jacobian of inequality constraints, part of the NlpFormulation class
   hiopMatrixDense* Jacd_rs_ref;
 
-  // a copy of the lower and upper bounds provided by user
-  hiopVector *xl_fs, *xu_fs;
-  // indexes corresponding to fixed variables (local indexes)
+  // Copy of the lower bounds provided by user
+  hiopVector* xl_fs;
+  // Copy of the upper bounds provided by user
+  hiopVector* xu_fs;
+  // Indexes corresponding to fixed variables (local)
   std::vector<int> fs2rs_idx_map;
 
   // references to reduced-space buffers - returned in applyInvXXX
@@ -324,7 +336,6 @@ protected:
   hiopVector* grad_rs_ref;
 #ifdef HIOP_USE_MPI
   std::vector<index_type> fs_vec_distrib;
-  MPI_Comm comm;
 #endif
 };
 
@@ -338,10 +349,16 @@ public:
                        const size_type& numFixedVars_local);
   virtual ~hiopFixedVarsRelaxer();
 
-  /* number of vars in the NLP after the tranformation */
-  inline size_type n_post() { /*assert(xl_copy);*/ return n_vars; }  // xl_copy->get_size(); }
-  /* number of vars in the NLP to which the tranformation is to be applied */
-  virtual size_type n_pre() { /*assert(xl_copy);*/ return n_vars; }  // xl_copy->get_size(); }
+  /// Number of vars in the NLP after the transformation 
+  inline size_type n_post()
+  {
+    return n_vars;
+  } 
+  /// Number of vars in the NLP to which the transformation is to be applied 
+  virtual size_type n_pre()
+  {
+    return n_vars;
+  }
 
   inline size_type n_post_local() { return n_vars_local; }  // xl_copy->get_local_size(); }
   inline size_type n_pre_local() { return n_vars_local; }   // xl_copy->get_local_size(); }
@@ -566,11 +583,25 @@ public:
   inline void setUserNlpNumVars(const size_type& n_vars) { n_vars_usernlp = n_vars; }
   inline void setUserNlpNumLocalVars(const size_type& n_vars) { n_vars_local_usernlp = n_vars; }
   inline void append(hiopNlpTransformation* t) { list_trans_.push_back(t); }
-  inline void clear()
+  void clear()
   {
     std::list<hiopNlpTransformation*>::iterator it;
     for(it = list_trans_.begin(); it != list_trans_.end(); it++) delete(*it);
     list_trans_.clear();
+  }
+
+  /// @brief Remove and deallocate NLP transformation
+  void remove(hiopNlpTransformation* t)
+  {
+    std::list<hiopNlpTransformation*>::iterator it = list_trans_.begin();
+    while(it!=list_trans_.end()) {
+      if(t==*it) {
+        delete t;
+        list_trans_.erase(it);
+        return;
+      }
+    }
+    assert(false && "the transformation should be present in the list, but it is not");
   }
 
   /* number of vars in the NLP after the tranformation */
