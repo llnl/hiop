@@ -107,9 +107,12 @@ HessianDiagPlusRowRank::HessianDiagPlusRowRank(hiopNlpDenseConstraints* nlp_in, 
 #ifdef HIOP_USE_MPI
   //buff_kxk_ = new double[nlp_->m() * nlp_->m()];
   buff_kxk_ = LinearAlgebraFactory::create_matrix_dense(mem_space_, nlp_->m(), nlp_->m());
-  buff_2lxk_ = new double[nlp_->m() * 2 * l_max_];
-  buff1_lxlx3_ = new double[3 * l_max_ * l_max_];
-  buff2_lxlx3_ = new double[3 * l_max_ * l_max_];
+  // buff_2lxk_ = new double[nlp_->m() * 2 * l_max_];
+  buff_2lxk_     = LinearAlgebraFactory::create_matrix_dense(mem_space_, nlp_->m(), 2 * l_max_);
+  // buff1_lxlx3_ = new double[3 * l_max_ * l_max_];
+  buff1_lxlx3_   = LinearAlgebraFactory::create_matrix_dense(mem_space_, 3 * l_max_, l_max_);
+  // buff2_lxlx3_ = new double[3 * l_max_ * l_max_];
+  buff2_lxlx3_   = LinearAlgebraFactory::create_matrix_dense(mem_space_, 3 * l_max_, l_max_);
 #else
   // not needed in non-MPI mode
   buff_kxk_ = nullptr;
