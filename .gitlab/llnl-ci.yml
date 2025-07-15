@@ -169,3 +169,26 @@ clean_on_dane:
     - .llnl_script_clean
   needs: ['test_on_dane_hiopbbpy', 'test_on_dane']
 
+# For LLNL/lassen CI
+config_on_lassen:
+  extends:
+    - .lassen
+    - .llnl_script_config
+
+build_on_lassen:
+  extends:
+    - .lassen
+    - .llnl_script_build
+  needs: ['config_on_lassen']
+
+test_on_lassen:
+  extends:
+    - .lassen
+    - .llnl_jsrun_script_test
+  needs: ['build_on_lassen']
+
+clean_on_lassen:
+  extends:
+    - .lassen
+    - .llnl_script_clean
+  needs: ['test_on_lassen']
