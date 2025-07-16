@@ -66,5 +66,5 @@ jobs:
         run: |
           source ~/.bashrc
           conda activate base
-          python src/Drivers/hiopbbpy/EvaluatorCI.py -n 10 -t 0.001
+          python src/Drivers/hiopbbpy/EvaluationManagerCI.py -n 10 -t 0.001
         continue-on-error: false
