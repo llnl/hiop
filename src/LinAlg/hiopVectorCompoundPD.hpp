@@ -329,9 +329,20 @@ public:
 
   virtual bool is_equal(const hiopVector& vec) const;
 
+  void set_elem(const index_type& idx_global, const double& val)
+  {
+    assert(0 && "not required.");
+  }
+  double get_elem(const index_type& idx_global) const
+  {
+    assert(0 && "not required.");
+    return 0;
+  }
+
+  
   void copy_from_resid(const hiopResidual* resid);
   void copy_from_iterate(const hiopIterate* it);
-
+  
 private:
   std::vector<hiopVector*> vectors_;
   size_type n_parts_;

@@ -349,7 +349,7 @@ int hiopAlgFilterIPMBase::startingProcedure(hiopIterate& it_ini,
     return false;
   }
 
-  [[maybe_unused]] const bool do_nlp_scaling = nlp->apply_scaling(c, d, gradf, Jac_c, Jac_d);
+  nlp->apply_scaling(c, d, gradf, Jac_c, Jac_d);
 
   nlp->runStats.tmSolverInternal.start();
   nlp->runStats.tmStartingPoint.start();
@@ -664,25 +664,16 @@ bool hiopAlgFilterIPMBase::evalNlpAndLogErrors(const hiopIterate& it,
   nlp->log->printf(hovWarning, "nrmOneDualEqu %g   nrmOneDualBo %g\n", nrmDualEqu, nrmDualBou);
   if(nrmDualBou > 1e+10) {
     nlp->log->printf(hovWarning,
-                     "Unusually large bound dual variables (norm1=%g) occured, "
-                     "which may cause numerical instabilities if it persists. Convergence "
-                     " issues or inacurate optimal solutions may be experienced. Possible causes: "
-                     " tight bounds or bad scaling of the optimization variables.\n",
+                     "Unusually large bound dual variables (norm1=%g) occured, \n"
+                     "          which may cause numerical instabilities, convergence issues, \n"
+                     "          and/or inacurate optimal solutions. Generally this is due to \n"
+                     "          lower and upper bounds being too close to each other or due to \n"
+                     "          ill scaling of the optimization variables.\n",
                      nrmDualBou);
-    if(nlp->options->GetString("fixed_var") == "remove") {
-      nlp->log->printf(hovWarning,
-                       "For example, increase 'fixed_var_tolerance' to remove "
-                       "additional variables.\n");
-    } else if(nlp->options->GetString("fixed_var") == "relax") {
-      nlp->log->printf(hovWarning,
-                       "For example, increase 'fixed_var_tolerance' to relax "
-                       "aditional (tight) variables and/or increase 'fixed_var_perturb' "
-                       "to decrease the tightness.\n");
-    } else {
-      nlp->log->printf(hovWarning,
-                       "Potential fixes: fix or relax variables with tight bounds "
-                       "(see 'fixed_var' option) or rescale variables.\n");
-    }
+
+    nlp->log->printf(hovWarning,
+                     "HiOp options 'fixed_var_tolerance', 'bound_relax_perturb', or \n"
+                     "          'elastic_mode' may remedy this issue. Also see 'scaling_type' option.\n");
   }
 
   // scaling factors
@@ -1057,6 +1048,10 @@ hiopSolveStatus hiopAlgFilterIPMQuasiNewton::run()
   // types of linear algebra objects are known now
   auto* Hess = dynamic_cast<HessianDiagPlusRowRank*>(_Hess_Lagr);
 
+  if(nlp->options->GetString("derivative_check") != "no") {
+    nlp->run_derivative_checker();
+  }
+  
   nlp->runStats.initialize();
   nlp->runStats.kkt.initialize();
   ////////////////////////////////////////////////////////////////////////////////////

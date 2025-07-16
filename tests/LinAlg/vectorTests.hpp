@@ -136,6 +136,46 @@ public:
     return reduceReturn(fail, &x);
   }
 
+  /// Test set_elem method of HiOp vector
+  bool vector_set_elem(hiop::hiopVector& x, const int rank)
+  {
+    int fail = 0;
+    global_ordinal_type sz = x.get_size();
+    if(sz>0) {
+
+      //first set to zero, then set select entries to one and two
+      x.setToConstant(zero);
+      
+      if(sz==1) {
+        x.set_elem(0, three);
+      } else {
+        const global_ordinal_type idx1 = 1;
+        const global_ordinal_type idx2 = sz-1;
+        
+        x.set_elem(idx1, two);
+        x.set_elem(idx2, one);
+      }
+      const real_type nrm1 = x.onenorm();
+      fail = (std::abs(nrm1-three) > std::numeric_limits<real_type>::epsilon());
+    }
+    printMessage(fail, __func__);
+    return reduceReturn(fail, &x);
+  }
+
+  /// Test get_elem of HiOp vector
+  bool vector_get_elem(hiop::hiopVector& x, const int rank)
+  {
+    int fail = 0;
+    global_ordinal_type sz = x.get_size();
+    if(sz>0) {
+      x.setToConstant(quarter);
+      fail += (x.get_elem(0)!=quarter);
+      fail += (x.get_elem(sz-1)!=quarter);
+    }
+    printMessage(fail, __func__);
+    return reduceReturn(fail, &x);
+  }
+  
   /// Test set_to_random_uniform method of hiop vector implementation
   bool vector_set_to_random_uniform(hiop::hiopVector& x, const int rank)
   {
@@ -147,12 +187,7 @@ public:
     }
 
     x.set_to_random_uniform(one, two);
-
     fail = verifyAnswer(&x, one, two);
-    if(fail > 0) {
-      std::cout << "num fails = " << fail << std::endl;
-    }
-
     printMessage(fail, __func__, rank);
 
     return reduceReturn(fail, &x);

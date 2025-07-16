@@ -762,6 +762,57 @@ void hiopVectorRaja<MEM, POL>::copyTo(double* dest) const
   this_nonconst->exec_space_.copy(dest, data_dev_, n_local_);
 }
 
+template<class MEM, class POL>
+void hiopVectorRaja<MEM, POL>::set_elem(const index_type& idx_global, const double& val)
+{
+  assert(idx_global>=0 && idx_global<n_);
+  const index_type idx_local = idx_global - glob_il_;
+
+  if(idx_local>=0 && idx_global<glob_iu_) {
+    assert(idx_local < n_local_);
+    double* data = data_dev_;
+    //data_[idx_local] = val;
+    RAJA::forall<hiop_raja_exec>(RAJA::RangeSegment(idx_local, idx_local+1), RAJA_LAMBDA(RAJA::Index_type i) { data[i] = val; });
+  }
+}
+
+template<class MEM, class POL>
+double hiopVectorRaja<MEM, POL>::get_elem(const index_type& idx_global) const
+{
+  assert(idx_global>=0 && idx_global<n_);
+  const index_type idx_local = idx_global - glob_il_;
+  double val;
+  if(idx_local>=0 && idx_global<glob_iu_) {
+    assert(idx_local < n_local_);
+
+    //copyFromDev would copy unnecessary many elems
+    //this->copyFromDev();
+    
+    //one elem direct copy fails because UMPIRE does not recognize data_dev_+idx_local as a pointer he allocated!
+
+    //using one elem reduce
+    double* data = data_dev_;
+    RAJA::ReduceSum<hiop_raja_reduce, double> sum(0.0);
+    RAJA::forall<hiop_raja_exec>(
+      RAJA::RangeSegment(idx_local, idx_local+1),
+      RAJA_LAMBDA(RAJA::Index_type i) { sum += data[i]; });
+
+    val = sum.get();
+  } else {
+    val = 0.;
+  }
+#ifdef HIOP_USE_MPI
+  double valg;
+  //Bcast would be slightly more efficient but "root" rank is not known to the "other" ranks since
+  //we do not store the global index patitioning.
+  MPI_Allreduce(&val, &valg, 1, MPI_DOUBLE, MPI_SUM, comm_);
+  return valg;
+#else
+  return val;
+#endif
+}
+
+
 /**
  * @brief L2 vector norm.
  *
