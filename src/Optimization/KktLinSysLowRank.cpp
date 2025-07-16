@@ -158,11 +158,6 @@ bool KktLinSysLowRank::update(const hiopIterate* iter,
 #ifdef HIOP_DEEPCHECKS
     assert(perturb_calc_->check_consistency() && "something went wrong with IC");
 #endif
-    nlp_->log->printf(hovWarning,
-                      "KktLinsSysLowRank: norminf(delta_w)=%12.5e norminf(delta_c)=%12.5e (ic %d)\n",
-                        delta_wx_->infnorm(),
-                        delta_cc_->infnorm(),
-                        num_refactorization);
 
     N_->copyFrom(*Nmat_);
     
@@ -191,11 +186,21 @@ bool KktLinSysLowRank::update(const hiopIterate* iter,
       break;
     }
 
+   
     // will do an inertia correction
     num_refactorization++;
     nlp_->runStats.kkt.nUpdateICCorr++;
     
   } // end of refactorization while loop
+
+  //output IC summary when it kicked in
+  const double dw = delta_wx_->infnorm();
+  const double dc = delta_cc_->infnorm();
+  if(dw+dc>0) {
+    const std::string msg = "KktLinsSysLowRank: %d inertia correction steps. Final regularizations "
+      " delta_w=%12.5e and delta_c=%12.5e\n";
+    nlp_->log->printf(hovWarning, msg.c_str(), num_refactorization, dw, dc);
+  }
 
   if(num_refactorization > max_refactorization) {
     nlp_->log->printf(hovError,
@@ -348,7 +353,7 @@ int KktLinSysLowRank::factorize_N()
                         INFO);
   
     } else {
-      nlp_->log->printf(hovError,
+      nlp_->log->printf(hovWarning,
                         "KktLinSysLowRank::factorize_N: dposvx (Chol fact): %d-th minor is not positive definite.\n",
                         INFO);
     }
@@ -365,7 +370,7 @@ int KktLinSysLowRank::factorize_N()
   delete[] WORK;
   delete[] IWORK;
   //TO DO revisit this
-  if(RCOND<1e-12) return N+1;
+  if(RCOND<1e-6) return N+1;
   return INFO;
 }
 

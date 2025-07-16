@@ -661,7 +661,7 @@ bool hiopAlgFilterIPMBase::evalNlpAndLogErrors(const hiopIterate& it,
     return false;
   }
 
-  nlp->log->printf(hovWarning, "nrmOneDualEqu %g   nrmOneDualBo %g\n", nrmDualEqu, nrmDualBou);
+  nlp->log->printf(hovIteration, "nrmOneDualEqu %g   nrmOneDualBo %g\n", nrmDualEqu, nrmDualBou);
   if(nrmDualBou > 1e+10) {
     nlp->log->printf(hovWarning,
                      "Unusually large bound dual variables (norm1=%g) occured, \n"
@@ -691,7 +691,7 @@ bool hiopAlgFilterIPMBase::evalNlpAndLogErrors(const hiopIterate& it,
   // finally, the scaled nlp error
   nlpoverall = fmax(nlpoptim / sd, fmax(cons_violation, nlpcomplem / sc));
 
-  nlp->log->printf(hovWarning,
+  nlp->log->printf(hovIteration,
                    "nlpoverall %g  nloptim %g  sd %g  nlpfeas %g  nlpcomplem %g  sc %g cons_violation %g\n",
                    nlpoverall,
                    nlpoptim,

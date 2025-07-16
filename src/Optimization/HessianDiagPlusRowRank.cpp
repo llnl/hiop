@@ -325,13 +325,13 @@ bool HessianDiagPlusRowRank::update(const hiopIterate& it_curr,
       const double s_nrm2 = nlp_->vec_space()->norm_H_primal(s_new);//s_new.twonorm();
       const double y_nrm2 = nlp_->vec_space()->norm_H_dual(y_new);//y_new.twonorm();
 
-      nlp_->log->printf(hovWarning, //hovLinAlgScalarsVerb,
+      nlp_->log->printf(hovLinAlgScalarsVerb,
                         "sigma HessianDiagPlusRowRank: s^T*y=%20.14e ||s||=%20.14e ||y||=%20.14e ||s||_inf=%20.14e\n",
                         sTy,
                         s_nrm2,
                         y_nrm2,
                         s_infnorm);
-      nlp_->log->printf(hovWarning, "sigma y_new twonrm=%20.14e infnrm=%20.14e\n", y_nrm2, y_new.infnorm());
+      nlp_->log->printf(hovIteration, "sigma y_new twonrm=%20.14e infnrm=%20.14e\n", y_nrm2, y_new.infnorm());
       nlp_->log->write("HessianDiagPlusRowRank s_new", s_new, hovIteration);
       nlp_->log->write("HessianDiagPlusRowRank y_new", y_new, hovIteration);
 
