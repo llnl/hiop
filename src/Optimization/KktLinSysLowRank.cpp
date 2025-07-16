@@ -131,7 +131,13 @@ bool KktLinSysLowRank::update(const hiopIterate* iter,
   // a copy is stored to perform iterative refinement and/or compute residuals because
   // later on N_ will store the factors
 
-  Nmat_->copyFrom(*N_);
+#ifdef HIOP_DEEPCHECKS
+  assert(J_->isfinite());
+  nlp_->log->write("KktLinSysLowRank::update: N is", *N_, hovMatrices);
+  N_->assertSymmetry(1e-10);
+#endif
+  
+  Nmat_->copyFrom(*N_); 
   
   // factorization + inertia correction if needed
   const size_t max_refactorization = 10;
@@ -174,12 +180,14 @@ bool KktLinSysLowRank::update(const hiopIterate* iter,
     }
     continue_re_fact = fact_acceptor_->requireReFactorization(*nlp_, n_neg_eig);
     
-    //this is the matrix to work with
-    Nmat_->copyFrom(*N_);
 
     if(-1 == continue_re_fact) {
       return false;
     } else if(0 == continue_re_fact) {
+      //this is the matrix to work with; repeat the regularization operations since N_ can be modified by
+      //factorize_N (when it is equilibrated, for example)
+      Nmat_->addSubDiagonal(1., 0, *delta_cc_);
+      Nmat_->addSubDiagonal(1., nlp_->m_eq(), *delta_cd_);
       break;
     }
 
@@ -195,7 +203,8 @@ bool KktLinSysLowRank::update(const hiopIterate* iter,
                       max_refactorization);
     return false;
   }
- 
+
+  //re-update N since it may be modified in factorize_N
   N_->copyFrom(*Nmat_);
   
   nlp_->runStats.tmSolverInternal.stop();
@@ -240,10 +249,8 @@ bool KktLinSysLowRank::solveCompressed(hiopVector& rx,
   
 #ifdef HIOP_DEEPCHECKS
   assert(J_->isfinite());
-  nlp_->log->write("solveCompressed: N is", *N_, hovMatrices);
   nlp_->log->write("solveCompressed: rx is", rx, hovMatrices);
   nlp_->log->printf(hovLinAlgScalars, "inf norm of Dd_inv is %g\n", Dd_inv_->infnorm());
-  N_->assertSymmetry(1e-10);
 #endif
   
   // compute the rhs of the lin sys involving N
@@ -288,7 +295,7 @@ bool KktLinSysLowRank::solveCompressed(hiopVector& rx,
   // some outputing
   nlp_->log->write("KKT Low rank: solve compressed SOL", hovIteration);
   nlp_->log->write("  dx: ", dx, hovIteration);
-  nlp_->log->write(" dyc: ", dyc, hovWarning);
+  nlp_->log->write(" dyc: ", dyc, hovIteration);
   nlp_->log->write(" dyd: ", dyd, hovIteration);
   delete r;
 #endif
@@ -375,7 +382,7 @@ int KktLinSysLowRank::solveWithRefin(hiopVector& rhs)
   if(N <= 0) {
     return 0;
   }
-
+  
   hiopMatrixDense* Aref = Nmat_;
   hiopVector* rhsref = rhs.new_copy();
 
