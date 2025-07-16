@@ -1,13 +1,23 @@
 stages:
+  - config
   - build
   - test
+  - clean
 
 include:
   - project: 'lc-templates/id_tokens'
     file: 'id_tokens.yml'
 
 variables:
-  GIT_SUBMODULE_STRATEGY: recursive
+    GIT_SUBMODULE_STRATEGY: recursive
+    GIT_CONFIG_COUNT: 1
+    GIT_CONFIG_KEY_0: credential.helper
+    GIT_CONFIG_VALUE_0: ''
+
+default:
+ hooks:
+   pre_get_sources_script:
+     - module --latest load git     # currently at LC, this would load 2.45.0
 
 .dane: 
   tags:
@@ -25,11 +35,11 @@ variables:
     CUSTOM_CI_BUILDS_DIR: "/usr/workspace/hiop/gitlab_ci/lassen/${CI_PIPELINE_ID}"
     MY_CLUSTER: lassen
 
-.llnl_script_template: 
-  stage: build
+.llnl_script_config:
+  stage: config 
   script:
     - |
-      # Don't clean up this working directory - we need some of these files for
+      # Don't clean up this working directory - we need these files for
       # testing
       echo "CI_PIPELINE_ID = ${CI_PIPELINE_ID}"
       echo "CI_JOB_ID = ${CI_JOB_ID}"
@@ -37,10 +47,23 @@ variables:
       set -xv
       mkdir -p "$CUSTOM_CI_BUILDS_DIR"
       cp -R ./* "$CUSTOM_CI_BUILDS_DIR"
+      res=$?
+      exit $res
+
+.llnl_script_build: 
+  stage: build
+  script:
+    - |
+      # Don't clean up this working directory - we need these files for
+      # testing
+      echo "CI_PIPELINE_ID = ${CI_PIPELINE_ID}"
+      echo "CI_JOB_ID = ${CI_JOB_ID}"
+      echo "CUSTOM_CI_BUILDS_DIR = ${CUSTOM_CI_BUILDS_DIR}"
+      set -xv
       cd "$CUSTOM_CI_BUILDS_DIR"
       ./BUILD.sh --build-only || exit 1
 
-.llnl_test_script_template: 
+.llnl_script_test: 
   stage: test
   variables:
     GIT_STRATEGY: none
@@ -54,13 +77,23 @@ variables:
       ./BUILD.sh --test-only
       res=$?
       exit $res
-  after_script:
-    - |
-      cd "$CUSTOM_CI_BUILDS_DIR/.."
-      rm -rf "$CUSTOM_CI_BUILDS_DIR"
-      rm -rf "/usr/workspace/hiop/gitlab_ci/scripts/$CI_RUNNER_SHORT_TOKEN"
 
-.llnl_test_jsrun_script: 
+.llnl_script_clean: 
+  stage: clean
+  variables:
+    GIT_STRATEGY: none
+  script:
+    - |
+      echo "CI_PIPELINE_ID = ${CI_PIPELINE_ID}"
+      echo "CI_JOB_ID = ${CI_JOB_ID}"
+      echo "CUSTOM_CI_BUILDS_DIR = ${CUSTOM_CI_BUILDS_DIR}"
+      set -xv
+      cd "$CUSTOM_CI_BUILDS_DIR/.."
+      sleep 10
+      rm -rf "$CUSTOM_CI_BUILDS_DIR"
+      #rm -rf "/usr/workspace/hiop/gitlab_ci/scripts/$CI_RUNNER_SHORT_TOKEN"
+
+.llnl_jsrun_script_test: 
   stage: test
   variables:
     GIT_STRATEGY: none
@@ -74,34 +107,96 @@ variables:
       lalloc 1 -W 35 -q pbatch ./BUILD.sh --test-only
       res=$?
       exit $res
-  after_script:
+
+.llnl_build_python: 
+  stage: build
+  script:
     - |
-      cd "$CUSTOM_CI_BUILDS_DIR/.."
-      rm -rf "$CUSTOM_CI_BUILDS_DIR"
-      rm -rf "scripts/$CI_RUNNER_SHORT_TOKEN"
-      
+      # Don't clean up this working directory - we need some of these files for
+      # testing
+      source /usr/workspace/hiop/dane/venv/envDane.sh
+      source /usr/workspace/hiop/dane/venv/hiopbbpy-ci/bin/activate
+      echo "CI_PIPELINE_ID = ${CI_PIPELINE_ID}"
+      echo "CI_JOB_ID = ${CI_JOB_ID}"
+      echo "CUSTOM_CI_BUILDS_DIR = ${CUSTOM_CI_BUILDS_DIR}"
+      set -xv
+      cd "$CUSTOM_CI_BUILDS_DIR"
+      pip install . || exit 1
+
+.llnl_test_hiopbbpy: 
+  stage: test
+  variables:
+    GIT_STRATEGY: none
+  script:
+    - |
+      source /usr/workspace/hiop/dane/venv/envDane.sh
+      source /usr/workspace/hiop/dane/venv/hiopbbpy-ci/bin/activate
+      echo "CI_PIPELINE_ID = ${CI_PIPELINE_ID}"
+      echo "CI_JOB_ID = ${CI_JOB_ID}"
+      echo "CUSTOM_CI_BUILDS_DIR = ${CUSTOM_CI_BUILDS_DIR}"
+      set -xv
+      cd "$CUSTOM_CI_BUILDS_DIR"
+      salloc --time=2:00 --nodes=1 --partition=pbatch --reserv=ci --ntasks=1 \
+        bash -c 'python src/Drivers/hiopbbpy/BODriverEX.py'
+      res=$?
+      exit $res
+
 # For LLNL/dane CI
+config_on_dane:
+  extends:
+    - .dane
+    - .llnl_script_config
+
 build_on_dane:
   extends:
     - .dane
-    - .llnl_script_template
+    - .llnl_script_build
+  needs: ['config_on_dane']
 
-# For LLNL/dane CI
 test_on_dane:
   extends:
     - .dane
-    - .llnl_test_script_template
+    - .llnl_script_test
   needs: ['build_on_dane']
 
+build_on_dane_hiopbbpy:
+  extends:
+    - .dane
+    - .llnl_build_python
+  needs: ['config_on_dane']
+
+test_on_dane_hiopbbpy:
+  extends:
+    - .dane
+    - .llnl_test_hiopbbpy
+  needs: ['build_on_dane_hiopbbpy']
+
+clean_on_dane:
+  extends:
+    - .dane
+    - .llnl_script_clean
+  needs: ['test_on_dane_hiopbbpy', 'test_on_dane']
+
 # For LLNL/lassen CI
+config_on_lassen:
+  extends:
+    - .lassen
+    - .llnl_script_config
+
 build_on_lassen:
   extends:
     - .lassen
-    - .llnl_script_template
+    - .llnl_script_build
+  needs: ['config_on_lassen']
 
-# For LLNL/lassen CI
 test_on_lassen:
   extends:
     - .lassen
-    - .llnl_test_jsrun_script
+    - .llnl_jsrun_script_test
   needs: ['build_on_lassen']
+
+clean_on_lassen:
+  extends:
+    - .lassen
+    - .llnl_script_clean
+  needs: ['test_on_lassen']
