@@ -497,17 +497,17 @@ void HessianDiagPlusRowRank::updateInternalBFGSRepresentation()
   assert(ierr == MPI_SUCCESS);
 
   // - block (2,2)
-  DpYtDhInvY.copyFrom(buff2_lxlx3_);
+  DpYtDhInvY.copyFrom(*buff2_lxlx3_);
   DpYtDhInvY.addDiagonal(1., *D_);
   V_->copyBlockFromMatrix(l, l, DpYtDhInvY);
 
   // - block (1,2)
-  StB0DhInvYmL.copyFrom(buff2_lxlx3_ + l * l);
+  StB0DhInvYmL.copyFrom(*(buff2_lxlx3_ + l * l));
   StB0DhInvYmL.addMatrix(-1.0, *L_);
   V_->copyBlockFromMatrix(0, l, StB0DhInvYmL);
 
   // - block (1,1)
-  StDS.copyFrom(buff2_lxlx3_ + 2 * l * l);
+  StDS.copyFrom(*(buff2_lxlx3_ + 2 * l * l));
   V_->copyBlockFromMatrix(0, 0, StDS);
 #endif
 #ifdef HIOP_DEEPCHECKS
@@ -638,7 +638,7 @@ void HessianDiagPlusRowRank::sym_mat_times_inverse_times_mattrans(double beta,
   W.copyFromDev();
   ierr = MPI_Allreduce(W.local_data_host(), buff_kxk_->local_data_host(), k * k, MPI_DOUBLE, MPI_SUM, nlp_->get_comm());
   assert(ierr == MPI_SUCCESS);
-  S2Y2.copyFrom(buff_2lxk_);
+  S2Y2.copyFrom(*buff_2lxk_);
 
   buff_kxk_->copyFromDev();
   W.copyFrom(*buff_kxk_);
