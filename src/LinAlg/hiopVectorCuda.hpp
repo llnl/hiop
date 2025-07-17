@@ -364,7 +364,18 @@ public:
    * cpu-device or inter-process communication occurs.
    */
   virtual double get_elem(const index_type& idx_global) const;
-  
+ 
+  /**
+   * Shift the elements in the vector forward or backward by 'shift' positions.
+   *
+   * If shift > 0, elements move right; if shift < 0, move left. Newly vacated slots are undefined;
+   * caller is responsible for filling them if needed. Use negative values for left shift.
+   *
+   * Be careful: don't call this repeatedly in performance-critical code-on device vectors, this can  
+   * trigger host-device transfers.
+   */
+  virtual void shift_elems(const size_type& shift = -1); 
+
   /* functions for this class */
   inline MPI_Comm get_mpi_comm() const { return comm_; }
 

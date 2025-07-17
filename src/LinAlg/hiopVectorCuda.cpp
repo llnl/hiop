@@ -191,7 +191,14 @@ double hiopVectorCuda::get_elem(const index_type& idx_global) const
   return val;
 #endif
 }
-  
+ 
+void hiopVectorCuda::shift_elems(const size_type& shift)
+{
+  // TODO: implement GPU-aware shifting of vector elements.
+  // For now, this is just a stub to avoid linker errors/
+  assert(false && "shift_elems not implemented for hiopVectorCuda yet.");
+}
+ 
 /// @brief Copy the elements of v
 void hiopVectorCuda::copyFrom(const hiopVector& v_in)
 {
@@ -1050,6 +1057,9 @@ void hiopVectorCuda::set_array_from_to(hiopInterfaceBase::NonlinearityType* arr,
 }
 
 /// @brief check if `this` vector is identical to `vec`
-bool hiopVectorCuda::is_equal(const hiopVector& vec) const { assert(false && "NOT needed. Remove this func. TODO"); }
-
+bool hiopVectorCuda::is_equal(const hiopVector& vec) const 
+{ 
+  assert(false && "NOT needed. Remove this func. TODO");
+  return false; // This line prevents compiler warning
+}
 }  // namespace hiop
