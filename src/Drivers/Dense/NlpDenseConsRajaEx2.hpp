@@ -80,6 +80,15 @@ public:
                  bool new_x,
                  double* cons) override;
 
+  bool eval_cons(const size_type& n,
+		 const size_type& m,
+		 const double* x,
+		 bool new_x,
+ 		 double* cons) override
+  {
+    return false;
+  }
+
   bool eval_Jac_cons(const size_type& n,
                      const size_type& m,
                      const size_type& num_cons,
@@ -88,8 +97,29 @@ public:
                      bool new_x,
                      double* Jac) override;
 
+  bool eval_Jac_cons(const size_type& n,
+		     const size_type& m,
+		     const double* x,
+		     bool new_x,
+		     double* Jac) override;
+
   bool get_starting_point(const size_type& n,
                           double* x0) override;
+
+  bool get_starting_point(const size_type& n,
+			  const size_type& m,
+			  double* x0,
+			  bool& duals_avail,
+			  double* z_bndL0,
+			  double* z_bndU0,
+			  double* lamda0,
+			  bool& slacks_avail,
+			  double* ineq_slack) override
+  {
+    duals_avail = false;
+    slacks_avail = false;
+    return false;
+  }
 
 private:
   // === Problem dimensions ===

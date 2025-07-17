@@ -82,7 +82,7 @@ int main(int argc, char** argv)
 
   DenseConsRajaEx2     nlp_interface(n, unconstrained);
   hiopNlpDenseConstraints nlp(nlp_interface);
-  nlp.options->SetString("mem_space", "device");
+  nlp.options->SetStringValue("mem_space", "device");
   hiopAlgFilterIPM       solver(&nlp);
   hiopSolveStatus        status = solver.run();
   double                 objv   = solver.getObjective();

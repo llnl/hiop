@@ -322,6 +322,16 @@ bool DenseConsRajaEx2::eval_Jac_cons(const size_type& n,
   return true;
 }
 
+bool DenseConsRajaEx2::eval_Jac_cons(const size_type&, 
+				     const size_type&, 
+				     const double*, 
+				     bool, 
+				     double*)
+{
+  return false;
+}
+
+
 // === Starting point ===
 bool DenseConsRajaEx2::get_starting_point(const size_type& n,
                                           double* x0)
