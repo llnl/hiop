@@ -337,11 +337,10 @@ public:
     assert(0 && "not required.");
     return 0;
   }
-  //fix
-  //shift_elem here
-  //{
-  //  assert(false && "not required.");
-  //}
+  void shift_elems(const size_type& shift = -1)
+  {
+    assert(0 && "shift_elems not requiresd.");
+  }
   
   void copy_from_resid(const hiopResidual* resid);
   void copy_from_iterate(const hiopIterate* it);

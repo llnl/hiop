@@ -818,7 +818,7 @@ void hiopVectorRaja<MEM, POL>::shift_elems(const size_type& shift)
   if(shift == 0 || n_ == 0) return;
 
   double* data = data_dev_;
-  const auto_type n = n_;
+  const auto n = n_;
   
   if(shift < 0) {
     size_type abs_shift = static_cast<size_type>(-shift);
