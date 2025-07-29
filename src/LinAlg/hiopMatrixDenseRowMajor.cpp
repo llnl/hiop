@@ -301,6 +301,96 @@ void hiopMatrixDenseRowMajor::getRow(index_type irow, hiopVector& row_vec)
   memcpy(vec.local_data(), M_[irow], n_local_ * sizeof(double));
 }
 
+void hiopMatrixDenseRowMajor::set_row_to_zero(index_type row_idx)
+{
+  assert(row_idx >= 0 && row_idx < m_local_);
+  // M_ is double**: M_[i] points to the start of row i
+  double* row_ptr = M_[row_idx];
+  std::memset(row_ptr, 0, n_local_ * sizeof(double));
+}
+
+void hiopMatrixDenseRowMajor::set_col_to_zero(index_type col_idx)
+{
+  assert(col_idx >= 0 && col_idx < n_local_);
+  // For each row, set the col_idx element to zero
+  for(int i = 0; i < m_local_; ++i) {
+    M_[i][col_idx] = 0.0;
+  }
+}
+
+void hiopMatrixDenseRowMajor::shift_rows(int shift)
+{
+  if(shift == 0) return; // Nothing to do
+  // Note: positive shift = shift rows down, negative = up
+  // Shifting "down" means each row moves to a higher index
+
+  if(std::abs(shift) >= m_local_) {
+    // If shift is larger than or equal to number of rows, zero everything
+    for(int i = 0; i < m_local_; ++i) {
+      std::memset(M_[i], 0, n_local_ * sizeof(double));
+    }
+    return;
+  }
+
+  if(shift > 0) {
+    // Shift rows down (from bottom up)
+    for(int i = m_local_ - 1; i >= shift; --i) {
+      std::memcpy(M_[i], M_[i - shift], n_local_ * sizeof(double));
+    }
+    // Zero fill the new top rows
+    for(int i = 0; i < shift; ++i) {
+      std::memset(M_[i], 0, n_local_ * sizeof(double));
+    }
+  } else {
+    // Shift rows up (from top down)
+    shift = -shift;
+    for(int i = 0; i < m_local_ - shift; ++i) {
+      std::memcpy(M_[i], M_[i + shift], n_local_ * sizeof(double));
+    }
+    // Zero fill the new bottom rows
+    for(int i = m_local_ - shift; i < m_local_; ++i) {
+      std::memset(M_[i], 0, n_local_ * sizeof(double));
+    }
+  }
+}
+
+void hiopMatrixDenseRowMajor::shift_cols(int shift)
+{
+  if(shift == 0) return;
+  if(std::abs(shift) >= n_local_) {
+    // Zero all columns if shift >= number of columns
+    for(int i = 0; i < m_local_; ++i) {
+      std::memset(M_[i], 0, n_local_ * sizeof(double));
+    }
+    return;
+  }
+
+  if(shift > 0) {
+    // Shift columns right (from right to left in each row)
+    for(int i = 0; i < m_local_; ++i) {
+      for(int j = n_local_ - 1; j >= shift; --j) {
+        M_[i][j] = M_[i][j - shift];
+      }
+      // Zero fill new leftmost columns
+      for(int j = 0; j < shift; ++j) {
+        M_[i][j] = 0.0;
+      }
+    }
+  } else {
+    // Shift columns left (from left to right in each row)
+    shift = -shift;
+    for(int i = 0; i < m_local_; ++i) {
+      for(int j = 0; j < n_local_ - shift; ++j) {
+        M_[i][j] = M_[i][j + shift];
+      }
+      // Zero fill new rightmost columns
+      for(int j = n_local_ - shift; j < n_local_; ++j) {
+        M_[i][j] = 0.0;
+      }
+    }
+  }
+}
+
 void hiopMatrixDenseRowMajor::set_Hess_FR(const hiopMatrixDense& Hess, const hiopVector& add_diag_de)
 {
   double one{1.0};

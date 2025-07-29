@@ -278,10 +278,10 @@ public:
   virtual void getRow(index_type irow, hiopVector& row_vec) { assert(false && "not implemented in base class"); }
 
   /** Set all entries in row 'row_idx' to zero. */
-  virtual void setRowToZero(index_type row_idx) { assert(false && "not implemented in base class"); }
+  virtual void set_row_to_zero(index_type row_idx) { assert(false && "not implemented in base class"); }
 
   /** Set all entries in column 'col_idx' to zero. */
-  virtual void setColToZero(index_type col_idx) { assert(false && "not implemented in base class"); }
+  virtual void set_col_to_zero(index_type col_idx) { assert(false && "not implemented in base class"); }
 
   /** Shift all rows up/down by 'shift' positions. Negative=up, Positive=down. */
   virtual void shift_rows(int shift) { assert(false && "not implemented in base class"); }
