@@ -473,6 +473,64 @@ void hiopMatrixDenseRaja<MEMBACKEND, RAJAEXECPOL>::getRow(index_type irow, hiopV
 }
 
 template<class MEMBACKEND, class RAJAEXECPOL>
+void hiopMatrixDenseRaja<MEMBACKEND, RAJAEXECPOL>::setRowToZero(index_type row_idx)
+{
+  assert(row_idx >= 0 && row_idx < m_local_);
+  double* data = data_dev_;
+  RAJA::View<double, RAJA::Layout<2>> Mview(data, m_local_, n_local_);
+  RAJA::forall<hiop_raja_exec>(
+      RAJA::RangeSegment(0, n_local_),
+      RAJA_LAMBDA(RAJA::Index_type j) {
+        Mview(row_idx, j) = 0.0;
+      });
+}
+
+template<class MEMBACKEND, class RAJAEXECPOL>
+void hiopMatrixDenseRaja<MEMBACKEND, RAJAEXECPOL>::setColToZero(index_type col_idx)
+{
+  assert(col_idx >= 0 && col_idx < n_local_);
+  double* data = data_dev_;
+  RAJA::View<double, RAJA::Layout<2>> Mview(data, m_local_, n_local_);
+  RAJA::forall<hiop_raja_exec>(
+      RAJA::RangeSegment(0, m_local_),
+      RAJA_LAMBDA(RAJA::Index_type i) {
+        Mview(i, col_idx) = 0.0;
+      });
+}
+
+template<class MEMBACKEND, class RAJAEXECPOL>
+void hiopMatrixDenseRaja<MEMBACKEND, RAJAEXECPOL>::shiftCols(int shift)
+{
+  if(shift == 0) return;
+  if(abs(shift) == n_local_) return;
+  if(n_local_ <= 1) return;
+  assert(abs(shift) < n_local_);
+
+  double* data = data_dev_;
+  RAJA::View<double, RAJA::Layout<2>> Mview(data, m_local_, n_local_);
+
+  if(shift < 0) {
+    // Shift columns left
+    for(int col = 0; col < n_local_ + shift; col++) {
+      RAJA::forall<hiop_raja_exec>(
+        RAJA::RangeSegment(0, m_local_),
+        RAJA_LAMBDA(RAJA::Index_type row) {
+          Mview(row, col) = Mview(row, col - shift);
+        });
+    }
+  } else {
+    // Shift columns right
+    for(int col = n_local_ - 1; col >= shift; col--) {
+      RAJA::forall<hiop_raja_exec>(
+        RAJA::RangeSegment(0, m_local_),
+        RAJA_LAMBDA(RAJA::Index_type row) {
+          Mview(row, col) = Mview(row, col - shift);
+        });
+    }
+  }
+}
+
+template<class MEMBACKEND, class RAJAEXECPOL>
 void hiopMatrixDenseRaja<MEMBACKEND, RAJAEXECPOL>::set_Hess_FR(const hiopMatrixDense& Hess, const hiopVector& add_diag_de)
 {
   double one{1.0};

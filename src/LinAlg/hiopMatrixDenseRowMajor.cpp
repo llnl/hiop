@@ -284,6 +284,7 @@ void hiopMatrixDenseRowMajor::shiftRows(size_type shift)
   }
 #endif
 }
+
 void hiopMatrixDenseRowMajor::replaceRow(index_type row, const hiopVector& vec)
 {
   assert(row >= 0);
@@ -301,7 +302,7 @@ void hiopMatrixDenseRowMajor::getRow(index_type irow, hiopVector& row_vec)
   memcpy(vec.local_data(), M_[irow], n_local_ * sizeof(double));
 }
 
-void hiopMatrixDenseRowMajor::set_row_to_zero(index_type row_idx)
+void hiopMatrixDenseRowMajor::setRowToZero(index_type row_idx)
 {
   assert(row_idx >= 0 && row_idx < m_local_);
   // M_ is double**: M_[i] points to the start of row i
@@ -309,7 +310,7 @@ void hiopMatrixDenseRowMajor::set_row_to_zero(index_type row_idx)
   std::memset(row_ptr, 0, n_local_ * sizeof(double));
 }
 
-void hiopMatrixDenseRowMajor::set_col_to_zero(index_type col_idx)
+void hiopMatrixDenseRowMajor::setColToZero(index_type col_idx)
 {
   assert(col_idx >= 0 && col_idx < n_local_);
   // For each row, set the col_idx element to zero
@@ -318,75 +319,34 @@ void hiopMatrixDenseRowMajor::set_col_to_zero(index_type col_idx)
   }
 }
 
-void hiopMatrixDenseRowMajor::shift_rows(int shift)
-{
-  if(shift == 0) return; // Nothing to do
-  // Note: positive shift = shift rows down, negative = up
-  // Shifting "down" means each row moves to a higher index
-
-  if(std::abs(shift) >= m_local_) {
-    // If shift is larger than or equal to number of rows, zero everything
-    for(int i = 0; i < m_local_; ++i) {
-      std::memset(M_[i], 0, n_local_ * sizeof(double));
-    }
-    return;
-  }
-
-  if(shift > 0) {
-    // Shift rows down (from bottom up)
-    for(int i = m_local_ - 1; i >= shift; --i) {
-      std::memcpy(M_[i], M_[i - shift], n_local_ * sizeof(double));
-    }
-    // Zero fill the new top rows
-    for(int i = 0; i < shift; ++i) {
-      std::memset(M_[i], 0, n_local_ * sizeof(double));
-    }
-  } else {
-    // Shift rows up (from top down)
-    shift = -shift;
-    for(int i = 0; i < m_local_ - shift; ++i) {
-      std::memcpy(M_[i], M_[i + shift], n_local_ * sizeof(double));
-    }
-    // Zero fill the new bottom rows
-    for(int i = m_local_ - shift; i < m_local_; ++i) {
-      std::memset(M_[i], 0, n_local_ * sizeof(double));
-    }
-  }
-}
-
-void hiopMatrixDenseRowMajor::shift_cols(int shift)
+void hiopMatrixDenseRowMajor::shiftCols(size_type shift)
 {
   if(shift == 0) return;
-  if(std::abs(shift) >= n_local_) {
-    // Zero all columns if shift >= number of columns
-    for(int i = 0; i < m_local_; ++i) {
-      std::memset(M_[i], 0, n_local_ * sizeof(double));
-    }
-    return;
-  }
+  if(std::abs(shift) == n_local_) return;  // nothing to shift
+  if(n_local_ <= 1) return;                // nothing to shift
 
-  if(shift > 0) {
-    // Shift columns right (from right to left in each row)
-    for(int i = 0; i < m_local_; ++i) {
-      for(int j = n_local_ - 1; j >= shift; --j) {
-        M_[i][j] = M_[i][j - shift];
-      }
-      // Zero fill new leftmost columns
-      for(int j = 0; j < shift; ++j) {
-        M_[i][j] = 0.0;
-      }
+  assert(std::abs(shift) < n_local_);
+  // n_local_ >= 2
+
+  for(int row = 0; row < m_local_; ++row)
+  {
+    if(shift < 0) // shift left
+    {
+      // Move elements to the left
+      memmove(M_[row], M_[row] - shift, (n_local_ + shift) * sizeof(double));
     }
-  } else {
-    // Shift columns left (from left to right in each row)
-    shift = -shift;
-    for(int i = 0; i < m_local_; ++i) {
-      for(int j = 0; j < n_local_ - shift; ++j) {
-        M_[i][j] = M_[i][j + shift];
-      }
-      // Zero fill new rightmost columns
-      for(int j = n_local_ - shift; j < n_local_; ++j) {
-        M_[i][j] = 0.0;
-      }
+    else // shift > 0, shift right
+    {
+      // Move elements to the right, must go backwards to avoid overwriting
+      memmove(M_[row] + shift, M_[row], (n_local_ - shift) * sizeof(double));
+    }
+    // Optionally, you can zero the new columns (for clarity/safety)
+    if(shift < 0) {
+      for(int col = n_local_ + shift; col < n_local_; ++col)
+        M_[row][col] = 0.0;
+    } else {
+      for(int col = 0; col < shift; ++col)
+        M_[row][col] = 0.0;
     }
   }
 }

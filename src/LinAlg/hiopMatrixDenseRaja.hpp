@@ -242,6 +242,12 @@ public:
   /// @brief copies row 'irow' in the vector 'row_vec' (sizes should match)
   void getRow(index_type irow, hiopVector& row_vec);
 
+  virtual void setRowToZero(index_type row_idx) override;
+
+  virtual void setColToZero(index_type col_idx) override;
+
+  virtual void shiftCols(size_type shift) override;
+
   /// @brief build Hess for FR problem, from the base problem `Hess`.
   virtual void set_Hess_FR(const hiopMatrixDense& Hess, const hiopVector& add_diag_de);
 
