@@ -6,10 +6,10 @@
 
 // MPI includes
 #ifdef HIOP_USE_MPI
-  #include <mpi.h>
+#include <mpi.h>
 #else
-  #define MPI_COMM_WORLD 0
-  #define MPI_Comm int
+#define MPI_COMM_WORLD 0
+#define MPI_Comm int
 #endif
 
 // Type aliases for clarity
