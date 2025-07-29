@@ -15,6 +15,7 @@ from .acquisition import LCBacquisition, EIacquisition
 from ..problems.problem import Problem
 from .optproblem import IpoptProb
 from smt.applications.ego import Evaluator
+from .bbproblem import BnBAlgorithm
 
 # A base class defining a general framework for Bayesian Optimization
 class BOAlgorithmBase:
@@ -138,28 +139,37 @@ class BOAlgorithm(BOAlgorithmBase):
             acqf_grad_callback = lambda x: np.array(acqf.eval_g(np.atleast_2d(x)))
             acqf_callback['grad'] = acqf_grad_callback
 
-        x_all = []
-        y_all = []
-        for ii in range(self.n_start):
-            success = False
-            # Generate random starting point if x0 is not provided
-            if self.prob is not None:
-                x0 = self.prob.sample(1)[0]
-            else:
-                x0 = np.array([uniform(b[0], b[1]) for b in self.bounds])
+        if self.acqf_method == "multi_start":
+        
+            x_all = []
+            y_all = []
+            for ii in range(self.n_start):
+                success = False
+                # Generate random starting point if x0 is not provided
+                if self.prob is not None:
+                    x0 = self.prob.sample(1)[0]
+                else:
+                    x0 = np.array([uniform(b[0], b[1]) for b in self.bounds])
 
-            xopt, yout, success = self.acqf_minimizer_callback(acqf_callback, x0)
+                xopt, yout, success = self.acqf_minimizer_callback(acqf_callback, x0)
 
-            if success:
-                x_all.append(xopt)
-                y_all.append(yout)
+                if success:
+                    x_all.append(xopt)
+                    y_all.append(yout)
 
-        if not x_all:
-            raise RuntimeError("Optimization failed for all initial points — no solution found.")
+            if not x_all:
+                raise RuntimeError("Optimization failed for all initial points — no solution found.")
 
-        best_xopt = x_all[np.argmin(np.array(y_all))]
+            best_xopt = x_all[np.argmin(np.array(y_all))]
 
-        return best_xopt
+            return best_xopt
+        if self.acqf_method == "bnb":
+            l_init = np.array([b[0] for b in self.bounds])
+            u_init = np.array([b[1] for b in self.bounds])
+            bnb = BnBAlgorithm()
+            best_l, best_u, _ = bnb.optimize(x_train, y_train, l_init, u_init)
+            x_best = 0.5 * (best_l + best_u)
+            return x_best
     
     def _get_virtual_point(self, x):
         if self.batch_type not in ["CLmin", "KB", "KBUB", "KBLB", "KBRand"]:
