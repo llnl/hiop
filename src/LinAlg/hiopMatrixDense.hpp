@@ -277,6 +277,18 @@ public:
   /// @brief copies row 'irow' in the vector 'row_vec' (sizes should match)
   virtual void getRow(index_type irow, hiopVector& row_vec) { assert(false && "not implemented in base class"); }
 
+  /** Set all entries in row 'row_idx' to zero. */
+  virtual void setRowToZero(index_type row_idx) { assert(false && "not implemented in base class"); }
+
+  /** Set all entries in column 'col_idx' to zero. */
+  virtual void setColToZero(index_type col_idx) { assert(false && "not implemented in base class"); }
+
+  /** Shift all rows up/down by 'shift' positions. Negative=up, Positive=down. */
+  virtual void shift_rows(int shift) { assert(false && "not implemented in base class"); }
+
+  /** Shift all columns left/right by 'shift' positions. Negative=left, Positive=right. */
+  virtual void shift_cols(int shift) { assert(false && "not implemented in base class"); }
+
   /// @brief build Hess for FR problem, from the base problem `Hess`.
   virtual void set_Hess_FR(const hiopMatrixDense& Hess, const hiopVector& add_diag_de)
   {
