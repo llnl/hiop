@@ -145,6 +145,8 @@ void hiopMatrixDenseRowMajor::appendRow(const hiopVector& row)
 void hiopMatrixDenseRowMajor::copyFrom(const hiopMatrixDense& dmmat)
 {
   const auto& dm = dynamic_cast<const hiopMatrixDenseRowMajor&>(dmmat);
+  printf("[copyFrom] this: m_local_=%d, n_local_=%d | dm: m_local_=%d, n_local_=%d\n",
+         (int)m_local_, (int)n_local_, (int)dm.m_local_, (int)dm.n_local_);
   assert(n_local_ == dm.n_local_);
   assert(m_local_ == dm.m_local_);
   assert(n_global_ == dm.n_global_);
