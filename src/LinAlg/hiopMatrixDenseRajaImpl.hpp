@@ -499,7 +499,7 @@ void hiopMatrixDenseRaja<MEMBACKEND, RAJAEXECPOL>::setColToZero(index_type col_i
 }
 
 template<class MEMBACKEND, class RAJAEXECPOL>
-void hiopMatrixDenseRaja<MEMBACKEND, RAJAEXECPOL>::shiftCols(int shift)
+void hiopMatrixDenseRaja<MEMBACKEND, RAJAEXECPOL>::shiftCols(size_type shift)
 {
   if(shift == 0) return;
   if(abs(shift) == n_local_) return;
