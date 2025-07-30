@@ -66,6 +66,8 @@
 #include <cstring>
 #include <cmath>
 
+#include <magma_v2.h>
+
 #include <vector>
 #include <algorithm>
 using namespace std;
@@ -762,11 +764,24 @@ void HessianDiagPlusRowRank::solve_with_V(hiopVector& rhs_s, hiopVector& rhs_y)
   rhs.copyFromStarting(l, rhs_y);
 
 #ifndef HIOP_USE_GPU
-  DSYTRS(&uplo, &N, &one, V_->local_data(), &lda, V_ipiv_vec_, rhs.local_data(), &N, &info);
+  DSYTRS(&uplo, &N, &one, V_->local_data(), &lda, V_ipiv_vec_,
+         rhs.local_data(), &N, &info);
 #else
-  //call magma or cublas equivalent
-  
+  // GPU path via MAGMA
+  magma_int_t magma_info = 0;
+  magma_dsytrs_gpu(
+    MagmaLower,        // use lower triangle
+    N,                 // order of V
+    1,                 // one RHS
+    V_->local_data(),  // device pointer to factorized V
+    lda,               // leading dimension of V
+    V_ipiv_vec_,       // pivot array (host)
+    rhs.local_data(),  // device pointer to RHS
+    N,                 // leading dimension of RHS
+    &magma_info );
+  info = magma_info;
 #endif
+
   if(info < 0) {
     nlp_->log->printf(hovError,
                       "HessianDiagPlusRowRank::solve_with_V error: %d arg to dsytrf has an illegal value\n",
@@ -816,13 +831,23 @@ void HessianDiagPlusRowRank::solve_with_V(hiopMatrixDense& rhs)
   assert(N == rhs.n());
 #endif
 
-#ifdef HIOP_USE_GPU
-  // TODO: Call MAGMA, cuSolver, or device-side solver
-  // magma_dsytrs or cusolverDnDsytrs, etc.
-  // If not implemented, assert or throw.
-  assert(false && "Device linear solve not implemented yet");
+#ifndef HIOP_USE_GPU
+  DSYTRS(&uplo, &N, &nrhs, V_->local_data(), &lda,
+         V_ipiv_vec_, rhs.local_data(), &ldb, &info);
 #else
-  DSYTRS(&uplo, &N, &nrhs, V_->local_data(), &lda, V_ipiv_vec_, rhs.local_data(), &ldb, &info);
+  // GPU path via MAGMA
+  magma_int_t magma_info = 0;
+  magma_dsytrs_gpu(
+    MagmaLower,
+    N,
+    nrhs,
+    V_->local_data(),
+    lda,
+    V_ipiv_vec_,
+    rhs.local_data(),
+    ldb,
+    &magma_info );
+  info = magma_info;
 #endif
 
   if(info < 0) {
