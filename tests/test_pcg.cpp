@@ -170,9 +170,9 @@ int main(int argc, char** argv)
 
     hiopPCGSolver pcg_solver(N_local, A_opr, Minv_opr, nullptr, nullptr);
 
-    [[maybe_unused]] bool is_solved = pcg_solver.solve(rhs);
-
-    std::cout << mem_space << ": " << pcg_solver.get_convergence_info() << std::endl;
+    bool is_solved = pcg_solver.solve(rhs);
+    std::cout << mem_space << ": conv info " << pcg_solver.get_convergence_info()
+              << "   was solved " << is_solved << std::endl;
 
     // Destroy testing objects
     delete A_opr;

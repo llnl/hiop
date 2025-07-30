@@ -52,7 +52,7 @@ int main(int argc, char* argv[])
     fflush(stdout);
 
     double obj_value = -1e+20;
-    [[maybe_unused]] hiopSolveStatus status;
+    hiopSolveStatus status;
 
     // user's NLP -> implementation of hiop::hiopInterfaceMDS
     MdsEx1* my_nlp = new MdsEx1(n_sp, n_de);
@@ -65,7 +65,12 @@ int main(int argc, char* argv[])
     delete my_nlp;
 
     t.stop();
-    printf("[driver] Rank %d solved problem %d (obj=%12.5e) in %g sec\n", my_rank, (i + 1), obj_value, t.getElapsedTime());
+    printf("[driver] Rank %d solved problem %d (status=%d) (obj=%12.5e) in %g sec.\n",
+           my_rank,
+           (int)status,
+           (i + 1),
+           obj_value,
+           t.getElapsedTime());
     fflush(stdout);
   }
 
