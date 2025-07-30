@@ -490,10 +490,10 @@ void hiopMatrixDenseRowMajor::timesVec(double beta, double* ya, double alpha, co
   }
 #ifdef HIOP_USE_MPI
   // here m_local_ is > 0
-  double yglob[m_local_];
-  int ierr = MPI_Allreduce(ya, yglob, m_local_, MPI_DOUBLE, MPI_SUM, comm_);
+  ::std::vector<double> yglob(m_local_);
+  int ierr = MPI_Allreduce(ya, yglob.data(), m_local_, MPI_DOUBLE, MPI_SUM, comm_);
   assert(MPI_SUCCESS == ierr);
-  memcpy(ya, yglob, m_local_ * sizeof(double));
+  memcpy(ya, yglob.data(), m_local_ * sizeof(double));
 #endif
 }
 
