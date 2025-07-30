@@ -105,18 +105,15 @@ HessianDiagPlusRowRank::HessianDiagPlusRowRank(hiopNlpDenseConstraints* nlp_in, 
 
   // internal buffers for memory pool (none of them should be in n)
 #ifdef HIOP_USE_MPI
-  //buff_kxk_ = new double[nlp_->m() * nlp_->m()];
-  buff_kxk_ = LinearAlgebraFactory::create_matrix_dense(mem_space_, nlp_->m(), nlp_->m());
-  // buff_2lxk_ = new double[nlp_->m() * 2 * l_max_];
-  buff_2lxk_     = LinearAlgebraFactory::create_matrix_dense(mem_space_, nlp_->m(), 2 * l_max_);
-  // buff1_lxlx3_ = new double[3 * l_max_ * l_max_];
-  buff1_lxlx3_   = LinearAlgebraFactory::create_matrix_dense(mem_space_, 3 * l_max_, l_max_);
-  // buff2_lxlx3_ = new double[3 * l_max_ * l_max_];
-  buff2_lxlx3_   = LinearAlgebraFactory::create_matrix_dense(mem_space_, 3 * l_max_, l_max_);
+  // allocate raw double buffers for MPI all‑reduce
+  buff_kxk_     = new double[nlp_->m() * nlp_->m()];
+  buff_2lxk_    = new double[nlp_->m() * 2 * l_max_];
+  buff1_lxlx3_  = new double[3 * l_max_ * l_max_];
+  buff2_lxlx3_  = new double[3 * l_max_ * l_max_];
 #else
   // not needed in non-MPI mode
-  buff_kxk_ = nullptr;
-  buff_2lxk_ = nullptr;
+  buff_kxk_    = nullptr; 
+  buff_2lxk_   = nullptr;
   buff1_lxlx3_ = nullptr;
   buff2_lxlx3_ = nullptr;
 #endif
@@ -195,7 +192,7 @@ HessianDiagPlusRowRank::~HessianDiagPlusRowRank()
   delete Jac_c_prev_;
   delete Jac_d_prev_;
 
-  delete buff_kxk_;
+  delete[] buff_kxk_;
   delete[] buff_2lxk_;
   delete[] buff1_lxlx3_;
   delete[] buff2_lxlx3_;
