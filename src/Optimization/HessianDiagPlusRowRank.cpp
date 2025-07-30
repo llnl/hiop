@@ -493,18 +493,18 @@ void HessianDiagPlusRowRank::updateInternalBFGSRepresentation()
   ierr = MPI_Allreduce(buff1_lxlx3_, buff2_lxlx3_, 3 * l * l, MPI_DOUBLE, MPI_SUM, nlp_->get_comm());
   assert(ierr == MPI_SUCCESS);
 
-  // - block (2,2)
-  DpYtDhInvY.copyFrom(*buff2_lxlx3_);
+  // - block (2,2): memcpy raw buffer back into matrix
+  memcpy(DpYtDhInvY.local_data_host(), buff2_lxlx3_, buffsize);
   DpYtDhInvY.addDiagonal(1., *D_);
   V_->copyBlockFromMatrix(l, l, DpYtDhInvY);
 
   // - block (1,2)
-  StB0DhInvYmL.copyFrom(*(buff2_lxlx3_ + l * l));
+  memcpy(StB0DhInvYmL.local_data_host(), buff2_lxlx3_ + l * l, buffsize);
   StB0DhInvYmL.addMatrix(-1.0, *L_);
   V_->copyBlockFromMatrix(0, l, StB0DhInvYmL);
 
   // - block (1,1)
-  StDS.copyFrom(*(buff2_lxlx3_ + 2 * l * l));
+  memcpy(StDS.local_data_host(), buff2_lxlx3_ + 2 * l * l, buffsize);
   V_->copyBlockFromMatrix(0, 0, StDS);
 #endif
 #ifdef HIOP_DEEPCHECKS
