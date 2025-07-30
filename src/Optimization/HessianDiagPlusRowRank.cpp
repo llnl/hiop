@@ -633,12 +633,18 @@ void HessianDiagPlusRowRank::sym_mat_times_inverse_times_mattrans(double beta,
   ierr = MPI_Allreduce(S2Y2.local_data(), buff_2lxk_, 2 * l * k, MPI_DOUBLE, MPI_SUM, nlp_->get_comm());
   assert(ierr == MPI_SUCCESS);
   W.copyFromDev();
-  ierr = MPI_Allreduce(W.local_data_host(), buff_kxk_->local_data_host(), k * k, MPI_DOUBLE, MPI_SUM, nlp_->get_comm());
+  // reduce W’s host mirror into our raw buffer
+  ierr = MPI_Allreduce(W.local_data_host(), buff_kxk_, k * k, MPI_DOUBLE, MPI_SUM, nlp_->get_comm());
   assert(ierr == MPI_SUCCESS);
-  S2Y2.copyFrom(*buff_2lxk_);
+  // copy the reduced S2Y2 buffer into the matrix’s host mirror, then push to device
+  memcpy(S2Y2.local_data_host(),
+         buff_2lxk_,
+         2 * l * k * sizeof(double));
+  S2Y2.copyToDev();
 
-  buff_kxk_->copyFromDev();
-  W.copyFrom(*buff_kxk_);
+  // copy reduced data back into W’s host buffer, then push it to the device
+  memcpy(W.local_data_host(), buff_kxk_, k * k * sizeof(double));
+  W.copyToDev();
   // also copy S1 and Y1
   S1.copyFromMatrixBlock(S2Y2, 0, 0);
   Y1.copyFromMatrixBlock(S2Y2, 0, l);
