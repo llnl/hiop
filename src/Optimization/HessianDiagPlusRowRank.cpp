@@ -868,29 +868,22 @@ void HessianDiagPlusRowRank::growL(const int& lmem_curr, const int& lmem_max, co
   assert(lmem_curr == l);
   assert(lmem_max >= l);
 #endif
+
   // newL = [   L     0]
   //        [ Y^T*s   0]
   hiopMatrixDense* newL = LinearAlgebraFactory::create_matrix_dense(mem_space_, l + 1, l + 1);
   assert(newL);
-  // copy from L to newL
+
+  // Copy old L_ into newL
   newL->copyBlockFromMatrix(0, 0, *L_);
 
-  double* newL_mat = newL->local_data();  // doing the rest here
-  const double* YTs_vec = YTs.local_data_const();
-  // for(int j=0; j<l; j++) newL_mat[l][j] = YTs_vec[j];
-  //george -> use one of the copyFrom methods of MatrixDense
-  for(int j = 0; j < l; j++) {
-    newL_mat[l * (l + 1) + j] = YTs_vec[j];
-  }
+  // Set the new last row from YTs
+  newL->replaceRow(l, YTs);
 
-  // and the zero entries of the last column
-  // for(int i=0; i<l+1; i++) newL_mat[i][l] = 0.0;
-  //george -> look for a method in MatrixDense set a row to zero.
-  for(int i = 0; i < l + 1; i++) {
-    newL_mat[i * (l + 1) + l] = 0.0;
-  }
+  // Zero out the last column
+  newL->setColToZero(l);
 
-  // swap the pointers
+  // Swap old and new
   delete L_;
   L_ = newL;
 }
@@ -901,12 +894,16 @@ void HessianDiagPlusRowRank::growD(const int& lmem_curr, const int& lmem_max, co
   assert(l == lmem_curr);
   assert(lmem_max >= l);
 
+  // Allocate new vector of size l+1 in the same memory space (CPU, GPU, RAJA)
   hiopVector* Dnew = LinearAlgebraFactory::create_vector(mem_space_, l + 1);
-  double* Dnew_vec = Dnew->local_data();
-  memcpy(Dnew_vec, D_->local_data_const(), l * sizeof(double));
-  //george -> look for a set_elem method
-  Dnew_vec[l] = sTy;
 
+  // Copy old contents (RAJA-safe, handles device-to-device properly)
+  Dnew->copyFrom(*D_);
+
+  // Append the new element
+  Dnew->set_elem(l, sTy);
+
+  // Replace old vector
   delete D_;
   D_ = Dnew;
 }

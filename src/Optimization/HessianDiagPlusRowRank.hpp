@@ -198,10 +198,10 @@ private:
   void updateInternalBFGSRepresentation();
 
   // internals buffers, mostly for MPIAll_reduce
-  hiopMatrixDense* buff_kxk_;   // size = num_constraints^2
-  hiopMatrixDense* buff_2lxk_;  // size = 2 x q-Newton mem size x num_constraints
-  hiopMatrixDense* buff1_lxlx3_;
-  hiopMatrixDense* buff2_lxlx3_;
+  double* buff_kxk_;   // size = num_constraints^2
+  double* buff_2lxk_;  // size = 2 x q-Newton mem size x num_constraints
+  double* buff1_lxlx3_;
+  double* buff2_lxlx3_;
 
   // auxiliary objects preallocated and used in internally in various computation blocks
 
