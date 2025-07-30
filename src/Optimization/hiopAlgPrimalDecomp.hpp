@@ -240,16 +240,14 @@ public:
      * @param comm_world the communicator whose ranks should be used to schedule the tasks
      * (subproblems of the primal decomposable problem priDecProb)
      */
-    HessianApprox(hiopInterfacePriDecProblem* priDecProb, hiopOptions* options_pridec, MPI_Comm comm_world = MPI_COMM_WORLD);
+    HessianApprox(hiopOptions* options_pridec, MPI_Comm comm_world = MPI_COMM_WORLD);
     HessianApprox(const int& n,
-                  hiopInterfacePriDecProblem* priDecProb,
                   hiopOptions* options_pridec,
                   MPI_Comm comm_world = MPI_COMM_WORLD);
 
     /** ratio is used to compute alpha in alpha_f */
     HessianApprox(const int& n,
                   const double ratio,
-                  hiopInterfacePriDecProblem* priDecProb,
                   hiopOptions* options_pridec,
                   MPI_Comm comm_world = MPI_COMM_WORLD);
 

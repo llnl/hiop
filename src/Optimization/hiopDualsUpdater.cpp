@@ -345,15 +345,18 @@ bool hiopDualsLsqUpdateLinsysAugSparse::instantiate_linear_solver(const char* li
   const hiopMatrixSparse& Jac_dSp = dynamic_cast<const hiopMatrixSparse&>(jac_d);
 
   std::stringstream ss_log;
+  std::stringstream ss_sizes;
 
   size_type nx = Jac_cSp.n();
   size_type nd = Jac_dSp.m();
   size_type neq = Jac_cSp.m();
   size_type nineq = Jac_dSp.m();
-  [[maybe_unused]] const size_type n = nx + nineq + neq + nineq;
-  [[maybe_unused]] const size_type nnz =
+  const size_type n = nx + nineq + neq + nineq;
+  const size_type nnz =
       nx + nd + Jac_cSp.numberOfNonzeros() + Jac_dSp.numberOfNonzeros() + nd + (nx + nd + neq + nineq);
 
+  ss_sizes << " size:" << n << " cons: " << (neq + nineq) << " nnz: " << nnz;
+  
   auto linear_solver = nlp_->options->GetString(linsol_opt);
   auto compute_mode = nlp_->options->GetString("compute_mode");
   auto fact_acceptor = nlp_->options->GetString("fact_acceptor");
@@ -370,8 +373,7 @@ bool hiopDualsLsqUpdateLinsysAugSparse::instantiate_linear_solver(const char* li
       assert(nullptr == lin_sys_);
       if(linear_solver == "ma57" || linear_solver == "auto") {
 #ifdef HIOP_USE_COINHSL
-        ss_log << "LSQ linear solver --- KKT_SPARSE_XDYcYd linsys: MA57 size " << n << " cons " << (neq + nineq) << " nnz "
-               << nnz;
+        ss_log << "LSQ linear solver --- KKT_SPARSE_XDYcYd linsys: MA57 ";
         lin_sys_ = new hiopLinSolverSymSparseMA57(n, nnz, nlp_);
 #endif  // HIOP_USE_COINHSL
       }
@@ -379,8 +381,7 @@ bool hiopDualsLsqUpdateLinsysAugSparse::instantiate_linear_solver(const char* li
       if((nullptr == lin_sys_ && linear_solver == "auto") || linear_solver == "pardiso") {
         // ma57 is not available or user requested pardiso
 #ifdef HIOP_USE_PARDISO
-        ss_log << "LSQ linear solver --- KKT_SPARSE_XDYcYd linsys: PARDISO size " << n << " cons " << (neq + nineq)
-               << " nnz " << nnz;
+        ss_log << "LSQ linear solver --- KKT_SPARSE_XDYcYd linsys: PARDISO ";
         lin_sys_ = new hiopLinSolverSymSparsePARDISO(n, nnz, nlp_);
 #endif  // HIOP_USE_PARDISO
       }
@@ -390,12 +391,7 @@ bool hiopDualsLsqUpdateLinsysAugSparse::instantiate_linear_solver(const char* li
 #ifdef HIOP_USE_GINKGO
         ss_log << "LSQ with GINKGO: create ";
         hiopLinSolverSymSparseGinkgo* p = new hiopLinSolverSymSparseGinkgo(n, nnz, nlp_);
-
-        nlp_->log->printf(hovSummary,
-                          "LSQ Duals Initialization --- KKT_SPARSE_XDYcYd linsys: using GINKGO on CPU as an "
-                          "indefinite solver, size %d (%d cons)\n",
-                          n,
-                          neq + nineq);
+        ss_log << "LSQ linear solver --- KKT_SPARSE_XDYcYd linsys: using GINKGO on CPU as an indefinite solver ";
         lin_sys_ = p;
 #endif  // HIOP_USE_GINKGO
       }
@@ -413,14 +409,11 @@ bool hiopDualsLsqUpdateLinsysAugSparse::instantiate_linear_solver(const char* li
           assert(false);
           return false;
         }
-        ss_log << "LSQ linear solver --- KKT_SPARSE_XDYcYd linsys: PARDISO size " << n << " cons " << (neq + nineq)
-               << " nnz " << nnz;
+        ss_log << "LSQ linear solver --- KKT_SPARSE_XDYcYd linsys: STRUMPACK";
         lin_sys_ = new hiopLinSolverSymSparseSTRUMPACK(n, nnz, nlp_);
 #endif  // HIOP_USE_STRUMPACK
       }
       // KS: /end of CPU mode/ do not put CU SOLVER anywhere above this!!!!!
-      nlp_->log->printf(hovSummary, "%s (option '%s' '%s')\n", ss_log.str().c_str(), linsol_opt, linear_solver.c_str());
-
     } else {
       //
       // We're on device
@@ -444,8 +437,7 @@ bool hiopDualsLsqUpdateLinsysAugSparse::instantiate_linear_solver(const char* li
       }
       // This is our first choice on the device.
       if(linear_solver == "resolve" || linear_solver == "auto") {
-        ss_log << "LSQ linear solver --- KKT_SPARSE_XDYcYd linsys: ReSolve size " << n << " cons " << (neq + nineq)
-               << " nnz " << nnz;
+        ss_log << "LSQ linear solver --- KKT_SPARSE_XDYcYd linsys: ReSolve ";
         lin_sys_ = new hiopLinSolverSymSparseReSolve(n, nnz, nlp_);
       }
 #else  // of #ifdef HIOP_USE_RESOLVE
@@ -475,8 +467,7 @@ bool hiopDualsLsqUpdateLinsysAugSparse::instantiate_linear_solver(const char* li
       assert(compute_mode == "hybrid" || compute_mode == "auto");
 #if defined(HIOP_USE_STRUMPACK)
       if((nullptr == lin_sys_) && (linear_solver == "strumpack" || linear_solver == "auto")) {
-        ss_log << "LSQ linear solver --- KKT_SPARSE_XDYcYd linsys: STRUMPACK size " << n << " cons " << (neq + nineq)
-               << " nnz " << nnz;
+        ss_log << "LSQ linear solver --- KKT_SPARSE_XDYcYd linsys: STRUMPACK ";
         lin_sys_ = new hiopLinSolverSymSparseSTRUMPACK(n, nnz, nlp_);
       }
 #endif  // HIOP_USE_STRUMPACK
@@ -487,8 +478,7 @@ bool hiopDualsLsqUpdateLinsysAugSparse::instantiate_linear_solver(const char* li
         assert((linear_solver == "ma57" || linear_solver == "auto") &&
                "the value for duals_init_linear_solver_sparse is invalid and should have been corrected during "
                "options processing");
-        ss_log << "LSQ linear solver --- KKT_SPARSE_XDYcYd linsys: MA57 size " << n << " cons " << (neq + nineq) << " nnz "
-               << nnz;
+        ss_log << "LSQ linear solver --- KKT_SPARSE_XDYcYd linsys: MA57 ";
         lin_sys_ = new hiopLinSolverSymSparseMA57(n, nnz, nlp_);
       }
 #endif  // HIOP_USE_COINHSL
@@ -498,8 +488,7 @@ bool hiopDualsLsqUpdateLinsysAugSparse::instantiate_linear_solver(const char* li
         assert((linear_solver == "pardiso" || linear_solver == "auto") &&
                "the value for duals_init_linear_solver_sparse is invalid and should have been corrected during "
                "options processing");
-        ss_log << "LSQ linear solver --- KKT_SPARSE_XDYcYd linsys: MA57 size " << n << " cons " << (neq + nineq) << " nnz "
-               << nnz;
+        ss_log << "LSQ linear solver --- KKT_SPARSE_XDYcYd linsys: PARDISO ";
         lin_sys_ = new hiopLinSolverSymSparsePARDISO(n, nnz, nlp_);
       }
 #endif  // HIOP_USE_PARDISO
@@ -508,19 +497,18 @@ bool hiopDualsLsqUpdateLinsysAugSparse::instantiate_linear_solver(const char* li
         // duals_init_linear_solver_sparse was
         // set to be ginkgo
 #ifdef HIOP_USE_GINKGO
-        ss_log << "LSQ with GINKGO: create ";
+        ss_log << "LSQ linear solver --- KKT_SPARSE_XDYcYd linsys: GINGKO on CPU as indefinite solver ";
         hiopLinSolverSymSparseGinkgo* p = new hiopLinSolverSymSparseGinkgo(n, nnz, nlp_);
-
-        nlp_->log->printf(hovSummary,
-                          "LSQ Duals Initialization --- KKT_SPARSE_XDYcYd linsys: using GINKGO on CPU as an "
-                          "indefinite solver, size %d (%d cons)\n",
-                          n,
-                          neq + nineq);
         lin_sys_ = p;
 #endif  // HIOP_USE_GINKGO
       }
     }  // end of else  compute_mode=='cpu'
   }  // end of else if(!linsys)
+
+  if(ss_log.str().size()>0) {
+    ss_log << ss_sizes.str();
+    nlp_->log->printf(hovSummary, "%s (option '%s' '%s')\n", ss_log.str().c_str(), linsol_opt, linear_solver.c_str());
+  }
 
   // return false, which will trigger a backup to LSQ computation(s), if it is not possible to instantiate a linear solver
   return (nullptr != lin_sys_);

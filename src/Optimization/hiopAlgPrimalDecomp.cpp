@@ -195,17 +195,15 @@ private:
 };
 #endif
 
-hiopAlgPrimalDecomposition::HessianApprox::HessianApprox(hiopInterfacePriDecProblem* priDecProb,
-                                                         hiopOptions* options_pridec,
+hiopAlgPrimalDecomposition::HessianApprox::HessianApprox(hiopOptions* options_pridec,
                                                          MPI_Comm comm_world)
-    : HessianApprox(-1, priDecProb, options_pridec, comm_world)
+    : HessianApprox(-1, options_pridec, comm_world)
 {
   comm_world_ = comm_world;
   log_ = new hiopLogger(options_, stdout, 0, comm_world);
 }
 
 hiopAlgPrimalDecomposition::HessianApprox::HessianApprox(const int& n,
-                                                         [[maybe_unused]] hiopInterfacePriDecProblem* priDecProb,
                                                          hiopOptions* options_pridec,
                                                          MPI_Comm comm_world)
     : options_(options_pridec),
@@ -230,10 +228,9 @@ hiopAlgPrimalDecomposition::HessianApprox::HessianApprox(const int& n,
 
 hiopAlgPrimalDecomposition::HessianApprox::HessianApprox(const int& n,
                                                          const double ratio,
-                                                         hiopInterfacePriDecProblem* priDecProb,
                                                          hiopOptions* options_pridec,
                                                          MPI_Comm comm_world)
-    : HessianApprox(n, priDecProb, options_pridec, comm_world)
+    : HessianApprox(n, options_pridec, comm_world)
 {
   ratio_ = ratio;
 }
@@ -786,7 +783,7 @@ hiopSolveStatus hiopAlgPrimalDecomposition::run()
   double* grad_acc_vec = grad_acc->local_data();
 
   // hess_appx_2 is declared by all ranks while only rank 0 uses it
-  HessianApprox* hess_appx_2 = new HessianApprox(nc_, alpha_ratio_, master_prob_, options_);
+  HessianApprox* hess_appx_2 = new HessianApprox(nc_, alpha_ratio_, options_);
   hess_appx_2->set_alpha_min(alpha_min_);
   hess_appx_2->set_alpha_max(alpha_max_);
 
@@ -1278,7 +1275,7 @@ hiopSolveStatus hiopAlgPrimalDecomposition::run_local()
   // double* grad_acc_vec = grad_acc->local_data();
 
   // hess_appx_2 is declared by all ranks while only rank 0 uses it
-  HessianApprox* hess_appx_2 = new HessianApprox(nc_, alpha_ratio_, master_prob_, options_);
+  HessianApprox* hess_appx_2 = new HessianApprox(nc_, alpha_ratio_, options_);
   hess_appx_2->set_alpha_min(alpha_min_);
   hess_appx_2->set_alpha_max(alpha_max_);
 
@@ -1782,7 +1779,7 @@ hiopSolveStatus hiopAlgPrimalDecomposition::run_single()
   grad_r->setToZero();
 
   // hess_appx_2 has to be declared by all ranks while only rank 0 uses it
-  HessianApprox* hess_appx_2 = new HessianApprox(nc_, alpha_ratio_, master_prob_, options_);
+  HessianApprox* hess_appx_2 = new HessianApprox(nc_, alpha_ratio_, options_);
   hess_appx_2->set_alpha_min(alpha_min_);
   hess_appx_2->set_alpha_max(alpha_max_);
 
