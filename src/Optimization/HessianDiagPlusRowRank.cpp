@@ -66,7 +66,10 @@
 #include <cstring>
 #include <cmath>
 
+#ifdef HIOP_USE_MAGMA
 #include <magma_v2.h>
+#include <magma_lapack.h>
+#endif
 
 #include <vector>
 #include <algorithm>

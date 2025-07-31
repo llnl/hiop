@@ -288,8 +288,15 @@ private:
                                                   const hiopMatrixDense& X);
   /* members and utilities related to V matrix: factorization and solve */
   hiopVector* V_work_vec_;
-  int V_ipiv_size_;
-  int* V_ipiv_vec_;
+#ifdef HIOP_USE_MAGMA
+  /** pivot indices for MAGMA (host) **/
+  magma_int_t*  V_ipiv_vec_;
+  int           V_ipiv_size_;
+#else
+  /** pivot indices for CPU LAPACK (host) **/
+  int*          V_ipiv_vec_;
+  int           V_ipiv_size_;
+#endif
 
   void factorizeV();
   void solve_with_V(hiopVector& rhs_s, hiopVector& rhs_y);
