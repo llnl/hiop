@@ -781,7 +781,8 @@ void HessianDiagPlusRowRank::solve_with_V(hiopVector& rhs_s, hiopVector& rhs_y)
     V_ipiv_vec_,       // pivot array (host)
     rhs.local_data(),  // device pointer to RHS
     N,                 // leading dimension of RHS
-    &magma_info );
+    &magma_info,       // info return
+    magma_device_queue_); // ← queue
   info = magma_info;
 #endif
 
@@ -849,7 +850,8 @@ void HessianDiagPlusRowRank::solve_with_V(hiopMatrixDense& rhs)
     V_ipiv_vec_,
     rhs.local_data(),
     ldb,
-    &magma_info );
+    &magma_info,
+    magma_device_queue_); // ← queue
   info = magma_info;
 #endif
 
