@@ -34,7 +34,18 @@ jobs:
         run: |
           source ~/.bashrc
           conda activate base
-          python -c "import cyipopt; print('cyipopt OK')"
+          python -c "import cyipopt; print('cyipopt install OK')"
+      
+      - name: Install mpi4py via conda
+        run: |
+          conda init bash
+          conda install -c conda-forge mpi4py mpich 
+      
+      - name: Verify mpi4py installation
+        run: |
+          source ~/.bashrc
+          conda activate base
+          python -c "import mpi4py; print('mpi4py install OK')"
 
       - name: Install HiOpBBPy
         run: |
@@ -44,9 +55,16 @@ jobs:
           python -m pip install --upgrade pip
           pip install .
 
-      - name: Run Tests
+      - name: Run BO Test
         run: |
           source ~/.bashrc
           conda activate base
-          python src/Drivers/hiopbbpy/BODriverCI.py 10
+          python src/Drivers/hiopbbpy/BODriverCI.py -nrepeat 10
+        continue-on-error: false
+      
+      - name: Run MPI Evaluator Test
+        run: |
+          source ~/.bashrc
+          conda activate base
+          python src/Drivers/hiopbbpy/EvaluationManagerCI.py -n 10 -t 0.001
         continue-on-error: false

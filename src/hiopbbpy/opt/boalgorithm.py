@@ -24,7 +24,8 @@ class BOAlgorithmBase:
     self.xtrain = None            # Training data
     self.ytrain = None            # Training data
     self.prob   = None            # Problem structure
-    self.evaluator = Evaluator()  # compute control objective evaluations
+    self.obj_evaluator = Evaluator()  # (batch) objective function evaluations
+    self.opt_evaluator = Evaluator()  # (multi-start) local optimizer evaluations
     self.bo_maxiter = 20          # Maximum number of Bayesian optimization steps
     self.n_start = 10             # estimating acquisition global optima by determining local optima n_start times and then determining the discrete max of that set
     self.batch_size = 1           # batch size
@@ -93,8 +94,11 @@ class BOAlgorithm(BOAlgorithmBase):
     assert batch_size > 0, f"batch_size {batch_size} is not strictly positive"
     self.setAcquisitionType(acquisition_type, batch_size)
 
-    self.evaluator = options.get('evaluator', self.evaluator)
-    assert isinstance(self.evaluator, Evaluator)
+    self.obj_evaluator = options.get('obj_evaluator', self.obj_evaluator)
+    assert isinstance(self.obj_evaluator, Evaluator)
+    
+    self.opt_evaluator = options.get('opt_evaluator', self.opt_evaluator)
+    assert isinstance(self.opt_evaluator, Evaluator)
 
     if options and 'opt_solver' in options:
       opt_solver = options['opt_solver']
@@ -112,11 +116,6 @@ class BOAlgorithm(BOAlgorithmBase):
     if user_grad:
       self.fun_grad = user_grad
 
-
-  # Method to set up a callback function to minimize the acquisition function
-  def _setup_acqf_minimizer_callback(self):
-    self.acqf_minimizer_callback = lambda fun, x0: minimizer(fun, x0, self.opt_solver, self.bounds, self.prob.constraints, self.solver_options)
-
   # Method to train the GP model
   def _train_surrogate(self, x_train, y_train):
     self.gpsurrogate.train(x_train, y_train)
@@ -124,7 +123,6 @@ class BOAlgorithm(BOAlgorithmBase):
   # Method to find the best next sampling point via optimizing the acquisition function
   def _find_best_point(self, x_train, y_train, x0 = None):
     self._train_surrogate(x_train, y_train)
-
     if self.acquisition_type == "LCB":
       acqf = LCBacquisition(self.gpsurrogate)
     elif self.acquisition_type == "EI":
@@ -132,33 +130,29 @@ class BOAlgorithm(BOAlgorithmBase):
     else:
       raise NotImplementedError("No implemented acquisition_type associated to"+self.acquisition_type)
 
-    acqf_obj_callback = lambda x: float(np.array(acqf.evaluate(np.atleast_2d(x))).flat[0])
-    acqf_callback = {'obj': acqf_obj_callback}
-    if acqf.has_gradient == True:
-      acqf_grad_callback = lambda x: np.array(acqf.eval_g(np.atleast_2d(x))).flatten()
-      acqf_callback['grad'] = acqf_grad_callback
+    acqf_callback = {'obj' : acqf.scalar_evaluate}
+    if acqf.has_gradient:
+      acqf_callback['grad'] = acqf.scalar_eval_g
 
     x_all = []
     y_all = []
+    acqf_minimizer = minimizer_wrapper(acqf_callback, self.opt_solver, self.bounds, self.prob.constraints, self.solver_options)
+
+    if self.prob is not None:
+      x0_pts = np.array([self.prob.sample(1)[0] for _ in range(self.n_start)])
+    else:
+      x0_pts = np.array([[uniform(b[0], b[1]) for b in self.bounds] for _ in range(self.n_start)])
+    opt_output = self.opt_evaluator.run(acqf_minimizer.minimizer_callback, x0_pts)
     for ii in range(self.n_start):
       success = False
-      # Generate random starting point if x0 is not provided
-      if self.prob is not None:
-        x0 = self.prob.sample(1)[0]
-      else:
-        x0 = np.array([uniform(b[0], b[1]) for b in self.bounds])
-
-      xopt, yout, success = self.acqf_minimizer_callback(acqf_callback, x0)
-
+      xopt, yopt, success = opt_output[ii]
       if success:
         x_all.append(xopt)
-        y_all.append(yout)
-
+        y_all.append(yopt) 
     if not x_all:
       raise RuntimeError("Optimization failed for all initial points — no solution found.")
 
     best_xopt = x_all[np.argmin(np.array(y_all))]
-
     return best_xopt
   
   def _get_virtual_point(self, x):
@@ -191,7 +185,6 @@ class BOAlgorithm(BOAlgorithmBase):
     y_train = self.ytrain
     
     n_init_sample = np.size(x_train, 0)
-    self._setup_acqf_minimizer_callback()
 
     self.x_hist = []
     self.y_hist = []
@@ -217,7 +210,8 @@ class BOAlgorithm(BOAlgorithmBase):
           # Update training set with the virtual point
           y_train_virtual = np.vstack([y_train_virtual, y_virtual])
       
-      y_new = self.evaluator.run(self.prob.evaluate, x_train[-self.batch_size:])
+      y_new = self.obj_evaluator.run(self.prob.evaluate, x_train[-self.batch_size:])
+      y_new = np.array(y_new)
       y_train = np.vstack([y_train, y_new])
       
       # Save the new sample points and objective evaluations
@@ -247,40 +241,50 @@ class BOAlgorithm(BOAlgorithmBase):
     print(f"Optimal point: {self.x_opt.flatten()}, Optimal value: {self.y_opt}")
     print()
 
-# Find the minimum of the input objective `fun`, using the minimize function from SciPy. 
-def minimizer(fun, x0, method, bounds, constraints, solver_options):
-  if method == "SLSQP":
-    if 'grad' in fun:
-      y = minimize(fun['obj'], x0, method=method, bounds=bounds, jac=fun['grad'], constraints=constraints, options=solver_options)
-    else:
-      y = minimize(fun['obj'], x0, method=method, bounds=bounds, constraints=constraints, options=solver_options)
-    success = y.success
-    if not success:
-      print(y.message)
-    xopt = y.x
-    yopt = y.fun
-  elif method == "trust-constr":
-    nonlinear_constraint = NonlinearConstraint(constraints['cons'], constraints['cl'], constraints['cu'], jac=constraints['jac'])
-    y = minimize(fun['obj'], x0, method=method, bounds=bounds, constraints=[nonlinear_constraint], options=solver_options)
-    success = y.success
-    if not success:
-      print(y.message)
-    xopt = y.x
-    yopt = y.fun
-  else:
-    ipopt_prob = IpoptProb(fun['obj'], fun['grad'], constraints, bounds, solver_options)
-    sol, info = ipopt_prob.solve(x0)
 
-    status = info.get('status', -999)
-    msg = info.get('status_msg', b'unknown error')
-    if status == 0:
-      # ipopt returns 0 as success
-      success = True
-    else:
-      warnings.warn(f"Ipopt failed to solve the problem. Status msg: {msg}")
-      success = False
-
-    yopt = info['obj_val']
-    xopt = sol
-
-  return xopt, yopt, success
+class minimizer_wrapper:
+  def __init__(self, fun, method, bounds, constraints, solver_options):
+    self.fun = fun
+    self.method = method
+    self.bounds = bounds
+    self.constraints = constraints
+    self.solver_options = solver_options
+  # Find the minimum of the input objective `fun`, using the minimize function from SciPy. 
+  def minimizer_callback(self, x0s):
+    output = []
+    for x0 in x0s:
+      if self.method == "SLSQP":
+        if 'grad' in self.fun:
+          y = minimize(self.fun['obj'], x0, method=self.method, bounds=self.bounds, jac=self.fun['grad'], constraints=self.constraints, options=self.solver_options)
+        else:
+          y = minimize(self.fun['obj'], x0, method=self.method, bounds=self.bounds, constraints=self.constraints, options=self.solver_options)
+        success = y.success
+        if not success:
+          print(y.message)
+        xopt = y.x
+        yopt = y.fun
+      elif self.method == "trust-constr":
+        nonlinear_constraint = NonlinearConstraint(self.constraints['cons'], self.constraints['cl'], self.constraints['cu'], jac=self.constraints['jac'])
+        y = minimize(self.fun['obj'], x0, method=self.method, bounds=self.bounds, constraints=[nonlinear_constraint], options=self.solver_options)
+        success = y.success
+        if not success:
+          print(y.message)
+        xopt = y.x
+        yopt = y.fun
+      else:
+        ipopt_prob = IpoptProb(self.fun['obj'], self.fun['grad'], self.constraints, self.bounds, self.solver_options)
+        sol, info = ipopt_prob.solve(x0)
+    
+        status = info.get('status', -999)
+        msg = info.get('status_msg', b'unknown error')
+        if status == 0:
+          # ipopt returns 0 as success
+          success = True
+        else:
+          warnings.warn(f"Ipopt failed to solve the problem. Status msg: {msg}")
+          success = False
+    
+        yopt = info['obj_val']
+        xopt = sol
+      output.append([xopt, yopt, success])
+    return output

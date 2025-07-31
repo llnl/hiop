@@ -19,10 +19,16 @@ class acquisition(object):
   # Abstract method to evaluate the acquisition function at x.
   def evaluate(self, x: np.ndarray) -> np.ndarray:
     raise NotImplementedError("Child class of acquisition should implement method evaluate")
+  def scalar_evaluate(self, x: np.ndarray) -> float:
+    assert len(x.shape) == 1, f"scalar_evaluate intended for use with vector inputs and not arrays of vector values x"
+    return self.evaluate(np.atleast_2d(x))[0][0]  
 
   # Abstract method to evaluate the gradient of acquisition function at x.
   def eval_g(self, x: np.ndarray) -> np.ndarray:
     raise NotImplementedError("Child class of acquisition should implement method evaluate")
+  def scalar_eval_g(self, x: np.ndarray) -> np.ndarray:
+    assert len(x.shape) == 1, f"scalar_eval_g intended for use with a single input and not an array of inputs x"
+    return np.array(self.eval_g(np.atleast_2d(x))).flatten()
 
 # A subclass of acquisition, implementing the Lower Confidence Bound (LCB) acquisition function.
 class LCBacquisition(acquisition):
