@@ -771,6 +771,12 @@ void HessianDiagPlusRowRank::solve_with_V(hiopVector& rhs_s, hiopVector& rhs_y)
          rhs.local_data(), &N, &info);
 #else
   // GPU path via MAGMA
+  // 1) create a local MAGMA queue
+  magma_queue_t queue;
+  magma_int_t dev = 0;
+  magma_getdevice(&dev);              // get current GPU device
+  magma_queue_create(dev, &queue);    // create a queue/stream
+
   magma_int_t magma_info = 0;
   magma_dsytrs_gpu(
     MagmaLower,        // use lower triangle
@@ -781,9 +787,11 @@ void HessianDiagPlusRowRank::solve_with_V(hiopVector& rhs_s, hiopVector& rhs_y)
     V_ipiv_vec_,       // pivot array (host)
     rhs.local_data(),  // device pointer to RHS
     N,                 // leading dimension of RHS
-    &magma_info,       // info return
-    magma_device_queue_); // ← queue
+    &magma_info,
+    queue);
   info = magma_info;
+
+  magma_queue_destroy(queue);         // clean up
 #endif
 
   if(info < 0) {
