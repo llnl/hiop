@@ -124,7 +124,7 @@ public:
     // LINPACK's dsidi Fortran routine (http://www.netlib.org/linpack/dsidi.f)
     // 04/08/2020 - petra: fixed the test for non-positive pivots (was only for negative pivots)
     int negEigVal = 0;
-    [[maybe_unused]] int posEigVal = 0;
+    //int posEigVal = 0;
     int nullEigVal = 0;
     double t = 0;
     double* MM = M_->local_data();
@@ -156,13 +156,15 @@ public:
         nullEigVal++;
         // break;
       } else {
-        posEigVal++;
+        //posEigVal++;
       }
     }
     // printf("(pos,null,neg)=(%d,%d,%d)\n", posEigVal, nullEigVal, negEigVal);
     nlp_->runStats.linsolv.tmInertiaComp.stop();
 
-    if(nullEigVal > 0) return -1;
+    if(nullEigVal > 0) {
+      return -1;
+    }
     return negEigVal;
   }
 

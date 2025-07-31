@@ -623,7 +623,8 @@ bool hiopAlgFilterIPMBase::update_log_barrier_params(hiopIterate& it,
       }
     }
     // compute infeasibility theta at trial point, since slacks and/or bounds are modified
-    [[maybe_unused]] const double theta_temp = resid->compute_nlp_infeasib_onenorm(*it_trial, *_c_trial, *_d_trial);
+    resid->compute_nlp_infeasib_onenorm(*it_trial, *_c_trial, *_d_trial);
+    
   }  // end of if elastic_mode_on
 
   return true;
@@ -789,9 +790,6 @@ void hiopAlgFilterIPMBase::getDualSolutions(double* zl_a, double* zu_a, double* 
   if(solver_status_ == NlpSolve_Pending) {
     nlp->log->printf(hovWarning, "getSolution: HiOp has not completed yet and solution returned may not be optimal.");
   }
-  [[maybe_unused]] hiopVector& zl = *it_curr->get_zl();
-  [[maybe_unused]] hiopVector& zu = *it_curr->get_zu();
-
   nlp->get_dual_solutions(*it_curr, zl_a, zu_a, lambda_a);
 }
 
@@ -1371,7 +1369,7 @@ hiopSolveStatus hiopAlgFilterIPMQuasiNewton::run()
       nlp->log->printf(hovWarning, "%d slacks are too small. Adjust corresponding variable slacks!\n", num_adjusted_slacks);
       nlp->adjust_bounds(*it_trial);
       // compute infeasibility theta at trial point, since bounds changed --- note that the returned value won't change
-      [[maybe_unused]] const double theta_temp = resid->compute_nlp_infeasib_onenorm(*it_trial, *_c_trial, *_d_trial);
+      resid->compute_nlp_infeasib_onenorm(*it_trial, *_c_trial, *_d_trial);
 #ifndef NDEBUG
       if(0 == use_soc) {
         // TODO: check why this assertion fails
@@ -2630,7 +2628,7 @@ hiopSolveStatus hiopAlgFilterIPMNewton::run()
                          num_adjusted_slacks);
         nlp->adjust_bounds(*it_trial);
         // compute infeasibility theta at trial point, since bounds changed --- note that the returned value won't change
-        [[maybe_unused]] const double theta_temp = resid->compute_nlp_infeasib_onenorm(*it_trial, *_c_trial, *_d_trial);
+        resid->compute_nlp_infeasib_onenorm(*it_trial, *_c_trial, *_d_trial);
 #ifndef NDEBUG
         if(0 == use_soc) {
           // TODO: check why this assertion fails
