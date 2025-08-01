@@ -26,7 +26,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 import numpy as np
 from .evaluation_manager import EvaluationManager, is_running_with_mpi
-
+import logging
 
 
 def check_required_keys(user_dict, required_keys):
@@ -95,3 +95,41 @@ class MPIEvaluator(Evaluator):
       Y = [Fi[0] for Fi in Fout]
     return Y
 
+class Logger:
+  """
+  A simple wrapper for Python's logging module that sets up a reusable logger.
+  Logs to the console using a consistent format.
+  """
+
+  def __init__(self, name='hiopbbpy', level='ERROR'):
+    # Create a logger instance with a given name        
+    self._logger = logging.getLogger(name)
+
+    # Create a console output handler
+    ch = logging.StreamHandler()
+
+    # Define the output format: timestamp, logger name, level, and message
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+    # Add the handle
+    ch.setFormatter(formatter)
+    self._logger.addHandler(ch)
+
+    # Set log level
+    self.setlevel(level)
+
+  def setlevel(self, level_str):
+    """Set the log level using a string from 'NONE', 'DEBUG', 'INFO', 'WARNING', 'ERROR' and 'CRITICAL' """
+    if isinstance(level_str, str) and level_str.strip().lower() == 'none':
+        level = logging.CRITICAL + 1  # Disable all logging
+    else:
+        # Default to INFO if string is unrecognized
+        level = getattr(logging, str(level_str).upper(), logging.INFO)
+  
+    self._logger.setLevel(level)
+    for handler in self._logger.handlers:
+      handler.setLevel(level)
+
+  def __getattr__(self, attr):
+    # Forward all unknown attributes to the underlying logger
+    return getattr(self._logger, attr)

@@ -9,12 +9,11 @@ import numpy as np
 from numpy.random import uniform
 from scipy.optimize import minimize
 from scipy.stats import qmc
-import warnings
 from ..surrogate_modeling.gp import GaussianProcess
 from .acquisition import LCBacquisition, EIacquisition
 from ..problems.problem import Problem
 from .optproblem import IpoptProb
-from ..utils.util import Evaluator
+from ..utils.util import Evaluator, Logger
 
 # A base class defining a general framework for Bayesian Optimization
 class BOAlgorithmBase:
@@ -35,6 +34,7 @@ class BOAlgorithmBase:
     self.x_opt = None             # Best observed point
     self.y_opt = None             # Best observed value
     self.idx_opt = None           # Index of the best observed value in the history
+    self.logger = Logger()        # logger
 
   # Sets the acquisition function type and batch size
   def setAcquisitionType(self, acquisition_type, batch_size=1):
@@ -99,6 +99,8 @@ class BOAlgorithm(BOAlgorithmBase):
     
     self.opt_evaluator = options.get('opt_evaluator', self.opt_evaluator)
     assert isinstance(self.opt_evaluator, Evaluator)
+
+    self.logger.setlevel(options.get('log_level', "INFO"))
 
     if options and 'opt_solver' in options:
       opt_solver = options['opt_solver']
@@ -219,17 +221,17 @@ class BOAlgorithm(BOAlgorithmBase):
         self.x_hist.append(x_train[-j].flatten())
         self.y_hist.append(y_train[-j].flatten())
       if self.batch_size == 1:
-        print(f"Sample point X:")
+        self.logger.info(f"Sample point X:")
       else:
-        print(f"Sample points X:")
+        self.logger.info(f"Sample points X:")
       for j in range(self.batch_size):
-        print(f"{x_train[-j-1]}")
+        self.logger.info(f"{x_train[-j-1]}")
       if self.batch_size == 1:
-        print(f"\nObservation Y:")
+        self.logger.info(f"Observation Y:")
       else:
-        print(f"\nObservations Y:")
+        self.logger.info(f"Observations Y:")
       for j in range(self.batch_size):
-        print(f"{y_new[-j-1]}")
+        self.logger.info(f"{y_new[-j-1]}")
 
     # Save the optimal results and all the training data
     self.idx_opt = np.argmin(self.y_hist)
@@ -238,9 +240,7 @@ class BOAlgorithm(BOAlgorithmBase):
     self.setTrainingData(x_train, y_train)
 
     print(f"\n\nOptimal at BO iteration: {self.idx_opt+1} ")
-    print(f"Optimal point: {self.x_opt.flatten()}, Optimal value: {self.y_opt}")
-    print()
-
+    print(f"Optimal point: {self.x_opt.flatten()}, Optimal value: {self.y_opt}\n\n")
 
 class minimizer_wrapper:
   def __init__(self, fun, method, bounds, constraints, solver_options):
@@ -260,7 +260,7 @@ class minimizer_wrapper:
           y = minimize(self.fun['obj'], x0, method=self.method, bounds=self.bounds, constraints=self.constraints, options=self.solver_options)
         success = y.success
         if not success:
-          print(y.message)
+          self.logger.warning(y.message)
         xopt = y.x
         yopt = y.fun
       elif self.method == "trust-constr":
@@ -268,7 +268,7 @@ class minimizer_wrapper:
         y = minimize(self.fun['obj'], x0, method=self.method, bounds=self.bounds, constraints=[nonlinear_constraint], options=self.solver_options)
         success = y.success
         if not success:
-          print(y.message)
+          self.logger.warning(y.message)
         xopt = y.x
         yopt = y.fun
       else:
@@ -281,7 +281,7 @@ class minimizer_wrapper:
           # ipopt returns 0 as success
           success = True
         else:
-          warnings.warn(f"Ipopt failed to solve the problem. Status msg: {msg}")
+          self.logger.warning(f"Ipopt failed to solve the problem. Status msg: {msg}")
           success = False
     
         yopt = info['obj_val']
