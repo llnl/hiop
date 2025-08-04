@@ -16,6 +16,7 @@ from ..problems.problem import Problem
 from .optproblem import IpoptProb
 from smt.applications.ego import Evaluator
 from .bbproblem import BnBAlgorithm
+from .minimizer import minimizer
 
 # A base class defining a general framework for Bayesian Optimization
 class BOAlgorithmBase:
@@ -66,7 +67,6 @@ class BOAlgorithmBase:
         y_opt = np.array(self.y_opt, copy=True)
         return y_opt
 
-# A subclass of BOAlgorithmBase implementing a full Bayesian Optimization workflow
 class BOAlgorithm(BOAlgorithmBase):
     def __init__(self, prob:Problem, gpsurrogate:GaussianProcess, xtrain, ytrain,
                  user_grad = None,
@@ -99,15 +99,15 @@ class BOAlgorithm(BOAlgorithmBase):
 
         if options and 'opt_solver' in options:
             opt_solver = options['opt_solver']
-            assert opt_solver in ["SLSQP", "trust-constr", "IPOPT"], f"Invalid opt_solver: {opt_solver}"
+            assert opt_solver in ["SLSQP", "trust-constr", "IPOPT"], f"Invalid opt_solver: {opt_solver}"         
         else:
             opt_solver = "SLSQP"
 
         if isinstance(prob.constraints, dict):
             assert opt_solver in ["trust-constr", "IPOPT"], f"Invalid opt_solver: {opt_solver} while constraints are defined as a dict"
         elif isinstance(prob.constraints, list):
-            assert opt_solver in ["SLSQP", "IPOPT"], f"Invalid opt_solver: {opt_solver} while constraints are defined as a list of dict"
-
+            assert opt_solver in ["SLSQP", "IPOPT"], f"Invalid opt_solver: {opt_solver} while constraints are defined as a list of dict"   
+                
         self.set_method(opt_solver)
 
         if user_grad:
@@ -139,37 +139,27 @@ class BOAlgorithm(BOAlgorithmBase):
             acqf_grad_callback = lambda x: np.array(acqf.eval_g(np.atleast_2d(x)))
             acqf_callback['grad'] = acqf_grad_callback
 
-        if self.acqf_method == "multi_start":
-        
-            x_all = []
-            y_all = []
-            for ii in range(self.n_start):
-                success = False
-                # Generate random starting point if x0 is not provided
-                if self.prob is not None:
-                    x0 = self.prob.sample(1)[0]
-                else:
-                    x0 = np.array([uniform(b[0], b[1]) for b in self.bounds])
+        x_all = []
+        y_all = []
+        for ii in range(self.n_start):
+            success = False
+            # Generate random starting point if x0 is not provided
+            if x0 is None and self.prob is not None:
+                x0 = self.prob.sample(1)[0]
+            else:
+                x0 = np.array([uniform(b[0], b[1]) for b in self.bounds])
+            xopt, yout, success = self.acqf_minimizer_callback(acqf_callback, x0)
 
-                xopt, yout, success = self.acqf_minimizer_callback(acqf_callback, x0)
+            if success:
+                x_all.append(xopt)
+                y_all.append(yout)
 
-                if success:
-                    x_all.append(xopt)
-                    y_all.append(yout)
+        if not x_all:
+            raise RuntimeError("Optimization failed for all initial points — no solution found.")
 
-            if not x_all:
-                raise RuntimeError("Optimization failed for all initial points — no solution found.")
+        best_xopt = x_all[np.argmin(np.array(y_all))]
 
-            best_xopt = x_all[np.argmin(np.array(y_all))]
-
-            return best_xopt
-        if self.acqf_method == "bnb":
-            l_init = np.array([b[0] for b in self.bounds])
-            u_init = np.array([b[1] for b in self.bounds])
-            bnb = BnBAlgorithm()
-            best_l, best_u, _ = bnb.optimize(x_train, y_train, l_init, u_init)
-            x_best = 0.5 * (best_l + best_u)
-            return x_best
+        return best_xopt
     
     def _get_virtual_point(self, x):
         if self.batch_type not in ["CLmin", "KB", "KBUB", "KBLB", "KBRand"]:
@@ -229,8 +219,6 @@ class BOAlgorithm(BOAlgorithmBase):
           
           y_new = self.evaluator.run(self.prob.evaluate, x_train[-self.batch_size:])
           y_train = np.vstack([y_train, y_new])
-          #print(f'x_new = {x_new}')
-          #print(f'y_new = {y_new}')
           
           # Save the new sample points and objective evaluations
           for j in range(1, self.batch_size+1):
@@ -257,7 +245,6 @@ class BOAlgorithm(BOAlgorithmBase):
       print(f"Optimal point: {self.x_opt.flatten()}, Optimal value: {self.y_opt}")
       print()
 
-# Find the minimum of the input objective `fun`, using the minimize function from SciPy. 
 def minimizer(fun, x0, method, bounds, constraints, solver_options):
     if method == "SLSQP":
         if 'grad' in fun:
@@ -279,6 +266,7 @@ def minimizer(fun, x0, method, bounds, constraints, solver_options):
         yopt = y.fun
     else:
         ipopt_prob = IpoptProb(fun['obj'], fun['grad'], constraints, bounds, solver_options)
+        print(x0)
         sol, info = ipopt_prob.solve(x0)
 
         status = info.get('status', -999)

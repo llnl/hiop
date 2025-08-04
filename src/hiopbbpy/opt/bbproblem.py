@@ -11,7 +11,8 @@ import cvxpy as cp
 from scipy.stats import norm
 from scipy.stats import uniform
 from hiopbbpy.opt.acquisition import EIacquisition, LCBacquisition
-from hiopbbpy.opt.boalgorithm import minimizer
+from ..surrogate_modeling.gp import GaussianProcess
+from hiopbbpy.opt.minimizer import minimizer
 
 # A base class defining a general framework for Branch and Bound Optimization for Acquisition Functions
 class BnBAlgorithmBase:
@@ -167,8 +168,9 @@ class BnBNode:
         return self.aq_U > other.aq_U
 
 class BnBAlgorithm(BnBAlgorithmBase):
-    def __init__(self):
+    def __init__(self, gpsurrogate:GaussianProcess):
         super().__init__()
+        self.gpsurrogate = gpsurrogate  # Optional GP surrogate
 
     def _branch(self, l, u):
         idx = np.argmax(u - l)
