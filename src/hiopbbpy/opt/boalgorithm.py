@@ -72,26 +72,31 @@ class BOAlgorithm(BOAlgorithmBase):
                user_grad = None,
                options = {}):
     super().__init__()
-    
     assert isinstance(gpsurrogate, GaussianProcess)
-    
+
     self.setTrainingData(xtrain, ytrain)
     self.prob = prob
     self.gpsurrogate = gpsurrogate
     self.bounds = self.gpsurrogate.get_bounds()
     self.fun_grad = None
 
+    logger_level = options.get('log_level', "INFO")
+    self.logger.setlevel(logger_level)
+    self.logger.info(f"Problem name: {prob.name}")
+
     self.bo_maxiter = options.get('bo_maxiter', self.bo_maxiter)
     assert self.bo_maxiter > 0, f"Invalid bo_maxiter: {self.bo_maxiter }"
-    
-    self.solver_options = {"maxiter": 200}
-    self.solver_options = options.get('solver_options', self.solver_options)
+    self.logger.info(f"bo_maxiter: {self.bo_maxiter}")
 
     acquisition_type = options.get('acquisition_type', "LCB")
     assert acquisition_type in ["LCB", "EI"], f"Invalid acquisition_type: {acquisition_type}"
+    self.logger.info(f"acquisition_type: {acquisition_type}")
+
     batch_size = options.get('batch_size', 1)
     assert isinstance(batch_size, int), f"batch_size {batch_size} not an integer"
     assert batch_size > 0, f"batch_size {batch_size} is not strictly positive"
+    self.logger.info(f"batch_size: {batch_size}")
+
     self.setAcquisitionType(acquisition_type, batch_size)
 
     self.obj_evaluator = options.get('obj_evaluator', self.obj_evaluator)
@@ -99,8 +104,6 @@ class BOAlgorithm(BOAlgorithmBase):
     
     self.opt_evaluator = options.get('opt_evaluator', self.opt_evaluator)
     assert isinstance(self.opt_evaluator, Evaluator)
-
-    self.logger.setlevel(options.get('log_level', "INFO"))
 
     if options and 'opt_solver' in options:
       opt_solver = options['opt_solver']
@@ -112,6 +115,12 @@ class BOAlgorithm(BOAlgorithmBase):
       assert opt_solver in ["trust-constr", "IPOPT"], f"Invalid opt_solver: {opt_solver} while constraints are defined as a dict"
     elif isinstance(prob.constraints, list):
       assert opt_solver in ["SLSQP", "IPOPT"], f"Invalid opt_solver: {opt_solver} while constraints are defined as a list of dict"
+    self.logger.info(f"internal optimization solver: {opt_solver}")
+
+    self.solver_options = {"maxiter": 200}
+    self.solver_options = options.get('solver_options', self.solver_options)
+    self.logger.info(f"internal optimization solver options: {self.solver_options}")
+    self.logger.info(f"logger level: {logger_level}")
 
     self.set_method(opt_solver)
 
@@ -147,11 +156,14 @@ class BOAlgorithm(BOAlgorithmBase):
     opt_output = self.opt_evaluator.run(acqf_minimizer.minimizer_callback, x0_pts)
     for ii in range(self.n_start):
       success = False
-      xopt, yopt, success = opt_output[ii]
+      xopt, yopt, success, msg = opt_output[ii]
       if success:
         x_all.append(xopt)
-        y_all.append(yopt) 
+        y_all.append(yopt)
+      else:
+        self.logger.warning(msg)
     if not x_all:
+      self.logger.error(msg)
       raise RuntimeError("Optimization failed for all initial points — no solution found.")
 
     best_xopt = x_all[np.argmin(np.array(y_all))]
@@ -192,8 +204,8 @@ class BOAlgorithm(BOAlgorithmBase):
     self.y_hist = []
 
     for i in range(self.bo_maxiter):
-      print(f"*****************************")
-      print(f"Iteration {i+1}/{self.bo_maxiter}")
+      self.logger.critical(f"*****************************")
+      self.logger.critical(f"Iteration {i+1}/{self.bo_maxiter}")
 
       y_train_virtual = y_train.copy() # old training + batch_size num of virtual points
       for j in range(self.batch_size):
@@ -220,18 +232,20 @@ class BOAlgorithm(BOAlgorithmBase):
       for j in range(1, self.batch_size+1):
         self.x_hist.append(x_train[-j].flatten())
         self.y_hist.append(y_train[-j].flatten())
+
       if self.batch_size == 1:
-        self.logger.info(f"Sample point X:")
+        self.logger.iterations(f"Sample point X:")
       else:
-        self.logger.info(f"Sample points X:")
+        self.logger.iterations(f"Sample points X:")
       for j in range(self.batch_size):
-        self.logger.info(f"{x_train[-j-1]}")
+        self.logger.iterations(f"  {x_train[-j-1]}")
+
       if self.batch_size == 1:
-        self.logger.info(f"Observation Y:")
+        self.logger.scalars(f"Observation Y:")
       else:
-        self.logger.info(f"Observations Y:")
+        self.logger.scalars(f"Observations Y:")
       for j in range(self.batch_size):
-        self.logger.info(f"{y_new[-j-1]}")
+        self.logger.scalars(f"  {y_new[-j-1]}")
 
     # Save the optimal results and all the training data
     self.idx_opt = np.argmin(self.y_hist)
@@ -239,8 +253,9 @@ class BOAlgorithm(BOAlgorithmBase):
     self.y_opt = self.y_hist[self.idx_opt]
     self.setTrainingData(x_train, y_train)
 
-    print(f"\n\nOptimal at BO iteration: {self.idx_opt+1} ")
-    print(f"Optimal point: {self.x_opt.flatten()}, Optimal value: {self.y_opt}\n\n")
+    self.logger.critical(f"")
+    self.logger.critical(f"Optimal at BO iteration: {self.idx_opt//self.batch_size+1} ")
+    self.logger.critical(f"Optimal point: {self.x_opt.flatten()}, Optimal value: {self.y_opt}\n\n")
 
 class minimizer_wrapper:
   def __init__(self, fun, method, bounds, constraints, solver_options):
@@ -260,7 +275,7 @@ class minimizer_wrapper:
           y = minimize(self.fun['obj'], x0, method=self.method, bounds=self.bounds, constraints=self.constraints, options=self.solver_options)
         success = y.success
         if not success:
-          self.logger.warning(y.message)
+          msg = y.message
         xopt = y.x
         yopt = y.fun
       elif self.method == "trust-constr":
@@ -268,7 +283,7 @@ class minimizer_wrapper:
         y = minimize(self.fun['obj'], x0, method=self.method, bounds=self.bounds, constraints=[nonlinear_constraint], options=self.solver_options)
         success = y.success
         if not success:
-          self.logger.warning(y.message)
+          msg = y.message
         xopt = y.x
         yopt = y.fun
       else:
@@ -281,10 +296,10 @@ class minimizer_wrapper:
           # ipopt returns 0 as success
           success = True
         else:
-          self.logger.warning(f"Ipopt failed to solve the problem. Status msg: {msg}")
+          msg = f"Ipopt failed to solve the problem. Status msg: {msg}"
           success = False
     
         yopt = info['obj_val']
         xopt = sol
-      output.append([xopt, yopt, success])
+      output.append([xopt, yopt, success, msg])
     return output

@@ -80,7 +80,7 @@ if __name__ == "__main__":
   for prob_type in prob_type_l:
     print()
     # ----- evaluator
-    obj_evaluator = MPIEvaluator() 
+    obj_evaluator = MPIEvaluator()
     opt_evaluator = MPIEvaluator(function_mode=False)
     if prob_type == "LpNorm":
       problem = LpNormProblem(nx, xlimits)
@@ -89,9 +89,6 @@ if __name__ == "__main__":
     problem.set_constraints(user_constraint_dict) #use user_constraint_dict or user_constraint_list
    
     for acq_type in acq_type_l:
-      print("Problem name: ", problem.name)
-      print("Acquisition type: ", acq_type)
-   
       ### initial training set
       x_train = problem.sample(n_samples)
       y_train = obj_evaluator.run(problem.evaluate, x_train)
@@ -102,10 +99,10 @@ if __name__ == "__main__":
     
       options = {
         'acquisition_type': acq_type,
-        'log_level': 'none',
-        'bo_maxiter': 10,
+        'log_level': 'info',
+        'bo_maxiter': 5,
         'opt_solver': 'IPOPT',  #"SLSQP" "IPOPT" "trust-constr"
-        'batch_size': 3,
+        'batch_size': 2,
         'solver_options': {
            'max_iter': 200,
            'print_level': 1
@@ -113,7 +110,7 @@ if __name__ == "__main__":
         'obj_evaluator': obj_evaluator,
         'opt_evaluator': opt_evaluator
       }
-    
+
       # Instantiate and run Bayesian Optimization
       bo = BOAlgorithm(problem, gp_model, x_train, y_train, options = options) #EI or LCB
       bo.optimize()

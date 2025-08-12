@@ -99,36 +99,53 @@ class Logger:
   """
   A simple wrapper for Python's logging module that sets up a reusable logger.
   Logs to the console using a consistent format.
+
+  Set the log level as a string from 'DEBUG', 'INFO', 'SCALARS', 'ITERATION', 'WARNING', 'ERROR', 'CRITICAL' and 'NONE'
   """
 
-  def __init__(self, name='hiopbbpy', level='ERROR'):
+  def __init__(self, name='hiopbbpy'):
+    # ---- Custom levels ----
+    SCALARS = logging.INFO + 5    # between INFO(20) and WARNING(30)
+    ITERATION = logging.INFO + 1  # between INFO(20) and WARNING(30)
+    NONE = logging.CRITICAL + 1
+
+    logging.addLevelName(SCALARS, "SCALARS")
+    logging.addLevelName(ITERATION,   "ITERATION")
+    logging.addLevelName(NONE,   "NONE")
+
+    # Register names on the logging module so getattr works
+    setattr(logging, "ITERATION", ITERATION)
+    setattr(logging, "SCALARS", SCALARS)
+    setattr(logging, "NONE", NONE)
+
     # Create a logger instance with a given name        
     self._logger = logging.getLogger(name)
 
     # Create a console output handler
     ch = logging.StreamHandler()
 
-    # Define the output format: timestamp, logger name, level, and message
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    # Define the output format: logger name, and message
+    formatter = logging.Formatter('%(name)s %(message)s')
 
     # Add the handle
     ch.setFormatter(formatter)
     self._logger.addHandler(ch)
 
-    # Set log level
-    self.setlevel(level)
-
   def setlevel(self, level_str):
-    """Set the log level using a string from 'NONE', 'DEBUG', 'INFO', 'WARNING', 'ERROR' and 'CRITICAL' """
-    if isinstance(level_str, str) and level_str.strip().lower() == 'none':
-        level = logging.CRITICAL + 1  # Disable all logging
-    else:
-        # Default to INFO if string is unrecognized
-        level = getattr(logging, str(level_str).upper(), logging.INFO)
+    level = getattr(logging, str(level_str).upper(), logging.INFO)
   
     self._logger.setLevel(level)
     for handler in self._logger.handlers:
       handler.setLevel(level)
+
+  # ---- Convenience methods for custom levels ----
+  def scalars(self, msg, *args, **kwargs):
+    if self._logger.isEnabledFor(logging.SCALARS):
+      self._logger._log(logging.SCALARS, msg, args, **kwargs)
+
+  def iterations(self, msg, *args, **kwargs):
+    if self._logger.isEnabledFor(logging.ITERATION):
+      self._logger._log(logging.ITERATION, msg, args, **kwargs)
 
   def __getattr__(self, attr):
     # Forward all unknown attributes to the underlying logger
