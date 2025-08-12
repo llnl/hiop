@@ -267,6 +267,7 @@ class minimizer_wrapper:
   # Find the minimum of the input objective `fun`, using the minimize function from SciPy. 
   def minimizer_callback(self, x0s):
     output = []
+    msg = ""
     for x0 in x0s:
       if self.method == "SLSQP":
         if 'grad' in self.fun:

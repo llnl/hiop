@@ -100,9 +100,9 @@ if __name__ == "__main__":
       options = {
         'acquisition_type': acq_type,
         'log_level': 'info',
-        'bo_maxiter': 5,
+        'bo_maxiter': 10,
         'opt_solver': 'IPOPT',  #"SLSQP" "IPOPT" "trust-constr"
-        'batch_size': 2,
+        'batch_size': 3,
         'solver_options': {
            'max_iter': 200,
            'print_level': 1
