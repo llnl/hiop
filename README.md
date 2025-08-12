@@ -139,7 +139,7 @@ HiOp has been developed under the financial support of:
 
 # Contributors
 
-HiOp is written by Cosmin G. Petra (petra1@llnl.gov), Nai-Yuan Chiang (chiang7@llnl.gov), Jingyi "Frank" Wang (wang125@llnl.gov), and Tucker Hartland (hartland1@llnl.gov) from LLNL and has received important contributions from Asher Mancinelli (PNNL), Slaven Peles (ORNL), Cameron Rutherford (PNNL), Jake K. Ryan (PNNL), and Michel Schanen (ANL).
+HiOp is written by Cosmin G. Petra (petra1@llnl.gov), Nai-Yuan Chiang (chiang7@llnl.gov), Jingyi "Frank" Wang (wang125@llnl.gov), and Tucker Hartland (hartland1@llnl.gov) from LLNL and has received important contributions from Weslley da Silva Pereira (NREL), Asher Mancinelli (PNNL), Slaven Peles (ORNL), Cameron Rutherford (PNNL), Jake K. Ryan (PNNL), and Michel Schanen (ANL).
 
 # Copyright
 
