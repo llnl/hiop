@@ -15,7 +15,7 @@ from .acquisition import LCBacquisition, EIacquisition
 from ..problems.problem import Problem
 from .optproblem import IpoptProb
 from smt.applications.ego import Evaluator
-from .bbproblem import BnBAlgorithm
+from .bnb.bbproblem import BnBAlgorithm
 from .minimizer import minimizer
 
 # A base class defining a general framework for Bayesian Optimization
