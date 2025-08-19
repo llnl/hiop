@@ -134,6 +134,20 @@ HiOpBBpy can be built via pip. A standard build can be done by invoking the foll
 $> pip install .
 ```
 
+## Usage
+
+Various example scripts are contained in src/Drivers/hiopbbpy/ that can be run directly from said directory, e.g.,
+
+```shell 
+$> python BODriverEx.py
+```
+
+or to run the same script but utilizing MPI parallelism with 4 workers
+
+```shell 
+$> env MPI4PY_FUTURES_MAX_WORKERS=4 mpiexec -n 1 python BODriverEx.py
+```
+
 ## Dependencies
 
 HiOpBBpy dependencies are listed in the pyproject.toml file.
