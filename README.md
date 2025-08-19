@@ -139,13 +139,13 @@ $> pip install .
 Various example scripts are contained in src/Drivers/hiopbbpy/ that can be run directly from said directory, e.g.,
 
 ```shell 
-$> python BODriverEx.py
+$> python BODriverEX.py
 ```
 
 or to run the same script but utilizing MPI parallelism with 4 workers
 
 ```shell 
-$> env MPI4PY_FUTURES_MAX_WORKERS=4 mpiexec -n 1 python BODriverEx.py
+$> env MPI4PY_FUTURES_MAX_WORKERS=4 mpiexec -n 1 python BODriverEX.py
 ```
 
 ## Dependencies
