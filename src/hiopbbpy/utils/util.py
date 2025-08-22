@@ -105,8 +105,8 @@ class Logger:
 
   def __init__(self, name='hiopbbpy'):
     # ---- Custom levels ----
-    SCALARS = logging.INFO + 5    # between INFO(20) and WARNING(30)
-    ITERATION = logging.INFO + 1  # between INFO(20) and WARNING(30)
+    SCALARS = logging.INFO + 1    # between INFO(20) and WARNING(30)
+    ITERATION = logging.INFO + 5  # between INFO(20) and WARNING(30)
     NONE = logging.CRITICAL + 1
 
     logging.addLevelName(SCALARS, "SCALARS")
