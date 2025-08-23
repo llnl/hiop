@@ -132,7 +132,7 @@ class BOAlgorithm(BOAlgorithmBase):
     self.logger.info(f"Internal optimization solver: {opt_solver}")
     self.logger.info(f"Internal optimization solver options: {self.solver_options}")
     self.logger.info(f"Initial training set: {xtrain.shape[0]} samples, {xtrain.shape[1]} dimensions")
-    self.logger.info(f"Bounds: {self.bounds}")
+    self.logger.debug(f"Bounds on optimization variable: {self.bounds}")
     self.logger.info(f"Logger level: {logger_level}")
 
   # Method to train the GP model
@@ -195,7 +195,7 @@ class BOAlgorithm(BOAlgorithmBase):
     self.logger.scalars(
         f"  Acquisition values: min = {y_min:.4e}, mean = {y_mean:.4e}, max = {y_max:.4e}"
     )
-    self.logger.debug(f"Chosen candidate: {best_xopt}")
+    self.logger.debug(f"Estimated optimal point x: {best_xopt}")
 
     return best_xopt
   
@@ -256,6 +256,11 @@ class BOAlgorithm(BOAlgorithmBase):
 
           # Update training set with the virtual point
           y_train_virtual = np.vstack([y_train_virtual, y_virtual])
+
+        mean_val = self.gpsurrogate.mean(np.array([x_new])).item()
+        var_val = self.gpsurrogate.variance(np.array([x_new])).item()
+        self.logger.scalars(f"  Acqusition mean at new sample x: {mean_val}")
+        self.logger.scalars(f"  Acqusition var at new sample x: {var_val}")
       
       y_new = self.obj_evaluator.run(self.prob.evaluate, x_train[-self.batch_size:])
       y_new = np.array(y_new)
@@ -264,7 +269,7 @@ class BOAlgorithm(BOAlgorithmBase):
       self.logger.scalars(f"Training set size is now {x_train.shape[0]}")
       self.logger.iterations(f"Current best objective: {np.min(y_train):.4e} "
                              f"(previous best: {prev_best:.4e})")
-      self.logger.scalars(f"Improvement: {prev_best - np.min(y_train):.4e}")
+      self.logger.scalars(f"Objective function improvement: {prev_best - np.min(y_train):.4e}")
 
       # Save the new sample points and objective evaluations
       for j in range(1, self.batch_size+1):
