@@ -345,9 +345,13 @@ protected:
 
   /* Flag to tell if this is a FR problem */
   bool within_FR_;
-
+ 
   hiopPDPerturbation* pd_perturb_;
   hiopFactAcceptor* fact_acceptor_;
+
+  /// Flag that tracks whether the warning "Unusually large bound dual variables" has been issued.
+  bool warn_large_bnd_duals_;
+
 };
 
 class hiopAlgFilterIPMQuasiNewton : public hiopAlgFilterIPMBase
