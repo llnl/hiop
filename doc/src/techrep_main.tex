@@ -119,6 +119,7 @@ backgroundcolor=\color{lbcolor},
 \algnewcommand\Output{\item[\algorithmicoutput]}
 
 \newcommand{\Hi}{\texttt{HiOp}\xspace}
+\newcommand{\Hibbpy}{\texttt{HiOpBBpy}\xspace}
 \newcommand{\ignore}[1]{}
 
 \begin{document}
@@ -232,13 +233,14 @@ This work performed under the auspices of the U.S. Department of Energy by Lawre
 
 \section{Introduction}
 
-This document describes the \Hi suite of HPC optimization solvers for some large-scale nonconvex nonlinear programming problems (NLPs). Four main classes of optimization problems are supported by \Hi. 
+This document describes the \Hi suite of HPC optimization solvers for some large-scale nonconvex nonlinear programming problems (NLPs). Five main classes of optimization problems are supported by \Hi. 
 \begin{itemize}
   \item \texttt{HiOp-Dense} supports NLPs with billions of variables with or without bounds but only limited number of
   constraints. This solver is a memory-distributed, MPI-based quasi-Newton interior-point solver using limited-memory approximations for the Hessians.
   \item \texttt{HiOp-Sparse} supports general sparse and large-scale NLPs sparse second-order derivatives. This functionality is similar to that of the state-of-the-art Ipopt~\cite{waecther_05_ipopt0}, but with additional features such as the inertia-free approach~\cite{Chiang2016}. The solver offers GPU acceleration via Nvidia CUDA Toolkit or AMD HIP Toolkit, and requires RAJA portability abstraction layer when GPU acceleration is enabled.
   \item \texttt{HiOp-MDS} supports NLPs that have dense and sparse blocks, for which a ``Newton'' interior-point solver is available together with a specialized, so-called mixed dense-sparse (MDS) linear algebra capable of achieving good performance on GPUs via Magma dense linear solver.
   \item \texttt{HiOp-PriDec} is an asynchronous memory-distributed optimization solver for two-stage stochastic programming problems. It implements a master-worker asynchronous scheduler based on MPI to improve load balancing. GPU acceleration can be achieved in solving each subproblem by \texttt{HiOp-MDS} or \texttt{HiOp-Sparse}.
+  \item \texttt{HiOpBBpy-BOAlgorithm} is a Bayesian optimization solver for low-dimensional expensive black-box functions subject to constraints. This solver makes use of batched Bayesian optimization methods and utilizes a master-worker scheduler in to evaluate the objective on the point batch. 
 \end{itemize}
 
 This document includes instructions on how to obtain and
@@ -971,9 +973,25 @@ In addition, a shared dynamic load library can be also built by using \texttt{HI
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% HiOpBBpy
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\input{sections/hiopbbpy.tex}
+
+ 
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% Solver options
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \input{sections/solver_options.tex}
+
+
+
+
+
+
+
+
+
 
 %\input{old_stuff}
 

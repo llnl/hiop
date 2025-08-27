@@ -21,12 +21,6 @@ from hiopbbpy.opt import BOAlgorithm
 from hiopbbpy.problems import BraninProblem, LpNormProblem
 from hiopbbpy.utils import MPIEvaluator
 
-# Get user input for the number of repetitions from command-line arguments
-if len(sys.argv) != 2 or int(sys.argv[1]) < 0:
-    num_repeat = 1
-else:
-    num_repeat = int(sys.argv[1])
-
 ### parameters
 n_samples = 5  # number of the initial samples to train GP
 theta = 1.e-2  # hyperparameter for GP kernel

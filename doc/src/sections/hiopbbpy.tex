@@ -1,0 +1,26 @@
+%!TEX root = ../techrep_main.tex
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% HiOpBBpy
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{HiOpBBpy}
+
+\Hi offers a Bayesian optimization \Hibbpy solver to determine approximate global optimizers of black-box functions. Here, we detail how to install and utilize the package.
+
+\subsection{HiOpBBpy installation}
+
+\Hibbpy depends on the surrogate modeling toolkit (smt) and cyipopt which is a python wrapper of ipopt. In order to expose ipopt to cyipopt one can export the \verb~IPOPT_PATH~ and 
+
+\begin{verbatim}
+> export PKG_CONFIG_PATH=$PKG_CONFIG_PATH:$IPOPT_PATH/lib/pkgconfig
+> export PATH=$PATH:$IPOPT_PATH/bin
+\end{verbatim}
+
+To then install \Hibbpy from the home directory of \Hi:
+\begin{verbatim}
+> pip install .
+\end{verbatim}
+The ipopt libaries are then exposed:
+\begin{verbatim}
+> export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$IPOPT_PATH/lib
+\end{verbatim}
