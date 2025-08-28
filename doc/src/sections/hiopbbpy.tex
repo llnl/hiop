@@ -90,3 +90,62 @@ if __name__ == "__main__":
   bo = BOAlgorithm(problem, gp_model, x_train, y_train, options = options)
   bo.optimize()
 \end{lstlisting}
+
+\subsection{Parallel runs}
+
+\Hibbpy offers two means to utilize parallelism in the context of Bayesian optimization. The first means is the parallel evaluation of the black-box objective function on a batch of points that arises in batched Bayesian optimization methods as well as in the generation of initial training points to train the Gaussian process surrogate on. The second means is the parallel evaluation of an optimization algorithm, which converges to locally optimal points, on a batch of random starting points in order to estimate a global optima. Both are included below, the former being \verb~obj_evaluator~ and the latter being \verb~opt_evaluator~.
+
+\begin{lstlisting}
+import numpy as np
+from hiopbbpy.surrogate_modeling import smtKRG
+from hiopbbpy.opt import BOAlgorithm
+from hiopbbpy.utils import MPIEvaluator
+
+### parameters
+n_samples = 5  # number of the initial samples to train GP
+theta = 1.e-2  # hyperparameter for GP kernel
+nx = 2         # dimension of the optimization variable
+xlower = -5.0
+xupper =  5.0
+xlimits = np.array([[xlower, xupper]] * nx) # bounds on optimization variable
+
+if __name__ == "__main__":
+  problem = LpNormProblem(nx, xlimits)
+  """
+  obj_evaluator -- mpi evaluator for batch
+  evaluation of the objective
+  opt_evaluator -- mpi evaluator for multi-point
+  local search used for determining
+  acquisition function global optima
+  """
+  obj_evaluator = MPIEvaluator()
+  opt_evaluator = MPIEvaluator(function_mode=False)
+
+  ### initial training set
+  x_train = problem.sample(n_samples)
+  y_train = obj_evaluator.run(problem.evaluate, x_train)
+
+  ### Define the GP surrogate model
+  gp_model = smtKRG(theta, xlimits, nx)
+  gp_model.train(x_train, y_train)
+
+  acq_type = "EI" # EI or LCB
+  options = {
+    'acquisition_type': acq_type,
+    'log_level': 'info',
+    'bo_maxiter': 10,
+    'batch_size': 4,
+    'obj_evaluator': obj_evaluator,
+    'opt_evaluator': opt_evaluator
+  }
+  # Instantiate and run Bayesian Optimization
+  bo = BOAlgorithm(problem, gp_model, x_train, y_train, options = options)
+  bo.optimize()
+\end{lstlisting}
+
+To run this python script \verb~BODriver.py~, in a python environment in which \verb~mpi4py~, and \Hibbpy are installed do the following:
+
+
+\begin{verbatim}
+> env MPI4PY_FUTURES_MAX_WORKERS=4 mpirun -np 1 python BODriver.py 
+\end{verbatim}
