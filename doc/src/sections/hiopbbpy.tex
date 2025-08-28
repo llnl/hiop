@@ -30,7 +30,7 @@ The ipopt libaries are then exposed:
 > export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$IPOPT_PATH/lib
 \end{verbatim}
 
-\subsection{The interface}
+\subsection{The Python interface}
 
 An objective function is defined as a class that inherits from \verb~Problem~ and has a required \verb~_evaluate~ method such as
 
@@ -60,7 +60,6 @@ Then to run the \Hibbpy Bayesian optimization algorithm one has the following
 import numpy as np
 from hiopbbpy.surrogate_modeling import smtKRG
 from hiopbbpy.opt import BOAlgorithm
-from hiopbbpy.problems import LpNormProblem
 
 ### parameters
 n_samples = 5  # number of the initial samples to train GP
