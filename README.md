@@ -148,6 +148,8 @@ or to run the same script but utilizing MPI parallelism with 4 workers
 $> env MPI4PY_FUTURES_MAX_WORKERS=4 mpiexec -n 1 python BODriverEX.py
 ```
 
+Further details on optional dependencies and parallel examples can be found in the HiOp user manual.
+
 ## Dependencies
 
 HiOpBBpy dependencies are listed in the pyproject.toml file.
