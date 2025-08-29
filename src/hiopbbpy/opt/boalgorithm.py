@@ -265,15 +265,14 @@ class BOAlgorithm(BOAlgorithmBase):
       y_new = np.array(y_new)
       y_train = np.vstack([y_train, y_new])
 
-      self.logger.iterations(f"Best objective found in this iteration: {np.min(y_new):.4e} ")
-
       min_y_new = np.min(y_new)
       if min_y_new < prev_best:
         min_in_init_samples = False
         curr_best_y = min_y_new
       else:
         curr_best_y = prev_best
-        
+
+      self.logger.iterations(f"Best objective found in this iteration: {min_y_new:.4e} ")
       self.logger.scalars(f"Training set size is now {x_train.shape[0]}")
       if min_in_init_samples == True:
         self.logger.iterations(f"Current best objective (from initial samples): {curr_best_y:.4e} "
@@ -311,10 +310,14 @@ class BOAlgorithm(BOAlgorithmBase):
 
     self.logger.critical("===================================")
     self.logger.critical("Bayesian Optimization completed")
-    self.logger.critical(f"Total evaluations: {len(self.y_hist)}")
-    self.logger.critical(f"Optimal at BO iteration: {self.idx_opt//self.batch_size+1} ")
+    self.logger.critical(f"Total evaluations for initial samples: {len(self.ytrain)-len(self.y_hist)}")
+    self.logger.critical(f"Total evaluations for BO iterations: {len(self.y_hist)}")
+    if min_in_init_samples == True:
+      self.logger.critical(f"Optimal at inital points.")
+    else:
+      self.logger.critical(f"Optimal at BO iteration: {self.idx_opt//self.batch_size+1} ")
     self.logger.debug(f"Best point: {self.x_opt.flatten()}")
-    self.logger.critical(f"Best value: {self.y_opt}")
+    self.logger.critical(f"Best value: {self.y_opt[0]}")
     self.logger.critical("===================================")
 
 
