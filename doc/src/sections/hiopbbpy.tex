@@ -53,7 +53,7 @@ class LpNormProblem(Problem):
 \end{lstlisting} 
 
 
-Then to run the \Hibbpy Bayesian optimization algorithm one has the following
+One example to the \Hibbpy Bayesian optimization algorithm is the following:
 
 
 \begin{lstlisting}
@@ -93,7 +93,7 @@ if __name__ == "__main__":
 
 \subsection{Parallel runs}
 
-\Hibbpy offers two means to utilize parallelism in the context of Bayesian optimization. The first means is the parallel evaluation of the black-box objective function on a batch of points that arises in batched Bayesian optimization methods as well as in the generation of initial training points to train the Gaussian process surrogate on. The second means is the parallel evaluation of an optimization algorithm, which converges to locally optimal points, on a batch of random starting points in order to estimate a global optima. Both are included below, the former being \verb~obj_evaluator~ and the latter being \verb~opt_evaluator~.
+\Hibbpy offers two approaches to utilize parallelism in the context of Bayesian optimization. The first approach is the parallel evaluation of the black-box objective function on a batch of points that arises in batched Bayesian optimization methods as well as in the generation of initial training points to train the Gaussian process surrogate on. The second approach is the parallel evaluation of an optimization algorithm, which converges to locally optimal points, on a batch of random starting points in order to estimate a global optima. Both are demonstrated in the example below:
 
 \begin{lstlisting}
 import numpy as np
@@ -117,6 +117,9 @@ if __name__ == "__main__":
   opt_evaluator -- mpi evaluator for multi-point
   local search used for determining
   acquisition function global optima
+  function_mode is set to False given that
+  the optimizer callback returns more than
+  a single scalar value
   """
   obj_evaluator = MPIEvaluator()
   opt_evaluator = MPIEvaluator(function_mode=False)
