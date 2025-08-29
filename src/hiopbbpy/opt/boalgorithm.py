@@ -227,12 +227,12 @@ class BOAlgorithm(BOAlgorithmBase):
   def optimize(self):
     x_train = self.xtrain
     y_train = self.ytrain
-    
-    n_init_sample = np.size(x_train, 0)
+    self.logger.iterations(f"Best objective from {np.size(x_train, 0)} initial samples: {np.min(y_train):.4e} ")
 
     self.x_hist = []
     self.y_hist = []
-
+    
+    min_in_init_samples = True
     for i in range(self.bo_maxiter):
       self.logger.critical(f"*****************************")
       self.logger.critical(f"Iteration {i+1}/{self.bo_maxiter}")
@@ -258,18 +258,31 @@ class BOAlgorithm(BOAlgorithmBase):
           y_train_virtual = np.vstack([y_train_virtual, y_virtual])
 
         mean_val = self.gpsurrogate.mean(np.array([x_new])).item()
-        var_val = self.gpsurrogate.variance(np.array([x_new])).item()
-        self.logger.scalars(f"  Acqusition mean at new sample x: {mean_val}")
-        self.logger.scalars(f"  Acqusition var at new sample x: {var_val}")
+        sd_val = np.sqrt(self.gpsurrogate.variance(np.array([x_new])).item())
+        self.logger.scalars(f"  (mu, sigma) at new sample x: {mean_val}, {sd_val} ")
       
       y_new = self.obj_evaluator.run(self.prob.evaluate, x_train[-self.batch_size:])
       y_new = np.array(y_new)
       y_train = np.vstack([y_train, y_new])
-      
+
+      self.logger.iterations(f"Best objective found in this iteration: {np.min(y_new):.4e} ")
+
+      min_y_new = np.min(y_new)
+      if min_y_new < prev_best:
+        min_in_init_samples = False
+        curr_best_y = min_y_new
+      else:
+        curr_best_y = prev_best
+        
       self.logger.scalars(f"Training set size is now {x_train.shape[0]}")
-      self.logger.iterations(f"Current best objective: {np.min(y_train):.4e} "
-                             f"(previous best: {prev_best:.4e})")
-      self.logger.scalars(f"Objective function improvement: {prev_best - np.min(y_train):.4e}")
+      if min_in_init_samples == True:
+        self.logger.iterations(f"Current best objective (from initial samples): {curr_best_y:.4e} "
+                               f"(previous best: {prev_best:.4e})")
+      else:
+        self.logger.iterations(f"Current best objective: {curr_best_y:.4e} "
+                               f"(previous best: {prev_best:.4e})")
+
+      self.logger.scalars(f"Objective function improvement: {prev_best - curr_best_y:.4e}")
 
       # Save the new sample points and objective evaluations
       for j in range(1, self.batch_size+1):

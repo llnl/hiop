@@ -32,6 +32,7 @@ class IpoptProb:
     self.nvar = len(xbounds)
 
     self.ipopt_options = solver_options
+    self.ipopt_options['sb'] = 'yes'
 
     if isinstance(self.cons, list):
       # constraints is provided as a list of dict, supported by SLSQP and Ipopt
