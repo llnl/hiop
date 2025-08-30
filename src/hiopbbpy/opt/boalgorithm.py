@@ -227,17 +227,15 @@ class BOAlgorithm(BOAlgorithmBase):
   def optimize(self):
     x_train = self.xtrain
     y_train = self.ytrain
-    self.logger.iterations(f"Best objective from {np.size(x_train, 0)} initial samples: {np.min(y_train):.4e} ")
+    self.logger.iterations(f"Best UNCONSTRAINED objective from {np.size(x_train, 0)} initial samples: {np.min(y_train):.4e} ")
 
     self.x_hist = []
     self.y_hist = []
     
-    min_in_init_samples = True
+    prev_best_y = np.inf
     for i in range(self.bo_maxiter):
       self.logger.critical(f"*****************************")
       self.logger.critical(f"Iteration {i+1}/{self.bo_maxiter}")
-
-      prev_best = np.min(y_train)
 
       y_train_virtual = y_train.copy() # old training + batch_size num of virtual points
       for j in range(self.batch_size):
@@ -266,22 +264,13 @@ class BOAlgorithm(BOAlgorithmBase):
       y_train = np.vstack([y_train, y_new])
 
       min_y_new = np.min(y_new)
-      if min_y_new < prev_best:
-        min_in_init_samples = False
-        curr_best_y = min_y_new
-      else:
-        curr_best_y = prev_best
+      curr_best_y = np.minimum(prev_best_y, min_y_new)
 
       self.logger.iterations(f"Best objective found in this iteration: {min_y_new:.4e} ")
       self.logger.scalars(f"Training set size is now {x_train.shape[0]}")
-      if min_in_init_samples == True:
-        self.logger.iterations(f"Current best objective (from initial samples): {curr_best_y:.4e} "
-                               f"(previous best: {prev_best:.4e})")
-      else:
-        self.logger.iterations(f"Current best objective: {curr_best_y:.4e} "
-                               f"(previous best: {prev_best:.4e})")
-
-      self.logger.scalars(f"Objective function improvement: {prev_best - curr_best_y:.4e}")
+      self.logger.iterations(f"Current best objective: {curr_best_y:.4e} "
+                             f"(previous best: {prev_best_y:.4e})")
+      self.logger.scalars(f"Objective function improvement: {prev_best_y - curr_best_y:.4e}")
 
       # Save the new sample points and objective evaluations
       for j in range(1, self.batch_size+1):
@@ -302,6 +291,8 @@ class BOAlgorithm(BOAlgorithmBase):
       for j in range(self.batch_size):
         self.logger.debug(f"  {y_new[-j-1]}")
 
+      prev_best_y = curr_best_y
+
     # Save the optimal results and all the training data
     self.idx_opt = np.argmin(self.y_hist)
     self.x_opt = self.x_hist[self.idx_opt]
@@ -312,10 +303,7 @@ class BOAlgorithm(BOAlgorithmBase):
     self.logger.critical("Bayesian Optimization completed")
     self.logger.critical(f"Total evaluations for initial samples: {len(self.ytrain)-len(self.y_hist)}")
     self.logger.critical(f"Total evaluations for BO iterations: {len(self.y_hist)}")
-    if min_in_init_samples == True:
-      self.logger.critical(f"Optimal at inital points.")
-    else:
-      self.logger.critical(f"Optimal at BO iteration: {self.idx_opt//self.batch_size+1} ")
+    self.logger.critical(f"Optimal at BO iteration: {self.idx_opt//self.batch_size+1} ")
     self.logger.debug(f"Best point: {self.x_opt.flatten()}")
     self.logger.critical(f"Best value: {self.y_opt[0]}")
     self.logger.critical("===================================")
