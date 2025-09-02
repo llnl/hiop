@@ -48,7 +48,8 @@ def con_ineq(x):
 def con_jac_ineq(x):
   return  np.array([1.0, -1.0])
 
-# 'SLSQP' requires constraints defined in a list of dict
+# 'SLSQP' requires constraints defined in a list of dict.
+# IPOPT can suport this format, too
 user_constraint_list = [{'type': 'eq',   'fun': con_eq,   'jac': con_jac_eq},
                    {'type': 'ineq', 'fun': con_ineq, 'jac': con_jac_ineq}]
 
@@ -72,7 +73,7 @@ def cons_jac_vec(x):
 cl = -np.inf * np.ones(3)
 cu = np.zeros(3)
 
-# 'trust-constr' method supports vector-valued constraints
+# 'trust-constr' and IPOPT support vector-valued constraints
 user_constraint_dict = {'cons': cons_vec, 'jac': cons_jac_vec, 'cl': cl, 'cu': cu}
 
 
@@ -86,7 +87,7 @@ if __name__ == "__main__":
       problem = LpNormProblem(nx, xlimits)
     else:
       problem = BraninProblem()
-    problem.set_constraints(user_constraint_dict) #use user_constraint_dict or user_constraint_list
+    problem.set_constraints(user_constraint_list) # for solver 'trust-constr' and IPOPT, use user_constraint_dict; for olver 'SLSQP' and IPOPT, user_constraint_list
    
     for acq_type in acq_type_l:
       ### initial training set
@@ -101,11 +102,10 @@ if __name__ == "__main__":
         'acquisition_type': acq_type,
         'log_level': 'info',
         'bo_maxiter': 10,
-        'opt_solver': 'IPOPT',  #"SLSQP" "IPOPT" "trust-constr"
+        'opt_solver': 'SLSQP',  #"SLSQP" "IPOPT" "trust-constr"
         'batch_size': 3,
         'solver_options': {
-           'max_iter': 200,
-           'print_level': 1
+           'maxiter': 200,
            },
         'obj_evaluator': obj_evaluator,
         'opt_evaluator': opt_evaluator

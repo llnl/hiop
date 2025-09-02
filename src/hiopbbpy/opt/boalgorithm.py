@@ -229,6 +229,17 @@ class BOAlgorithm(BOAlgorithmBase):
     y_train = self.ytrain
     self.logger.iterations(f"Best UNCONSTRAINED objective from {np.size(x_train, 0)} initial samples: {np.min(y_train):.4e} ")
 
+    # filter feasible points
+    fea_idx = self.prob.if_feasible(x_train, y_train)
+    y_fea = y_train[fea_idx]
+    if y_fea.size > 0:
+      best_constrained = np.min(y_fea)
+      self.logger.info(
+            f"Best CONSTRAINED objective from {y_fea.size} feasible initial samples: {np.min(y_fea):.4e}"
+        )
+    else:
+      self.logger.info("No feasible samples found.")
+
     self.x_hist = []
     self.y_hist = []
     
@@ -262,6 +273,9 @@ class BOAlgorithm(BOAlgorithmBase):
       y_new = self.obj_evaluator.run(self.prob.evaluate, x_train[-self.batch_size:])
       y_new = np.array(y_new)
       y_train = np.vstack([y_train, y_new])
+
+      feas_new = self.prob.if_feasible(x_train[-self.batch_size:])
+      self.logger.debug(f"Feasible samples: {np.sum(feas_new)}/{self.batch_size}")
 
       min_y_new = np.min(y_new)
       curr_best_y = np.minimum(prev_best_y, min_y_new)

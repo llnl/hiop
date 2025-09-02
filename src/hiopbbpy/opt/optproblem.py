@@ -48,7 +48,7 @@ class IpoptProb:
           raise ValueError(f"Unknown constraint type: {con['type']}")
     elif isinstance(self.cons, dict):
       check_required_keys(self.cons,['cons', 'jac', 'cl', 'cu'])
-      # constraints is provided as a dict, supported by trust-constr and Ipopt
+      # vectorized constraints are provided as a dict, supported by trust-constr and Ipopt
       self.cl = constraint['cl']
       self.cu = constraint['cu']
     else:
