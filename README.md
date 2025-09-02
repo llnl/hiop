@@ -145,7 +145,13 @@ $> python BODriverEX.py
 or to run the same script but utilizing MPI parallelism with 4 workers
 
 ```shell 
-$> env MPI4PY_FUTURES_MAX_WORKERS=4 mpiexec -n 1 python BODriverEX.py
+$> mpiexec -n 4 python -m mpi4py.futures BODriverEX.py
+```
+
+or to run the same script with MPI parallelism but on a slurm based scheduling system 
+
+```shell 
+$> srun -n 4 python -m mpi4py.futures BODriverEX.py
 ```
 
 Further details on optional dependencies and parallel examples can be found in the HiOp user manual.

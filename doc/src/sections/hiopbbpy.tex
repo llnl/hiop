@@ -150,5 +150,11 @@ To run this python script \verb~BODriver.py~, in a python environment in which \
 
 
 \begin{verbatim}
-> env MPI4PY_FUTURES_MAX_WORKERS=4 mpirun -np 1 python BODriver.py 
+> mpirun -np 4 python -m mpi4py.futures BODriver.py 
+\end{verbatim}
+
+To run the same script in a slurm based scheduling system do the following:
+
+\begin{verbatim}
+> srun -n 4 python -m mpi4py.futures BODriver.py 
 \end{verbatim}
