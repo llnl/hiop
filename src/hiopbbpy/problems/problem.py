@@ -113,12 +113,14 @@ class Problem:
     ndarray[n]
         Boolean feasibility array (True if feasible, False otherwise).
     """
+    
+    # Points are feasible if there are no constraints
+    if not self.constraints:
+      return np.array([True for _ in range(x.shape[0])]) 
+    
     # Evaluate constraints if not provided
     if y is None:
       y = self.con_evaluate(x)
-
-    if y is None:
-      return np.array([True for _ in range(x.shape[0])]) 
 
     # Collect bounds
     if isinstance(self.constraints, dict):
