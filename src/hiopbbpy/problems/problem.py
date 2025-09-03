@@ -140,9 +140,8 @@ class Problem:
           cu_list.append(np.inf)
         else:
           raise ValueError(f"Unknown constraint type: {con['type']}")
-  
-    cl = np.array(cl_list, dtype=float)
-    cu = np.array(cu_list, dtype=float)
+      cl = np.array(cl_list, dtype=float)
+      cu = np.array(cu_list, dtype=float)
 
     # Feasibility check: cl - tol <= y <= cu + tol
     feas_matrix = (y >= cl - tol) & (y <= cu + tol)

@@ -7,7 +7,7 @@ Authors:    Tucker Hartland <hartland1@llnl.gov>
 
 import numpy as np
 from numpy.random import uniform
-from scipy.optimize import minimize
+from scipy.optimize import minimize, NonlinearConstraint
 from scipy.stats import qmc
 from ..surrogate_modeling.gp import GaussianProcess
 from .acquisition import LCBacquisition, EIacquisition
@@ -115,8 +115,11 @@ class BOAlgorithm(BOAlgorithmBase):
     elif isinstance(prob.constraints, list):
       assert opt_solver in ["SLSQP", "IPOPT"], f"Invalid opt_solver: {opt_solver} while constraints are defined as a list of dict"
 
-    self.solver_options = {"maxiter": 200}  #for SLSQP
-    self.solver_options = options.get('solver_options', self.solver_options)
+    if opt_solver == "SLSQP":
+      self.solver_options = {"maxiter": 200}  #for SLSQP
+      self.solver_options = options.get('solver_options', self.solver_options)
+    else:
+      self.solver_options = options.get('solver_options', {})
 
     self.set_method(opt_solver)
 
