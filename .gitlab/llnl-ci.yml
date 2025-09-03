@@ -121,6 +121,7 @@ default:
       echo "CUSTOM_CI_BUILDS_DIR = ${CUSTOM_CI_BUILDS_DIR}"
       set -xv
       cd "$CUSTOM_CI_BUILDS_DIR"
+      export ADD_CYIPOPT=1
       pip install . || exit 1
 
 .llnl_test_hiopbbpy: 
