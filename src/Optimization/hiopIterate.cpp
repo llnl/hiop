@@ -534,8 +534,6 @@ void hiopIterate::addLogBarGrad_d(const double& mu, hiopVector& gradd) const
 
 double hiopIterate::linearDampingTerm(const double& mu, const double& kappa_d) const
 {
-  //term = sxl->linearDampingTerm_local(nlp->get_ixl(), nlp->get_ixu(), mu, kappa_d);
-  //term += sxu->linearDampingTerm_local(nlp->get_ixu(), nlp->get_ixl(), mu, kappa_d);
   double term = nlp->vec_space()->linear_damping_term_local(*sxl, nlp->get_ixl(), nlp->get_ixu(), mu, kappa_d);
   term += nlp->vec_space()->linear_damping_term_local(*sxu, nlp->get_ixu(), nlp->get_ixl(), mu, kappa_d);
 #ifdef HIOP_USE_MPI
