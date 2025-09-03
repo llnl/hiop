@@ -16,10 +16,5 @@ class LpNormProblem(Problem):
   def _evaluate(self, x):
     ne, nx = x.shape
     assert nx == self.ndim
-    y = np.zeros((ne, 1))
-    ytemp = np.linalg.norm(x, ord=self.p, axis=1)
-    if len(ytemp.shape) == 1:
-      y[:,0] = ytemp[:]
-    elif len(ytemp.shape) == 2:
-      y[:,:] = ytemp[:,:]
+    y = np.atleast_2d(np.linalg.norm(x, ord=self.p, axis=1)).T
     return y

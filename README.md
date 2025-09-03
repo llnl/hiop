@@ -123,11 +123,45 @@ HiOp supports three types of optimization problems, each with a separate input f
 
 More information on the HiOp interfaces are [here](src/Interface/README.md).
 
+# HiOpBBpy - Python based black-box optimization
+
+HiOpBBpy is a black-box (derivative free) Bayesian optimization solver. HiOpBBpy primarily targets problems for which the objective is very expensive and derivative information is not available. HiOpBBpy leverages MPI parallelism for batched Bayesian optimization methods and other embarassingly parallel tasks in said methods.
+
+## Build/install instructions
+
+HiOpBBpy can be built via pip. A standard build can be done by invoking the following from the hiop home directory
+```shell 
+$> pip install .
+```
+
+## Usage
+
+Various example scripts are contained in src/Drivers/hiopbbpy/ that can be run directly from said directory, e.g.,
+
+```shell 
+$> python BODriverEX.py
+```
+
+or to run the same script but utilizing MPI parallelism with 4 workers
+
+```shell 
+$> mpiexec -n 4 python -m mpi4py.futures BODriverEX.py
+```
+
+or to run the same script with MPI parallelism but on a slurm based scheduling system 
+
+```shell 
+$> srun -n 4 python -m mpi4py.futures BODriverEX.py
+```
+
+Further details on optional dependencies and parallel examples can be found in the HiOp user manual.
+
+## Dependencies
+
+HiOpBBpy dependencies are listed in the pyproject.toml file.
 
 ## Issues
 Users are highly encouraged to report any issues they found when using HiOp.
-
-
 
 ## Acknowledgments
 
