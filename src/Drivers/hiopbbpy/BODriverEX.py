@@ -98,15 +98,19 @@ if __name__ == "__main__":
       gp_model = smtKRG(theta, xlimits, nx)
       gp_model.train(x_train, y_train)
     
+      opt_solver = 'SLSQP'   #"SLSQP" "IPOPT" "trust-constr"
+      if opt_solver == "SLSQP" or opt_solver == "trust-constr":
+        solver_options = {"maxiter": 100}  #for scipy solvers
+      elif opt_solver == "IPOPT":
+        solver_options = {"max_iter": 100, "print_level": 1}
+    
       options = {
         'acquisition_type': acq_type,
         'log_level': 'info',
-        'bo_maxiter': 10,
-        'opt_solver': 'SLSQP',  #"SLSQP" "IPOPT" "trust-constr"
+        'bo_maxiter': 5,
+        'opt_solver': opt_solver,
         'batch_size': 3,
-        'solver_options': {
-           'maxiter': 200,
-           },
+        'solver_options': solver_options,
         'obj_evaluator': obj_evaluator,
         'opt_evaluator': opt_evaluator
       }

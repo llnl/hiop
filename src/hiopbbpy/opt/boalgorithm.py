@@ -115,11 +115,13 @@ class BOAlgorithm(BOAlgorithmBase):
     elif isinstance(prob.constraints, list):
       assert opt_solver in ["SLSQP", "IPOPT"], f"Invalid opt_solver: {opt_solver} while constraints are defined as a list of dict"
 
-    if opt_solver == "SLSQP":
-      self.solver_options = {"maxiter": 200}  #for SLSQP
+    if opt_solver == "SLSQP" or opt_solver == "trust-constr":
+      self.solver_options = {"maxiter": 200}  #for scipy solvers
       self.solver_options = options.get('solver_options', self.solver_options)
-    else:
-      self.solver_options = options.get('solver_options', {})
+    elif opt_solver == "IPOPT":
+      self.solver_options = {"max_iter": 200, "print_level": 1}
+      self.solver_options = options.get('solver_options', self.solver_options)
+      self.solver_options['sb'] = 'yes'
 
     self.set_method(opt_solver)
 

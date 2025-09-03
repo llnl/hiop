@@ -84,7 +84,7 @@ class Problem:
 
     if isinstance(self.constraints, dict):
       # Vectorized constraints in one dict, returning all constraints at once
-      con_eval = self.constraints['cons'](x)  # shape (n_samples, n_con)
+      con_eval = np.vstack([self.constraints['cons'](xi) for xi in x])
       y[:, :] = np.asarray(con_eval, dtype=float)
     else:
       # Multiple scalar constraints: list of dicts
