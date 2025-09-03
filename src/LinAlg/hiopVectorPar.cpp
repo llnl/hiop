@@ -909,6 +909,28 @@ double hiopVectorPar::logBarrier_local(const hiopVector& select) const
   return sum;
 }
 
+double hiopVectorPar::logBarrierWeighted_local(const hiopVector& select, const hiopVector& weights) const
+{
+  double sum = 0.0;
+  double comp = 0.0;
+  const hiopVectorPar& ix = dynamic_cast<const hiopVectorPar&>(select);
+  const hiopVectorPar& w = dynamic_cast<const hiopVectorPar&>(weights);
+  assert(this->n_local_ == ix.n_local_);
+  assert(this->n_local_ == w.n_local_);
+  
+  const double* ix_vec = ix.data_;
+  const double* w_vec = w.data_;
+  for(int i = 0; i < n_local_; i++) {
+    if(ix_vec[i] == 1.) {
+      double y = w_vec[i]*log(data_[i]) - comp;
+      double t = sum + y;
+      comp = (t - sum) - y;
+      sum = t;
+    }
+  }
+  return sum;
+}
+
 double hiopVectorPar::sum_local() const
 {
   double sum = 0.0;

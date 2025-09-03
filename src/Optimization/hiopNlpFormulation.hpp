@@ -66,7 +66,7 @@
 #endif
 
 #include "hiopNlpTransforms.hpp"
-
+#include "VectorSpace.hpp"
 #include "hiopRunStats.hpp"
 #include "hiopLogger.hpp"
 #include "hiopOptions.hpp"
@@ -80,7 +80,7 @@ namespace hiop
 
 // some forward decls
 class hiopDualsLsqUpdate;
-
+  
 /** Class for a general NlpFormulation with general constraints and bounds on the variables.
  * This class also  acts as a factory for linear algebra objects (derivative
  * matrices, KKT system) whose types are decided based on the hiopInterfaceXXX object passed in the
@@ -118,12 +118,29 @@ public:
   virtual bool eval_Jac_d(hiopVector& x, bool new_x, hiopMatrix& Jac_d) = 0;
   virtual bool eval_Jac_c_d(hiopVector& x, bool new_x, hiopMatrix& Jac_c, hiopMatrix& Jac_d);
 
+  inline hiopInterfaceBase::WeightedSpaceType get_weighted_space_type()
+  {
+    return interface_base.get_weighted_space_type();
+  }
+  /* Wrapper over user-defined M apply that also applies the NLP transformations. */
+  bool eval_M(const hiopVector& x, hiopVector& y);
+  /* Wrapper over user-defined H apply that also applies the NLP transformations. */
+  bool eval_H(const hiopVector& x, hiopVector& y); 
+  /* Wrapper over user-defined inverse of H apply that also applies the NLP transformations. */
+  bool eval_H_inv(const hiopVector& x, hiopVector& y); 
+
+  VectorSpace const* vec_space() const
+  {
+    return vec_space_;
+  }
+
   /**
    * @brief Runs a (slow) derivative checker using finite differences, controlled by user options.
    *
    * @pre Assumes option 'derivative_checker' is set to 'first-order' or 'second-order'.
    */
   void run_derivative_checker();
+
 protected:
   ///@brief Second-order derivative checker specialized to NLP formulations
   virtual size_type run_derivative_checker_order2(hiopVector& x_ref,
@@ -394,6 +411,9 @@ protected:
   /* User provided interface */
   hiopInterfaceBase& interface_base;
 
+  /* Vector space for primal variables */
+  VectorSpace* vec_space_;
+  
   /**
    * Flag to indicate whether to use evaluate all constraints once or separately for equalities
    * or inequalities. Possible values

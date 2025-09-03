@@ -644,6 +644,21 @@ public:
   virtual double logBarrier_local(const hiopVector& select) const = 0;
 
   /**
+   * @brief Weighted sum of selected log(this[i])
+   *
+   * @param[in] weights - weights vector
+   * @param[in] select - pattern selection
+   *
+   * @pre `this`, `weights`, and `select` have same partitioning.
+   * @pre Selected elements of `this` are > 0.
+   * @post `this`, `weights`, and `select` are not modified
+   *
+   * @warning This is local method only!
+   */
+  virtual double logBarrierWeighted_local(const hiopVector& select, const hiopVector& weights) const = 0;
+
+  
+  /**
    * @brief adds the gradient of the log barrier, namely this[i]=this[i]+alpha*1/select(x[i])
    *
    * @param[in] alpha - scaling factor

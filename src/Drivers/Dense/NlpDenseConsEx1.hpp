@@ -68,8 +68,8 @@ public:
   index_type* get_col_partition() const { return col_partition; }
   MPI_Comm get_comm() const { return comm; }
 
-  virtual void applyM(DiscretizedFunction& f);
-
+  void applyM(DiscretizedFunction& f);
+  void applyMinv(DiscretizedFunction& f);
 protected:
   hiop::hiopVector* _mass;  // the length or the mass of the elements
   double _a, _b;            // end points
@@ -112,9 +112,10 @@ protected:
 class DenseConsEx1 : public hiop::hiopInterfaceDenseConstraints
 {
 public:
-  DenseConsEx1(int n_mesh_elem = 100, double mesh_ratio = 1.0)
+  DenseConsEx1(int n_mesh_elem, double mesh_ratio=1.0, int type_weighted_vars=0)
       : n_vars(n_mesh_elem),
         comm(MPI_COMM_WORLD),
+        type_weighted_space_((hiopInterfaceBase::WeightedSpaceType)type_weighted_vars),
         solver_(nullptr)
   {
     // create the members
@@ -257,10 +258,52 @@ public:
                         double alpha_du,
                         double alpha_pr,
                         int ls_trials);
+  
+  bool apply_M(const size_type& n, const double* x_in, double* y_out)
+  {
+    x->copyFrom(x_in);
+    _mesh->applyM(*x);
+    x->copyTo(y_out);
+    return true;
+  }
+  
+  /**
+   * Computes action y of the inner product weight matrix H on a vector x, namely y=H*x
+   */
+  virtual bool apply_H(const size_type& n, const double* x_in, double* y_out)
+  {
+    x->copyFrom(x_in);
+    _mesh->applyM(*x);
+    x->copyTo(y_out);
+    return true;
+  }
+
+  /**
+   * Computes action y of the inverse of H on a vector x, namely y=H^{-1}*x
+   */
+  virtual bool apply_Hinv(const size_type& n, const double* x_in, double* y_out)
+  {
+    x->copyFrom(x_in);
+    _mesh->applyMinv(*x);
+    x->copyTo(y_out);
+    return true;
+  }
+
+  /**
+   * Enables the use of weighted inner products via @apply_M, @apply_H, and @apply_Hinv
+   */
+  virtual hiopInterfaceBase::WeightedSpaceType get_weighted_space_type()
+  {
+    // return 
+    // - hiopInterfaceBase::Euclidean for no weighted space 
+    // - hiopInterfaceBase::HilbertLumped for space weighted by lumped mass matrix
+    return type_weighted_space_;
+  }
 
 private:
   int n_vars;
   MPI_Comm comm;
+  hiopInterfaceBase::WeightedSpaceType type_weighted_space_;
   Ex1Meshing1D* _mesh;
 
   int n_local;

@@ -150,8 +150,8 @@ void hiopOptions::load_from_file(const char* filename)
 
   ifstream input(filename);
   if(input.fail()) {
-    if(strcmp(default_filename, filename)) {
-      log_printf(hovWarning, "Failed to read option file '%s'. Hiop will use default options.\n", filename);
+    if(strcmp(default_filename, filename)!=0 && strcmp(default_filename_fr, filename)!=0) {
+      log_printf(hovWarning, "Could not read option file '%s'. Hiop will use default options.\n", filename);
       return;
     }
   }

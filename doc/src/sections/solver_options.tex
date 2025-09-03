@@ -169,13 +169,14 @@ Double values in $[10^{-14},0.1]$. Default value: $10^{-6}$.
 
 \subsubsection{Elastic mode}
 
-\noindent \textbf{elastic\_mode}: type of elastic mode used within \Hi:
+\noindent \textbf{elastic\_mode}: this is an advanced option that is not supported by all solvers. It dynamically perturbs bounds and inequalities (similar to \textit{bound\_relax\_perturb}): the initial bound perturbation is controlled by \textit{elastic\_mode\_bound\_relax\_initial}  and reduced throughout the optimization iterations to be \textit{elastic\_mode\_bound\_relax\_final}  at the final solution. Possible values are
 \begin{itemize}
 \item ``none'' (default): does not apply elastic mode;
 \item ``tighten\_bound '': tightens the bounds when $\mu$ changes.
 \item ``correct\_it'': tightens the bounds, and corrects the slacks and slack duals when $\mu$ changes.
 \item ``correct\_it\_adjust\_bound'': tightens the bounds, corrects the slacks and slack duals, and adjusts the bounds again from the modified iterate when $\mu$ changes.
 \end{itemize}
+Options \textit{fixed\_var\_perturb} and \textit{bound\_relax\_perturb} are ignored when this option set to a value other than ``none''.
 \medskip
 
 \noindent \textbf{elastic\_bound\_strategy}: Strategy used to tighen the bounds, when $\mu$ changes:
@@ -374,6 +375,7 @@ The last five options are available only with option \texttt{Hessian} setting to
 \item ``relax'':  relax the fixed variables accordingly to ``fixed\_var\_perturb'' option below;
 \item ``'remove'': remove variables from the (internal) NLP formulation.
 \end{itemize}
+When treatment of fixed variables is relaxed, the relaxation is controlled by one of the options \textit{fixed\_var\_perturb}, \textit{bound\_relax\_perturb}, or \textit{elastic\_mode}.
 \medskip
 
 \noindent \textbf{fixed\_var\_tolerance}: a variable (say the $i$th) is considered fixed if 
@@ -388,15 +390,15 @@ This option takes double values in $[10^{-30}, 10^{-2}]$ and has a default value
 (x_l)_i & =  (x_l)_i -  \max(|(x_u)_i|,1) \times \textnormal{fixed\_var\_perturb}, \\
 (x_u)_i & =  (x_u)_i +  \max(|(x_u)_i|,1) \times \textnormal{fixed\_var\_perturb}.
 \end{align*}
-This option takes double values in $[10^{-14}, 0.1]$ and has a default value $10^{-8}$.
+This option takes double values in $[10^{-14}, 0.1]$ and has a default value $10^{-8}$. This option is ignored when option \textit{bound\_relax\_perturb} has a nonzero value or option \textit{elastic\_mode} is not ``none''.
 \medskip
 
-\noindent \textbf{bound\_relax\_perturb}: perturbation of the lower and upper bounds for all variables and all constraints relative to their magnitude. A variable or constraint (say the $i$th) with lower and upper bounds $(x_l)_i$ and $(x_u)_i$, respectively,  is ``relaxed'' accordingly to 
+\noindent \textbf{bound\_relax\_perturb}: perturbation of the lower and upper bounds for all variables and all inequality constraints relative to their magnitude. A variable or constraint (say the $i$th) with lower and upper bounds $(x_l)_i$ and $(x_u)_i$, respectively,  is ``relaxed'' accordingly to 
 \begin{align*}
 (x_l)_i & =  (x_l)_i -  \max(|(x_l)_i|,1) \times \textnormal{bound\_relax\_perturb}, \\
 (x_u)_i & =  (x_u)_i +  \max(|(x_u)_i|,1) \times \textnormal{bound\_relax\_perturb}.
 \end{align*}
-This option takes double values in $[0, 10^{20}]$ and has a default value $10^{-8}$.
+This option takes double values in $[0, 10^{20}]$ and has a default value $10^{-8}$. A nonzero value for this option will cause \textit{fixed\_var\_perturb} to be ignored and all fixed variables will be relaxed accordingly to the value of this option. This option is ignored when option \textit{elastic\_mode} is set to a value other than ``none''.
 \medskip
 
 %%%% scaling
@@ -447,6 +449,20 @@ As detailed in Section~\ref{sec:checkpoint_API}, \Hi can save/load its internal 
 \medskip
 
 \noindent \textbf{time\_kkt}: string option with ``on'' or ``off'' values deciding whether \Hi turns on/off performance timers and reporting of the computational constituents of the KKT solve process. Default value: ``off''.
+\medskip
+
+\noindent \textbf{derivative\_check}: string option with ``no'' or ``first-order'' values that can be used to check user-provided derivatives using finite differences and to report comparison.  Default value: ``no''. Remark that only first-order derivatives are supported (objective gradient and constraints Jacobian).
+\medskip
+
+\noindent \textbf{derivative\_check\_perturbation}: Numeric option (range $[10^{-20}, 10^{3}]$, default $10^{-8}$) that controls the finite difference perturbation of each variables, relative to variable's value.
+\medskip
+  
+\noindent \textbf{derivative\_check\_tolerance}: Numeric option (range $[10^{-20}, 10^{3}]$, default $10^{-4}$) controlling tolerance for marking a mismatch between user-provided derivative and finite difference, relative to magnitude of derivative value provided by the user.
+\medskip
+  
+\noindent \textbf{derivative\_check\_print\_all}: String option with values ``no'' (default) and ``yes'' indicating that whether to print the comparison of provided derivatives and finite difference approximation for mismatching or for all derivative entries only, respectively.
+    
+  
 \medskip
 
 

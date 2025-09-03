@@ -227,6 +227,7 @@ public:
   virtual void negate();
   virtual void invert();
   virtual double logBarrier_local(const hiopVector& select) const;
+  virtual double logBarrierWeighted_local(const hiopVector& select, const hiopVector& weights) const;
   virtual double sum_local() const;
   virtual void addLogBarrierGrad(double alpha, const hiopVector& xvec, const hiopVector& select);
 

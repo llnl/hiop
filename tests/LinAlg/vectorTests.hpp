@@ -1246,6 +1246,55 @@ public:
     return reduceReturn(fail, &x);
   }
 
+    /**
+   * @brief Test:
+   * sum{w[i]*ln(x[i]): pattern[i] = 1}
+   */
+  bool vectorLogBarrierWeighted(hiop::hiopVector& x,
+                                hiop::hiopVector& pattern,
+                                hiop::hiopVector& weight,
+                                const int rank)
+  {
+    const local_ordinal_type N = getLocalSize(&x);
+    assert(N == getLocalSize(&pattern));
+    assert(N == getLocalSize(&weight));
+
+    // Ensure that only N-1 elements of x are
+    // used in the log calculation
+    pattern.setToConstant(one);
+    setLocalElement(&pattern, N - 1, zero);
+
+    const real_type x_val = three;
+    x.setToConstant(x_val);
+    // Make sure pattern eliminates the correct element
+    setLocalElement(&x, N - 1, 1000 * three);
+
+    const real_type w_val = 1./N;
+    weight.setToConstant(w_val);
+    // Make sure pattern eliminates the correct element
+    setLocalElement(&weight, N-1, 100);
+    
+    real_type expected = (N - 1) * std::log(x_val) / N;
+    real_type result = x.logBarrierWeighted_local(pattern, weight);
+    
+    int fail = !isEqual(result, expected);
+
+    // Make sure pattern eliminates the correct elements
+    pattern.setToConstant(zero);
+    setLocalElement(&pattern, N - 1, one);
+    x.setToConstant(three);
+    setLocalElement(&x, N - 1, x_val);
+    weight.setToConstant(three);
+    setLocalElement(&weight, N - 1, w_val);
+    
+    expected = std::log(x_val)*w_val;
+    result = x.logBarrierWeighted_local(pattern, weight);
+    fail += !isEqual(result, expected);
+
+    printMessage(fail, __func__, rank);
+    return reduceReturn(fail, &x);
+  }
+
   /**
    * @brief Test:
    * sum{x[i]}

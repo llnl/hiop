@@ -76,7 +76,15 @@ bool Ex1Meshing1D::get_vecdistrib_info(size_type global_n, index_type* cols)
   for(int i = 0; i <= comm_size; i++) cols[i] = col_partition[i];
   return true;
 }
-void Ex1Meshing1D::applyM(DiscretizedFunction& f) { f.componentMult(*this->_mass); }
+void Ex1Meshing1D::applyM(DiscretizedFunction& f)
+{
+  f.componentMult(*this->_mass);
+}
+
+void Ex1Meshing1D::applyMinv(DiscretizedFunction& f)
+{
+  f.componentDiv(*this->_mass);
+}
 
 // converts the local indexes to global indexes
 index_type Ex1Meshing1D::getGlobalIndex(index_type i_local) const

@@ -187,6 +187,8 @@ void thrust_component_sqrt_kernel(int n, double* d1);
 void thrust_negate_kernel(int n, double* d1);
 /** @brief compute sum(log(d1[i])) forall i where id[i]=1*/
 double log_barr_obj_kernel(int n, double* d1, const double* id);
+/** @brief compute sum(w[i]*log(d1[i])) forall i where id[i]=1*/
+double log_barr_wei_obj_kernel(int n, double* d1, const double* id, const double* w);
 /** @brief compute sum(d1[i]) */
 double thrust_sum_kernel(int n, double* d1);
 /** @brief Linear damping term */

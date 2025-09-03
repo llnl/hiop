@@ -79,7 +79,8 @@ hiopNlpFormulation::hiopNlpFormulation(hiopInterfaceBase& interface_, const char
       nlp_evaluated_(false),
       nlp_transformations_(this),
       disable_nlp_transformations_(false),
-      interface_base(interface_)
+      interface_base(interface_),
+      vec_space_(nullptr)
 {
   strFixedVars_ = "";    // uninitialized
   dFixedVarsTol_ = -1.;  // uninitialized
@@ -187,7 +188,8 @@ hiopNlpFormulation::~hiopNlpFormulation()
   delete temp_eq_;
   delete temp_ineq_;
   delete temp_x_;
-  /// nlp_scaling_, relax_bounds_, fixed_vars_remover_, fixed_vars_relaxer_ are deleted by nlp_transformations_
+  delete vec_space_;
+  // nlp_scaling_, relax_bounds_, fixed_vars_remover_, fixed_vars_relaxer_ are deleted by nlp_transformations_
 }
 
 bool hiopNlpFormulation::finalizeInitialization()
@@ -283,6 +285,10 @@ bool hiopNlpFormulation::finalizeInitialization()
   ixl_ = xu_->alloc_clone();
   ixu_ = xu_->alloc_clone();
 
+  // create NLP space (H-weighted or Euclidean)
+  delete vec_space_;
+  vec_space_ = new VectorSpace(this);
+  
   //
   // preprocess variables bounds - this is curently done on the CPU
   //
@@ -795,6 +801,74 @@ bool hiopNlpFormulation::eval_grad_f(hiopVector& x, bool new_x, hiopVector& grad
   gradf = *(nlp_transformations_.apply_to_grad_obj(*gradff));
 
   return bret;
+}
+
+bool hiopNlpFormulation::eval_M(const hiopVector& x, hiopVector& y)
+{
+  //x is in the reduced space used by HiOp
+  //x_full is x in the full/untransformed/user space
+  hiopVector* x_full = nlp_transformations_.apply_inv_to_x(const_cast<hiopVector&>(x), true/*new_x*/);
+
+  // We need to also transform y to a y_full, pass it to user apply, and then the reverse, y_full back to y.
+  // The following works, unless a "remove fixed variables" NLP transformation is present.
+  // TODO: Either add functionality in hiopFixedVarRemovers to allow apply_inv_to_x for more than one vector
+  // simultaneously, or create y_full here use apply_inv_to_x with copying from the return to y_full
+  hiopVector* y_full = &y;
+  assert(x_full->get_size() == y.get_size() &&
+         "weighted vector spaces not supported when fixed variables are removed");
+  
+  runStats.tm_eval_M_apply.start();
+  bool bret = interface_base.apply_M(nlp_transformations_.n_pre(),
+                                     x_full->local_data_const(),
+                                     y_full->local_data());
+  runStats.tm_eval_M_apply.stop();
+  runStats.n_eval_M_apply++;
+
+  // TODO: see note above
+  
+  return bret;  
+}
+
+bool hiopNlpFormulation::eval_H(const hiopVector& x, hiopVector& y)
+{
+  //x is in the reduced space used by HiOp
+  //x_full is x in the full/untransformed/user space
+  hiopVector* x_full = nlp_transformations_.apply_inv_to_x(const_cast<hiopVector&>(x), true/*new_x*/);
+
+  // TODO: see notes from eval_M
+  hiopVector* y_full = &y;
+  assert(x_full->get_size() == y.get_size() &&
+         "weighted vector spaces not supported when fixed variables are removed");
+
+  runStats.tm_eval_H_apply.start();
+  bool bret = interface_base.apply_H(nlp_transformations_.n_pre(),
+                                     x_full->local_data_const(),
+                                     y_full->local_data());
+  runStats.tm_eval_H_apply.stop();
+  runStats.n_eval_H_apply++;
+  
+  return bret;  
+}
+
+bool hiopNlpFormulation::eval_H_inv(const hiopVector& x, hiopVector& y)
+{
+  //x is in the reduced space used by HiOp
+  //x_full is x in the full/untransformed/user space
+  hiopVector* x_full = nlp_transformations_.apply_inv_to_x(const_cast<hiopVector&>(x), true/*new_x*/);
+
+  // TODO: see notes from eval_M
+  hiopVector* y_full = &y;
+  assert(x_full->get_size() == y.get_size() &&
+         "weighted vector spaces not supported when fixed variables are removed");
+
+  runStats.tm_eval_Hinv_apply.start();
+  bool bret = interface_base.apply_Hinv(nlp_transformations_.n_pre(),
+                                        x_full->local_data_const(),
+                                        y_full->local_data());
+  runStats.tm_eval_Hinv_apply.stop();
+  runStats.n_eval_Hinv_apply++;
+  
+  return bret;  
 }
 
 void hiopNlpFormulation::run_derivative_checker()

@@ -188,18 +188,18 @@ hiopDualsLsqUpdateLinsysRedDense::~hiopDualsLsqUpdateLinsysRedDense()
 
 /** Given xk, zk_l, zk_u, vk_l, and vk_u (contained in 'iter'), this method solves an LSQ problem
  * corresponding to dual infeasibility equation
- *    min_{y_c,y_d} ||  \nabla f(xk) + J^T_c(xk) y_c + J_d^T(xk) y_d - zk_l+zk_u  ||^2
- *                  || - y_d - vk_l + vk_u                                        ||_2,
+ *    min_{y_c,y_d} ||  \nabla f(xk) + J^T_c(xk) y_c + J_d^T(xk) y_d - M*(zk_l-zk_u)  ||^2
+ *                  || - y_d - vk_l + vk_u                                            ||_2,
  *  which is
- *   min_{y_c, y_d} || [ J_c^T  J_d^T ] [ y_c ]  -  [ -\nabla f(xk) + zk_l-zk_u ]  ||^2
- *                  || [  0       I   ] [ y_d ]     [ - vk_l + vk_u             ]  ||_2
+ *   min_{y_c, y_d} || [ J_c^T  J_d^T ] [ y_c ]  -  [ -\nabla f(xk) + M*(zk_l-zk_u) ]  ||^2
+ *                  || [  0       I   ] [ y_d ]     [ - vk_l + vk_u                 ]  ||_2
  * ******************************
  * NLPs with dense constraints
  * ******************************
  * For NLPs with dense constraints, the above LSQ problem is solved by solving the linear
  *  system in y_c and y_d:
- *   [ J_c J_c^T    J_c J_d^T     ] [ y_c ]  =  [ J_c   0 ] [ -\nabla f(xk) + zk_l-zk_u ]
- *   [ J_d J_c^T    J_d J_d^T + I ] [ y_d ]     [ J_d   I ] [ - vk_l + vk_u             ]
+ *   [ J_c J_c^T    J_c J_d^T     ] [ y_c ]  =  [ J_c   0 ] [ -\nabla f(xk) + M*(zk_l-zk_u) ]
+ *   [ J_d J_c^T    J_d J_d^T + I ] [ y_d ]     [ J_d   I ] [ - vk_l + vk_u                 ]
  * This linear system is small (of size m=m_E+m_I) (so it is replicated for all MPI ranks).
  *
  * The matrix of the above system is stored in the member variable M_ of this class and the
@@ -275,9 +275,13 @@ bool hiopDualsLsqUpdateLinsysRedDense::do_lsq_update(hiopIterate& iter,
   // [ rhsd_ ]     [ J_d   I ] [ vecd ]
   // [vecx,vecd] = - [ -\nabla f(xk) + zk_l-zk_u, - vk_l + vk_u].
   hiopVector& vecx = *vec_n_;
-  vecx.copyFrom(grad_f);
+  //vecx.copyFrom(grad_f);
+  //vecx.axpy(-1.0, *iter.get_zl());
+  //vecx.axpy(1.0, *iter.get_zu());
+  vecx.copyFrom(*iter.get_zu());
   vecx.axpy(-1.0, *iter.get_zl());
-  vecx.axpy(1.0, *iter.get_zu());
+  vecx.componentMult(*nlp_->vec_space()->M_lumped());
+  vecx.axpy(1.0, grad_f);
   hiopVector& vecd = *vec_mi_;
   vecd.copyFrom(*iter.get_vl());
   vecd.axpy(-1.0, *iter.get_vu());

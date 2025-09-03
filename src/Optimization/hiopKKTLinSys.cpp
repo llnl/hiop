@@ -100,16 +100,20 @@ double hiopKKTLinSys::errorKKT(const hiopResidual* resid, const hiopIterate* sol
   }
 
   double derr = 1e20, aux;
-  hiopVector* RX = resid->rx->new_copy();
-
   // RX = rx-H*dx-J'c*dyc-J'*dyd +dzl-dzu
+  //hiopVector* RX = resid->rx->new_copy();
+  hiopVector* RX = sol->zl->new_copy();
+  RX->axpy(-1.0, *sol->zu);
+  RX->componentMult(*nlp_->vec_space()->M_lumped());
+  RX->axpy(1.0, *resid->rx);
+
   HessianTimesVec_noLogBarrierTerm(1.0, *RX, -1.0, *sol->x);
   RX->axzpy(-1., *delta_wx_, *sol->x);
-
   Jac_c_->transTimesVec(1.0, *RX, -1.0, *sol->yc);
   Jac_d_->transTimesVec(1.0, *RX, -1.0, *sol->yd);
-  RX->axpy(1.0, *sol->zl);
-  RX->axpy(-1.0, *sol->zu);
+  //RX->axpy(1.0, *sol->zl);
+  //RX->axpy(-1.0, *sol->zu);
+
   aux = RX->twonorm();
   derr = fmax(aux, derr);
   nlp_->log->printf(hovLinAlgScalars, "  --- rx=%g\n", aux);
@@ -595,7 +599,7 @@ bool hiopKKTLinSysCompressedXYcYd::computeDirections(const hiopResidual* resid, 
 
   /***********************************************************************
    * perform the reduction to the compressed linear system
-   * rx_tilde  = rx+Sxl^{-1}*[rszl-Zl*rxl] - Sxu^{-1}*(rszu-Zu*rxu)
+   * rx_tilde  = rx+ M_lumped* Sxl^{-1}*[rszl-Zl*rxl] - M_lumped* Sxu^{-1}*(rszu-Zu*rxu)
    * ryd_tilde = ryd + [(Sdl^{-1}Vl+Sdu^{-1}Vu)]^{-1}*
    *                     [rd + Sdl^{-1}*(rsvl-Vl*rdl)-Sdu^{-1}(rsvu-Vu*rdu)]
    * rd_tilde = rd + Sdl^{-1}*(rsvl-Vl*rdl)-Sdu^{-1}(rsvu-Vu*rdu)
@@ -603,23 +607,50 @@ bool hiopKKTLinSysCompressedXYcYd::computeDirections(const hiopResidual* resid, 
    * yd_tilde = ryd + Dd_inv*rd_tilde
    */
   rx_tilde_->copyFrom(*r.rx);
+  
+  // if(nlp_->n_low_local() > 0) {
+  //   // rl:=rszl-Zl*rxl (using dir->x as working buffer)
+  //   hiopVector& rl = *(dir->x);  // temporary working buffer
+  //   rl.copyFrom(*r.rszl);
+  //   rl.axzpy(-1.0, *iter_->zl, *r.rxl);
+  //   // rx_tilde = rx+Sxl^{-1}*rl
+  //   rx_tilde_->axdzpy_w_pattern(1.0, rl, *iter_->sxl, nlp_->get_ixl());
+  // }
+  // if(nlp_->n_upp_local() > 0) {
+  //   // ru:=rszu-Zu*rxu (using dir->x as working buffer)
+  //   hiopVector& ru = *(dir->x);  // temporary working buffer
+  //   ru.copyFrom(*r.rszu);
+  //   ru.axzpy(-1.0, *iter_->zu, *r.rxu);
+  //   // rx_tilde = rx_tilde - Sxu^{-1}*ru
+  //   rx_tilde_->axdzpy_w_pattern(-1.0, ru, *iter_->sxu, nlp_->get_ixu());
+  // }
+
+  hiopVector& rx2 = *(dir->sxl);  // temporary working buffer
+  rx2.setToZero();
   if(nlp_->n_low_local() > 0) {
-    // rl:=rszl-Zl*rxl (using dir->x as working buffer)
     hiopVector& rl = *(dir->x);  // temporary working buffer
     rl.copyFrom(*r.rszl);
     rl.axzpy(-1.0, *iter_->zl, *r.rxl);
-    // rx_tilde = rx+Sxl^{-1}*rl
-    rx_tilde_->axdzpy_w_pattern(1.0, rl, *iter_->sxl, nlp_->get_ixl());
+    //// rx_tilde = rx+Sxl^{-1}*rl
+    //rx_tilde_->axdzpy_w_pattern(1.0, rl, *iter_->sxl, nlp_->get_ixl());
+    rx2.axdzpy_w_pattern(1.0, rl, *iter_->sxl, nlp_->get_ixl()); 
   }
+  
   if(nlp_->n_upp_local() > 0) {
-    // ru:=rszu-Zu*rxu (using dir->x as working buffer)
-    hiopVector& ru = *(dir->x);  // temporary working buffer
+    // ru:=rszu-Zu*rxu
+    hiopVector& ru = *(dir->x);
     ru.copyFrom(*r.rszu);
     ru.axzpy(-1.0, *iter_->zu, *r.rxu);
-    // rx_tilde = rx_tilde - Sxu^{-1}*ru
-    rx_tilde_->axdzpy_w_pattern(-1.0, ru, *iter_->sxu, nlp_->get_ixu());
+    //// rx_tilde = rx_tilde - Sxu^{-1}*ru
+    ////rx_tilde_->axdzpy_w_pattern(-1.0, ru, *iter_->sxu, nlp_->get_ixu());
+    rx2.axdzpy_w_pattern(-1.0, ru, *iter_->sxu, nlp_->get_ixu());
+  }
+  if(nlp_->n_low_local() > 0 || nlp_->n_upp_local() > 0) {
+    rx2.componentMult(*nlp_->vec_space()->M_lumped());
+    rx_tilde_->axpy(1.0, rx2);
   }
 
+  
   // for ryd_tilde:
   ryd_tilde_->copyFrom(*r.ryd);
   // 1. the diag (Sdl^{-1}Vl+Sdu^{-1}Vu)^{-1} has already computed in Dd_inv in 'update'
@@ -949,7 +980,7 @@ bool hiopKKTLinSys::compute_directions_w_IR(const hiopResidual* resid, hiopItera
   kkt_opr_->reset_curr_iter(iter_);
 
   double tol =
-      std::min(mu_ * nlp_->options->GetNumeric("ir_outer_tol_factor"), nlp_->options->GetNumeric("ir_outer_tol_min"));
+    std::min(mu_ * nlp_->options->GetNumeric("ir_outer_tol_factor"), nlp_->options->GetNumeric("ir_outer_tol_min"));
   bicgIR_->set_max_num_iter(nlp_->options->GetInteger("ir_outer_maxit"));
   bicgIR_->set_tol(tol);
   bicgIR_->set_x0(0.0);
@@ -1123,7 +1154,7 @@ bool hiopMatVecKKTFullOpr::combine_res_to_build_vec(hiopVector& y) { return true
 
 /**
  * Full KKT matrix is
- * [   H    0   Jc^T  Jd^T |  -I  I   0   0   |  0   0   0   0  ] [  dx]   [    rx    ]
+ * [   H    0   Jc^T  Jd^T |  -M  M   0   0   |  0   0   0   0  ] [  dx]   [    rx    ]
  * [  0     0     0    -I  |  0   0  -I   I   |  0   0   0   0  ] [  dd]   [    rd    ]
  * [  Jc    0     0     0  |  0   0   0   0   |  0   0   0   0  ] [ dyc] = [   ryc    ]
  * [  Jd    -I    0     0  |  0   0   0   0   |  0   0   0   0  ] [ dyd]   [   ryd    ]
@@ -1190,12 +1221,15 @@ bool hiopMatVecKKTFullOpr::times_vec(hiopVector& yvec, const hiopVector& xvec)
   hiopVector* yrvu_ = &(y.getVector(11));
 
   // rx = H*dx + delta_wx*I*dx + Jc'*dyc + Jd'*dyd - dzl + dzu
-  Hess->timesVec(0.0, *yrx_, +1.0, *dx_);
+  yrx_->copyFrom(*dzu_);
+  yrx_->axpy(-1.0, *dzl_);
+  yrx_->componentMult(*kkt_->nlp_->vec_space()->M_lumped());
+  Hess->timesVec(1.0, *yrx_, +1.0, *dx_);
   yrx_->axzpy(1., *delta_wx, *dx_);
   Jac_c->transTimesVec(1.0, *yrx_, 1.0, *dyc_);
   Jac_d->transTimesVec(1.0, *yrx_, 1.0, *dyd_);
-  yrx_->axpy(-1.0, *dzl_);
-  yrx_->axpy(1.0, *dzu_);
+  //yrx_->axpy(-1.0, *dzl_);
+  //yrx_->axpy(1.0, *dzu_);
 
   // RD = delta_wd_*dd - dyd - dvl + dvu
   yrd_->setToZero();
@@ -1258,7 +1292,7 @@ bool hiopMatVecKKTFullOpr::times_vec(hiopVector& yvec, const hiopVector& xvec)
 
 /**
  * Full KKT matrix is
- * [   H    0   Jc^T  Jd^T |  -I  I   0   0   |  0   0   0   0  ] [  dx]   [    rx    ]
+ * [   H    0   Jc^T  Jd^T |  -M  M   0   0   |  0   0   0   0  ] [  dx]   [    rx    ]
  * [  0     0     0    -I  |  0   0  -I   I   |  0   0   0   0  ] [  dd]   [    rd    ]
  * [  Jc    0     0     0  |  0   0   0   0   |  0   0   0   0  ] [ dyc] = [   ryc    ]
  * [  Jd    -I    0     0  |  0   0   0   0   |  0   0   0   0  ] [ dyd]   [   ryd    ]
@@ -1351,12 +1385,14 @@ bool hiopMatVecKKTFullOpr::trans_times_vec(hiopVector& yvec, const hiopVector& x
 
   // RXL = -dx + Sxl*dsxl
   yrsxl_->setToZero();
-  yrsxl_->axpy(-1.0, *dx_);
+  //yrsxl_->axpy(-1.0, *dx_);
+  yrsxl_->axzpy(-1.0, *dx_, *kkt_->nlp_->vec_space()->M_lumped());
   yrsxl_->axzpy(1.0, *iter_->get_sxl(), *dsxl_);
   yrsxl_->selectPattern(kkt_->nlp_->get_ixl());
 
   // RXU = dx + Sxu*dsxu
   yrsxu_->copyFrom(*dx_);
+  yrsxu_->componentMult(*kkt_->nlp_->vec_space()->M_lumped());
   yrsxu_->axzpy(1.0, *iter_->get_sxu(), *dsxu_);
   yrsxu_->selectPattern(kkt_->nlp_->get_ixu());
 
