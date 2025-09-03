@@ -87,7 +87,7 @@ if __name__ == "__main__":
       problem = LpNormProblem(nx, xlimits)
     else:
       problem = BraninProblem()
-    problem.set_constraints(user_constraint_list) # for solver 'trust-constr' and IPOPT, use user_constraint_dict; for olver 'SLSQP' and IPOPT, user_constraint_list
+    problem.set_constraints(user_constraint_list) # for solver 'trust-constr' and IPOPT, use user_constraint_dict; for solver 'SLSQP' and IPOPT, user_constraint_list
    
     for acq_type in acq_type_l:
       ### initial training set

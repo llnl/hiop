@@ -115,7 +115,10 @@ class Problem:
     """
     # Evaluate constraints if not provided
     if y is None:
-        y = self.con_evaluate(x)
+      y = self.con_evaluate(x)
+
+    if y is None:
+      return np.array([True for _ in range(x.shape[0])]) 
 
     # Collect bounds
     if isinstance(self.constraints, dict):
@@ -141,7 +144,7 @@ class Problem:
 
     # Feasibility check: cl - tol <= y <= cu + tol
     feas_matrix = (y >= cl - tol) & (y <= cu + tol)
-
+    
     # Each sample is feasible only if all constraints are satisfied
     return feas_matrix.all(axis=1)
 
