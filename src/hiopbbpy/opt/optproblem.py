@@ -32,6 +32,7 @@ class IpoptProb:
     self.nvar = len(xbounds)
 
     self.ipopt_options = solver_options
+    self.ipopt_options['sb'] = 'yes'
 
     if isinstance(self.cons, list):
       # constraints is provided as a list of dict, supported by SLSQP and Ipopt
@@ -47,7 +48,7 @@ class IpoptProb:
           raise ValueError(f"Unknown constraint type: {con['type']}")
     elif isinstance(self.cons, dict):
       check_required_keys(self.cons,['cons', 'jac', 'cl', 'cu'])
-      # constraints is provided as a dict, supported by trust-constr and Ipopt
+      # vectorized constraints are provided as a dict, supported by trust-constr and Ipopt
       self.cl = constraint['cl']
       self.cu = constraint['cu']
     else:

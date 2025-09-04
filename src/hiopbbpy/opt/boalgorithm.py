@@ -7,7 +7,7 @@ Authors:    Tucker Hartland <hartland1@llnl.gov>
 
 import numpy as np
 from numpy.random import uniform
-from scipy.optimize import minimize
+from scipy.optimize import minimize, NonlinearConstraint
 from scipy.stats import qmc
 from ..surrogate_modeling.gp import GaussianProcess
 from .acquisition import LCBacquisition, EIacquisition
@@ -115,8 +115,13 @@ class BOAlgorithm(BOAlgorithmBase):
     elif isinstance(prob.constraints, list):
       assert opt_solver in ["SLSQP", "IPOPT"], f"Invalid opt_solver: {opt_solver} while constraints are defined as a list of dict"
 
-    self.solver_options = {"maxiter": 200}  #for SLSQP
-    self.solver_options = options.get('solver_options', self.solver_options)
+    if opt_solver == "SLSQP" or opt_solver == "trust-constr":
+      self.solver_options = {"maxiter": 200}  #for scipy solvers
+      self.solver_options = options.get('solver_options', self.solver_options)
+    elif opt_solver == "IPOPT":
+      self.solver_options = {"max_iter": 200, "print_level": 1}
+      self.solver_options = options.get('solver_options', self.solver_options)
+      self.solver_options['sb'] = 'yes'
 
     self.set_method(opt_solver)
 
@@ -227,17 +232,26 @@ class BOAlgorithm(BOAlgorithmBase):
   def optimize(self):
     x_train = self.xtrain
     y_train = self.ytrain
-    
-    n_init_sample = np.size(x_train, 0)
+    self.logger.iterations(f"Best UNCONSTRAINED objective from {np.size(x_train, 0)} initial samples: {np.min(y_train):.4e} ")
+
+    # filter feasible points
+    fea_idx = self.prob.if_feasible(x_train, y_train)
+    y_fea = y_train[fea_idx]
+    if y_fea.size > 0:
+      best_constrained = np.min(y_fea)
+      self.logger.info(
+            f"Best CONSTRAINED objective from {y_fea.size} feasible initial samples: {np.min(y_fea):.4e}"
+        )
+    else:
+      self.logger.info("No feasible samples found.")
 
     self.x_hist = []
     self.y_hist = []
-
+    
+    prev_best_y = np.inf
     for i in range(self.bo_maxiter):
       self.logger.critical(f"*****************************")
       self.logger.critical(f"Iteration {i+1}/{self.bo_maxiter}")
-
-      prev_best = np.min(y_train)
 
       y_train_virtual = y_train.copy() # old training + batch_size num of virtual points
       for j in range(self.batch_size):
@@ -258,18 +272,24 @@ class BOAlgorithm(BOAlgorithmBase):
           y_train_virtual = np.vstack([y_train_virtual, y_virtual])
 
         mean_val = self.gpsurrogate.mean(np.array([x_new])).item()
-        var_val = self.gpsurrogate.variance(np.array([x_new])).item()
-        self.logger.scalars(f"  Acqusition mean at new sample x: {mean_val}")
-        self.logger.scalars(f"  Acqusition var at new sample x: {var_val}")
+        sd_val = np.sqrt(self.gpsurrogate.variance(np.array([x_new])).item())
+        self.logger.scalars(f"  (mu, sigma) at new sample x: {mean_val}, {sd_val} ")
       
       y_new = self.obj_evaluator.run(self.prob.evaluate, x_train[-self.batch_size:])
       y_new = np.array(y_new)
       y_train = np.vstack([y_train, y_new])
-      
+
+      feas_new = self.prob.if_feasible(x_train[-self.batch_size:])
+      self.logger.debug(f"Feasible samples: {np.sum(feas_new)}/{self.batch_size}")
+
+      min_y_new = np.min(y_new)
+      curr_best_y = np.minimum(prev_best_y, min_y_new)
+
+      self.logger.iterations(f"Best objective found in this iteration: {min_y_new:.4e} ")
       self.logger.scalars(f"Training set size is now {x_train.shape[0]}")
-      self.logger.iterations(f"Current best objective: {np.min(y_train):.4e} "
-                             f"(previous best: {prev_best:.4e})")
-      self.logger.scalars(f"Objective function improvement: {prev_best - np.min(y_train):.4e}")
+      self.logger.iterations(f"Current best objective: {curr_best_y:.4e} "
+                             f"(previous best: {prev_best_y:.4e})")
+      self.logger.scalars(f"Objective function improvement: {prev_best_y - curr_best_y:.4e}")
 
       # Save the new sample points and objective evaluations
       for j in range(1, self.batch_size+1):
@@ -290,6 +310,8 @@ class BOAlgorithm(BOAlgorithmBase):
       for j in range(self.batch_size):
         self.logger.debug(f"  {y_new[-j-1]}")
 
+      prev_best_y = curr_best_y
+
     # Save the optimal results and all the training data
     self.idx_opt = np.argmin(self.y_hist)
     self.x_opt = self.x_hist[self.idx_opt]
@@ -298,10 +320,11 @@ class BOAlgorithm(BOAlgorithmBase):
 
     self.logger.critical("===================================")
     self.logger.critical("Bayesian Optimization completed")
-    self.logger.critical(f"Total evaluations: {len(self.y_hist)}")
+    self.logger.critical(f"Total evaluations for initial samples: {len(self.ytrain)-len(self.y_hist)}")
+    self.logger.critical(f"Total evaluations for BO iterations: {len(self.y_hist)}")
     self.logger.critical(f"Optimal at BO iteration: {self.idx_opt//self.batch_size+1} ")
     self.logger.debug(f"Best point: {self.x_opt.flatten()}")
-    self.logger.critical(f"Best value: {self.y_opt}")
+    self.logger.critical(f"Best value: {self.y_opt[0]}")
     self.logger.critical("===================================")
 
 
