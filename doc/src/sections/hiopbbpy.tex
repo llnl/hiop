@@ -14,21 +14,35 @@ where $\mathcal{B}$ constitutes box constraints on $x$. Here, we detail how to i
 
 \subsection{HiOpBBpy installation}
 
-\Hibbpy depends on the surrogate modeling toolkit (SMT) and cyipopt which is a python wrapper of Ipopt. In order to expose Ipopt to cyipopt one can export the \verb~IPOPT_PATH~ and 
+\Hibbpy depends on the surrogate modeling toolkit (SMT), to install \Hibbpy from the home directory of \Hi:
+\begin{verbatim}
+> pip install .
+\end{verbatim}
 
+\Hibbpy also supports using nonlinear optimization solver Ipopt \cite{ipopt_impl} as its internal solver. 
+In order to use Ipopt, \Hibbpy optionally depends on {\it{cyipopt}}, which is a python wrapper of Ipopt.
+To use Ipopt via {\it{cyipopt}},, one can install Ipopt from source, and then export the \verb~IPOPT_PATH~ and 
 \begin{verbatim}
 > export PKG_CONFIG_PATH=$PKG_CONFIG_PATH:$IPOPT_PATH/lib/pkgconfig
 > export PATH=$PATH:$IPOPT_PATH/bin
 \end{verbatim}
 
-To then install \Hibbpy from the home directory of \Hi:
-\begin{verbatim}
-> pip install .
-\end{verbatim}
-The ipopt libaries are then exposed:
+The Ipopt libaries are then exposed:
 \begin{verbatim}
 > export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$IPOPT_PATH/lib
 \end{verbatim}
+
+After exposing Ipopt via the specified environment variables, cyipopt can be installed using standard Python package 
+managers (e.g., pip or conda). It is highly recommended to perform the installation inside a Python virtual environment. 
+For example, the following code can create a virtual environment, named as `myvenv'
+\begin{verbatim}
+> python -m venv myvenv 
+\end{verbatim}
+Then, for example, in Linux/MacOS, one can activate this virtual environment via command
+\begin{verbatim}
+> source myvenv/bin/activate
+\end{verbatim}
+Once activated, one can install dependencies isolated from their system Python.
 
 \subsection{The Python interface}
 
