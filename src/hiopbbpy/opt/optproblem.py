@@ -1,5 +1,7 @@
 import numpy as np
-import cyipopt
+from typing import Callable, Dict, List, Union, Tuple
+from ..utils.util import check_required_keys
+from importlib import import_module
 
 """
 Convert a Scipy optimization problem to an Ipopt problem.
@@ -16,9 +18,15 @@ Returns:
 Authors:    Tucker Hartland <hartland1@llnl.gov>
             Nai-Yuan Chiang <chiang7@llnl.gov>
 """
-from typing import Callable, Dict, List, Union, Tuple
-from ..utils.util import check_required_keys
 
+def _require_cyipopt():
+    """Import cyipopt only when actually needed, with a friendly error."""
+    try:
+        return import_module("cyipopt")
+    except ImportError as e:
+        raise ImportError(
+            "This feature requires the optional dependency 'cyipopt'."
+        ) from e
 
 class IpoptProb:
   def __init__(self, objective, gradient, constraint:Union[Dict, List[Dict]], xbounds, solver_options=None):
@@ -55,6 +63,7 @@ class IpoptProb:
       raise ValueError("constraints must be provided as a dict of a list of dict.")
     self.ncon = len(self.cl)
 
+    cyipopt = _require_cyipopt()
     self.nlp = cyipopt.Problem( n=self.nvar,
                                 m=self.ncon,
                                 problem_obj=self,

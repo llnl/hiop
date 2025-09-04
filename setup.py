@@ -13,7 +13,7 @@ from setuptools import setup, find_packages
 
 install_requires = ["smt"]
 
-if os.getenv("SKIP_CYIPOPT", "0") != "1":
+if os.getenv("ADD_CYIPOPT", "0") == "1":
     install_requires.append("cyipopt")
 
 metadata = dict(

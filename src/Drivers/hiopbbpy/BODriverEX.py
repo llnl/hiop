@@ -101,7 +101,7 @@ if __name__ == "__main__":
       options = {
         'acquisition_type': acq_type,
         'log_level': 'info',
-        'bo_maxiter': 5,
+        'bo_maxiter': 10,
         'opt_solver': opt_solver,
         'batch_size': 3,
         'solver_options': solver_options,
