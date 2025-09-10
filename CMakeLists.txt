@@ -6,7 +6,6 @@ if(NOT DEFINED CMAKE_CXX_STANDARD)
   set(CMAKE_CXX_STANDARD 17)
 endif()
 
-
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 set(CMAKE_CUDA_SEPARABLE_COMPILATION ON)
@@ -38,6 +37,7 @@ option(HIOP_USE_AXOM "Build with AXOM to use Sidre for scalable checkpointing" O
 option(HIOP_DEEPCHECKS "Extra checks and asserts in the code with a high penalty on performance" OFF)
 option(HIOP_WITH_KRON_REDUCTION "Build Kron Reduction code (requires UMFPACK)" OFF)
 option(HIOP_DEVELOPER_MODE "Build with extended warnings and options" OFF)
+
 #with testing drivers capable of 'selfchecking' (-selfcheck)
 option(HIOP_WITH_MAKETEST "Enable 'make test'" ON)
 option(HIOP_BUILD_SHARED "Build shared library" OFF)
