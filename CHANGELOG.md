@@ -1,6 +1,22 @@
 # Change Log
 All notable changes to HiOp are documented in this file.
 
+## Version 1.2.0: Release of HiOpBBpy solver for derivative-free optimization
+* HiOpBBpy Batched Bayesian Optimizer  @thartland in https://github.com/LLNL/hiop/pull/724
+* HiOpBBpy Nonlinear constraints by @nychiang in https://github.com/LLNL/hiop/pull/726
+* HiOpBBpy parallel MPI evaluation manager to utils by @weslleyspereira in https://github.com/LLNL/hiop/pull/733
+* Derivative checker for quasi-Newton and Newton IPMs by @cnpetra in https://github.com/LLNL/hiop/pull/731
+* HiOpBBpy parallel Evaluator Upgrade by @thartland in https://github.com/LLNL/hiop/pull/734
+* Addressing misc compilation warnings by @cnpetra in https://github.com/LLNL/hiop/pull/738
+* Logger for HiOpBBpy by @nychiang in https://github.com/LLNL/hiop/pull/739
+* README update with HiOpBBpy information by @thartland in https://github.com/LLNL/hiop/pull/742
+* Misc fixes for fixed variables, feasibility restoration, Krylov-based IR, and others by @cnpetra in https://github.com/LLNL/hiop/pull/710
+
+## New Contributors
+* @weslleyspereira made their first contribution in https://github.com/LLNL/hiop/pull/733
+
+**Full Changelog**: https://github.com/LLNL/hiop/compare/v1.1.1...v1.2.0
+
 ## Version 1.1.1: Misc updates to quasi-Newton solver and build system, updates to recent RAJA, and preliminary black-box solver
 * Consolidating qn solver by @cnpetra in https://github.com/LLNL/hiop/pull/697 and https://github.com/LLNL/hiop/pull/699
 * Use clang-format in hiop to keep code style by @nychiang in https://github.com/LLNL/hiop/pull/700
