@@ -1,8 +1,8 @@
 """
 Implementation of the Branch and Bound (BnB) algorithm for Optimization of Acquisition Functions in Bayesian optimization.
-This module currently supports Convex Kernel Functions (Matern and SE) and Acquisition Functions EI and LCB.
+This module currently supports Isotropic Kernel Functions (Matern and SE) and Acquisition Functions EI and LCB.
 
-Authors:    Natalia Rodriguez Figueroa <rodriguezfig1@llnl.gov>
+Authors:    Natalia Rodriguez Figueroa <rodriguezfig1@llnl.gov> <natalia_rodriguezuc@berkeley.edu>
 """
 
 import heapq
