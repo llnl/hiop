@@ -1,5 +1,5 @@
 '''
-This is the setup file for installing hiopbbpy
+This is the setup file for installing HiOpBBpy
 
 Authors:    Tucker Hartland <hartland1@llnl.gov>
             Nai-Yuan Chiang <chiang7@llnl.gov>
@@ -18,8 +18,8 @@ if os.getenv("ADD_CYIPOPT", "0") == "1":
 
 metadata = dict(
         name="hiopbbpy",
-        version="0.0.8",
-        description="HiOp black box optimization (hiopbbpy)",
+        version="1.2.0",
+        description="HiOp black box optimization (HiOpBBpy)",
         author="Tucker hartland et al.",
         author_email="hartland1@llnl.gov",
         license="BSD-3",
