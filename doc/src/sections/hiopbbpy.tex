@@ -20,7 +20,7 @@ where $\mathcal{B}$ constitutes box constraints on $x$. Here, we detail how to i
 \end{verbatim}
 
 \Hibbpy also supports using nonlinear optimization solver Ipopt \cite{ipopt_impl} as its internal solver. 
-In order to use Ipopt, \Hibbpy optionally depends on {\it{cyipopt}}, which is a python wrapper of Ipopt.
+In order to use Ipopt, \Hibbpy optionally depends on {\it{cyipopt}}, which is a Python wrapper of Ipopt.
 To use Ipopt via {\it{cyipopt}},, one can install Ipopt from source, and then export the \verb~IPOPT_PATH~ and 
 \begin{verbatim}
 > export PKG_CONFIG_PATH=$PKG_CONFIG_PATH:$IPOPT_PATH/lib/pkgconfig
@@ -70,7 +70,7 @@ class LpNormProblem(Problem):
 One example to the \Hibbpy Bayesian optimization algorithm is the following:
 
 
-\begin{lstlisting}
+\begin{lstlisting}[language=Python]
 import numpy as np
 from hiopbbpy.surrogate_modeling import smtKRG
 from hiopbbpy.opt import BOAlgorithm
@@ -96,7 +96,7 @@ if __name__ == "__main__":
 
   acq_type = "EI" # EI or LCB
   options = {
-	'acquisition_type': acq_type,
+	'acquisition\_type': acq_type,
 	'log_level': 'info',
 	'bo_maxiter': 10,
   }
@@ -148,27 +148,23 @@ if __name__ == "__main__":
 
   acq_type = "EI" # EI or LCB
   options = {
-    'acquisition_type': acq_type,
-    'log_level': 'info',
-    'bo_maxiter': 10,
-    'batch_size': 4,
-    'obj_evaluator': obj_evaluator,
-    'opt_evaluator': opt_evaluator
+     'acquisition_type': acq_type,
+     'log_level': 'info',
+     'bo_maxiter': 10,
+     'batch_size': 4,
+     'obj_evaluator': obj_evaluator,
+     'opt_evaluator': opt_evaluator
   }
   # Instantiate and run Bayesian Optimization
   bo = BOAlgorithm(problem, gp_model, x_train, y_train, options = options)
   bo.optimize()
 \end{lstlisting}
 
-To run this python script \verb~BODriver.py~, in a python environment in which \verb~mpi4py~, and \Hibbpy are installed do the following:
-
-
+To run this Python script \verb~BODriver.py~, in a Python environment in which \verb~mpi4py~, and \Hibbpy, the following command can be used
 \begin{verbatim}
 > mpirun -np 4 python -m mpi4py.futures BODriver.py 
 \end{verbatim}
-
-To run the same script in a slurm based scheduling system do the following:
-
+In a Slurm-based scheduling system, the command should look be issued as 
 \begin{verbatim}
 > srun -n 4 python -m mpi4py.futures BODriver.py 
 \end{verbatim}
