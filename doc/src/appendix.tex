@@ -19,7 +19,7 @@ Internally, a slack variable $s$ is introduced and the inequality constraints~\e
 
 \warningcp{Note:} If equality constraints $c(x)=c_E$ are present, they will be slightly relaxed to inequalities $c_E - C_1\leq c(x)\leq c_E+C_1$, where $C_1$ is a small positive perturbation that will be updated by \Hi internally. Consequently, with the condensed linear algebra, \Hi solves problems with equality constraints as inequality-only problems in the form of~\eqref{spobj_condensed}-\eqref{spbounds_condensed}.\\
 
-Using the notations from \cite{petra_hiop}, the condensed linear system solves the most stable ``xdycyd'' KKT linear system 
+Using the notations from~\cite{petra2019memory}, the condensed linear system solves the most stable ``xdycyd'' KKT linear system 
 \begin{equation} \label{KKT_xdycyd_condensed}
   \begin{bmatrix} 
   H+D_x+\delta_{w}I & 0  & J_d^T\\

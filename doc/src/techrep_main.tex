@@ -11,7 +11,9 @@
 \usetikzlibrary{patterns}
 
 \usepackage{adjustbox}
+\usepackage{textcomp}
 \usepackage{listings}
+
 
 \usepackage{color}
 \definecolor{secblue}{HTML}{3B5E7F}
@@ -134,7 +136,7 @@ backgroundcolor=\color{lbcolor},
 \vspace{3cm}
 
   {\huge\bfseries \Hi\ -- User Guide} \\[14pt]
-  {\large\bfseries version 1.1.0}
+  {\large\bfseries version 1.2.0}
 
 \vspace{3cm}
 
@@ -156,7 +158,7 @@ Lawrence Livermore National Laboratory}}}\\[10pt]
 \vspace{4.75cm}
 
  \textcolor{violet}{{\large\bfseries Oct 15, 2017} \\
-{\large\bfseries Updated Sept 22, 2024}}
+{\large\bfseries Updated Sept 10, 2025}}
 
 \vspace{0.75cm}
 
@@ -252,9 +254,9 @@ While the MPI quasi-Newton solver of \texttt{Hiop} targets DAE- and PDE-constrai
 The goal of quasi-Newton solver of \Hi is to remove the parallelization limitations of existing state-of-the-art solvers for nonlinear programming (NLP) and match/surpass the parallel scalability of the underlying PDE or DAE solver. Such limitation occurs whenever the dimensionality of the optimization space  is as large as the dimensionality of the discretization of the differential systems of equations governing the optimization. In these cases, the use of existing NLP solvers  results in i. considerable long time spent in optimization, which affects the parallel scalability, and/or ii. memory requirements beyond the memory capacity of the computational node that runs the optimization. \Hi removes these scalability/parallelization bottlenecks (for certain optimization problems described above) by offering interface for a \textit{memory-distributed} specification of the problem and parallelizing the optimization search using specialized parallel linear algebra technique.
 z
 The general computational approach in \Hi is to use existing state-of-the-art NLP algorithms and develop linear algebra kernels tailored to the specific of this
-class of problems. \Hi is based on an interior-point line search filter method~\cite{waecther_05_ipopt2,waecther_05_ipopt} and follows the implementation details from~\cite{waecther_05_ipopt0}, which is the implementation paper for IPOPT open-source NLP solver. The quasi-Newton approach is based on limited-memory secant approximations of the Hessian~\cite{ByrdNocedalSchnabel_94_quasiNewtonRepres}, which is generalized as required by the specific of interior-point methods for constrained optimization problems~\cite{petra_hiop}. The specialized linear algebra decomposition is obtained by using a Schur-complement reduction that
+class of problems. \Hi is based on an interior-point line search filter method~\cite{waecther_05_ipopt2,waecther_05_ipopt} and follows the implementation details from~\cite{waecther_05_ipopt0}, which is the implementation paper for IPOPT open-source NLP solver. The quasi-Newton approach is based on limited-memory secant approximations of the Hessian~\cite{ByrdNocedalSchnabel_94_quasiNewtonRepres}, which is generalized as required by the specific of interior-point methods for constrained optimization problems~\cite{petra2019memory}. The specialized linear algebra decomposition is obtained by using a Schur-complement reduction that
 leverages the fact that the quasi-Newton Hessian matrix has a small number of
-dense blocks that border a low-rank update of a diagonal matrix. The technique is described  in ~\cite{petra_hiop}. The Newton interior-point solver of \Hi uses linear algebra specialized to the particular form of the MDS NLPs supported by this solver, for more details consult Section~\ref{sec:mds}. 
+dense blocks that border a low-rank update of a diagonal matrix. The technique is described  in~\cite{petra2019memory}. The Newton interior-point solver of \Hi uses linear algebra specialized to the particular form of the MDS NLPs supported by this solver, for more details consult Section~\ref{sec:mds}. 
 
 The C++ parallel implementation in \Hi
 is  lightweight and portable since it is expressed and implemented  only in terms of parallel (multi-)vector operations (implemented internally using BLAS level 1 and level 2 operations and MPI for communication) and BLAS level 3 and LAPACK operations for small dense matrices.
@@ -966,7 +968,8 @@ Parameters:
 \begin{itemize}
 \item append to the compiler's include path the location of the HiOP's headers: \begin{verbatim} -Ihiop-dir/include \end{verbatim}
 \item specify \texttt{libhiop.a} to the linker, possibly adding the HiOP's library directory to the linker's libraries paths: 
-\begin{verbatim}-Lhiop-dir/lib -lhiop\end{verbatim} \end{itemize}
+\begin{verbatim}-Lhiop-dir/lib -lhiop\end{verbatim} 
+\end{itemize}
 Here, \texttt{hiop-dir} is the \Hi's distribution directory  (created using \Hi's build system, in particular   by using \texttt{make install} command).
 
 In addition, a shared dynamic load library can be also built by using \texttt{HIOP\_BUILD\_SHARED} option with cmake. 
