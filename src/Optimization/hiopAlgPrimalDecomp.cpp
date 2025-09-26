@@ -325,10 +325,11 @@ void hiopAlgPrimalDecomposition::HessianApprox::update_ratio()
   // printf("recourse estimate inside HessianApprox %18.12e\n",rk);
   double rho_k = (fkm1 - fk) / (fkm1 - rk);
 
-  log_->printf(hovSummary, " previous val  %18.12e,", fkm1);
-  log_->printf(hovSummary, " real val %18.12e,", fk);
-  log_->printf(hovSummary, " predicted val %18.12e,", rk);
-  log_->printf(hovSummary, " rho_k %18.12e\n", rho_k);
+  log_->printf(hovSummary, "PriDec: updating ratio (no basecase) ...\n");
+  log_->printf(hovSummary, "PriDec: previous (real) func val  %18.12e,", fkm1);
+  log_->printf(hovSummary, "PriDec: real val %18.12e,", fk);
+  log_->printf(hovSummary, "PriDec: predicted val %18.12e,", rk);
+  log_->printf(hovSummary, "PriDec: rho_k %18.12e\n", rho_k);
 
   // a measure for when alpha should be decreasing (in addition to being good approximation)
   double quanorm = 0.;
@@ -338,9 +339,8 @@ void hiopAlgPrimalDecomposition::HessianApprox::update_ratio()
   quanorm = alpha_ * quanorm;
 
   double alpha_g_ratio = quanorm / fabs(gradnorm);
-  if(ver_ >= outlevel2) {
-    printf("alpha norm ratio  %18.12e", alpha_g_ratio);
-  }
+  log_->printf(hovSummary, "PriDec: alpha_g_ratio  %18.12e", alpha_g_ratio);
+
   // using a trust region criteria for adjusting ratio
   update_ratio_tr(rho_k, fkm1, fk, alpha_g_ratio, ratio_);
 }
@@ -351,23 +351,24 @@ void hiopAlgPrimalDecomposition::HessianApprox::update_ratio_tr(const double rho
                                                                 const double alpha_g_ratio,
                                                                 double& alpha_ratio)
 {
+  log_->printf(hovSummary, "PriDec: updating ratio tr ...\n");
   if(rhok > 0 && rhok < 1 / 4. && (rkm1 - rk > 0)) {
     alpha_ratio = alpha_ratio / 0.75;
-    log_->printf(hovSummary, "increasing alpha ratio or increasing minimum for quadratic coefficient\n");
+    log_->printf(hovSummary, "PriDec: increasing alpha ratio or increasing minimum for quadratic coefficient\n");
   } else if(rhok < 0 && (rkm1 - rk) < 0) {
     alpha_ratio = alpha_ratio / 0.75;
-    log_->printf(hovSummary, "increasing alpha ratio or increasing minimum for quadratic coefficient\n");
+    log_->printf(hovSummary, "PriDec: increasing alpha ratio or increasing minimum for quadratic coefficient\n");
   } else {
     if(rhok > 0.75 && rhok < 1.333 && (rkm1 - rk > 0) && alpha_g_ratio > 0.1) {
       alpha_ratio *= 0.75;
-      log_->printf(hovSummary, "decreasing alpha ratio or decreasing minimum for quadratic coefficient\n");
+      log_->printf(hovSummary, "PriDec: decreasing alpha ratio or decreasing minimum for quadratic coefficient\n");
     } else if(rhok > 1.333 && (rkm1 - rk < 0)) {
       alpha_ratio = alpha_ratio / 0.75;
-      log_->printf(hovSummary, "recourse increasing and increased more in real contingency, so increasing alpha\n");
+      log_->printf(hovSummary, "PriDec: recourse increasing and increased more in real contingency, so increasing alpha\n");
     }
   }
   if((rhok > 0 && rhok < 1 / 8. && (rkm1 - rk > 0)) || (rhok < 0 && rkm1 - rk < 0)) {
-    log_->printf(hovWarning, "This step is rejected.\n");
+    log_->printf(hovWarning, "PriDec: This step is rejected.\n");
     // sol_base = solm1; // when rejected, return to the previous iteration point. this mechanism has yet to be implemented.
     // f = fm1;
     // gradf = gkm1;
@@ -380,15 +381,15 @@ void hiopAlgPrimalDecomposition::HessianApprox::update_ratio(const double base_v
 {
   double rk = fkm1 + fkm1_lin;
 
-  rk += 0.5 * alpha_ * (skm1->twonorm()) * (skm1->twonorm());  // include basecase objective
-  // printf("recourse estimate inside HessianApprox %18.12e\n",rk);
+  rk += 0.5 * alpha_ * (skm1->twonorm()) * (skm1->twonorm());
+  // include basecase objective
   double rho_k = (base_vm1 + fkm1 - fk - base_v) / (fkm1 + base_vm1 - rk - base_v);
-
-  log_->printf(hovSummary, "previous base  %18.12e,", base_vm1);
-  log_->printf(hovSummary, " current base %18.12e,", base_v);
-  log_->printf(hovSummary, " previous val  %18.12e,", fkm1);
-  log_->printf(hovSummary, " real val %18.12e,", fk);
-  log_->printf(hovSummary, " predicted val %18.12e,", rk);
+  log_->printf(hovSummary, "PriDec: updating ratio (w/ basecase) ratio_=%12.5e ...\n", ratio_);
+  log_->printf(hovSummary, "PriDec: previous basecase %18.12e", base_vm1);
+  log_->printf(hovSummary, " basecase %18.12e", base_v);
+  log_->printf(hovSummary, " func val %18.12e\n", fkm1);
+  log_->printf(hovSummary, "PriDec: real/true val %18.12e", fk);
+  log_->printf(hovSummary, " predicted val %18.12e", rk);
   log_->printf(hovSummary, " rho_k %18.12e\n", rho_k);
 
   // using a trust region criteria for adjusting ratio
@@ -401,17 +402,24 @@ void hiopAlgPrimalDecomposition::HessianApprox::update_ratio(const double base_v
 
 void hiopAlgPrimalDecomposition::HessianApprox::update_ratio_tr(const double rhok, double& alpha_ratio)
 {
-  if(rhok < 1 / 4.) {
+  log_->printf(hovSummary, "PriDec: updating ratio tr (w/ basecase): rhok=%12.5e ...\n", rhok);
+  if(rhok < 0.25) {
+    log_->printf(hovSummary,
+                 "PriDec: increasing (alpha) ratio or increasing minimum for quadratic coefficient: %12.5e -> %12.5e\n",
+                 alpha_ratio,
+                 alpha_ratio / 0.75);
     alpha_ratio = alpha_ratio / 0.75;
-    log_->printf(hovSummary, "increasing alpha ratio or increasing minimum for quadratic coefficient\n");
   } else {
     if(rhok > 0.75) {
       alpha_ratio *= 0.75;
-      log_->printf(hovSummary, "decreasing alpha ratio or decreasing minimum for quadratic coefficient\n");
+      log_->printf(hovSummary,
+                   "PriDec: decreasing (alpha) ratio or decreasing minimum for quadratic coefficient:  %12.5e -> %12.5e\n",
+                   alpha_ratio,
+                   alpha_ratio*0.75);
     }
   }
   if(rhok < 1 / 8.) {
-    log_->printf(hovSummary, "This step needs to be rejected.\n");
+    log_->printf(hovSummary, "PriDec: this step needs to be rejected: rho_k=%12.5e is too small\n", rhok);
     // sol_base = solm1;
     // f = fm1;
     // gradf = gkm1;  // rejection mechanism to be implemented
@@ -437,17 +445,18 @@ double hiopAlgPrimalDecomposition::HessianApprox::get_alpha_BB()
 
 double hiopAlgPrimalDecomposition::HessianApprox::get_alpha_f(const hiopVector& gk)
 {
-  double temp3 = 0.;
-
   // call update first, gkm1 is already gk
-  temp3 = gk.twonorm() * gk.twonorm();
-
-  alpha_ = temp3 / 2.0 / fk;
+  const double temp3 = gk.dotProductWith(gk);
+  const double alpha = temp3 / 2.0 / fk;
   // printf("alpha check %18.12e\n",temp3/2.0);
-  alpha_ *= ratio_;
+  alpha_ = alpha * ratio_;
   alpha_ = std::max(alpha_min, alpha_);
   alpha_ = std::min(alpha_max, alpha_);
-  log_->printf(hovScalars, "alpha ratio %18.12e\n", ratio_);
+  log_->printf(hovSummary,
+               "PriDec: get_alpha_f: alpha %12.5e  ratio %12.5e  final alpha %12.5e\n",
+               alpha,
+               ratio_,
+               alpha_);
   return alpha_;
 }
 
@@ -456,7 +465,7 @@ double hiopAlgPrimalDecomposition::HessianApprox::get_alpha_tr()
   alpha_ *= tr_ratio_;
   alpha_ = std::max(alpha_min, alpha_);
   alpha_ = std::min(alpha_max, alpha_);
-  log_->printf(hovScalars, "alpha ratio %18.12e\n", ratio_);
+  log_->printf(hovScalars, "PriDec: get_alpha_tr: alpha ratio %18.12e\n", ratio_);
   return alpha_;
 }
 
@@ -486,7 +495,7 @@ double hiopAlgPrimalDecomposition::HessianApprox::check_convergence_grad(const h
   log_->printf(hovScalars, " temp2 %18.12e,", temp2);
   log_->printf(hovScalars, " temp3 %18.12e,", temp3);
   log_->printf(hovScalars, " temp4 %18.12e\n", temp4);
-
+  log_->printf(hovSummary, "PriDec: check convergence grad: convg %18.12e\n", convg);
   delete temp;
   return convg;
 }
@@ -498,7 +507,7 @@ double hiopAlgPrimalDecomposition::HessianApprox::check_convergence_fcn(const do
   assert(n_ == gkm1->get_local_size());
   predicted_decrease += 0.5 * alpha_ * (skm1->twonorm()) * (skm1->twonorm());
 
-  log_->printf(hovScalars, "predicted decrease  %18.12e\n", predicted_decrease);
+  log_->printf(hovSummary, "PriDec: check convergence fcn: predicted decrease %18.12e\n", predicted_decrease);
 
   predicted_decrease += base_v - base_vm1;
   predicted_decrease = fabs(predicted_decrease);
@@ -672,19 +681,19 @@ bool hiopAlgPrimalDecomposition::stopping_criteria(const int it, const double co
 {
   // gradient based stopping criteria
   if(convg < tol_) {
-    log_->printf(hovSummary, "reaching error tolerance, successfully found solution\n");
+    log_->printf(hovSummary, "PriDec: reached error tolerance, successfully found solution\n");
     return true;
   }
   // stopping criteria based on the change in objective function
   if(it == max_iter_ - 1) {
-    log_->printf(hovSummary, "reached maximum iterations, optimization stops.\n");
+    log_->printf(hovSummary, "PriDec: reached maximum iterations, optimization stops.\n");
 
     return true;
   }
   // stopping criteria based on acceptable tolerance and consecutive count
   if(accp_count == accp_count_) {
-    log_->printf(hovSummary, "reached acceptable tolerance of %18.12e", accp_count_);
-    log_->printf(hovSummary, " for %d iterations, optimization stops.\n", accp_tol_);
+    log_->printf(hovSummary, "PriDec: reached acceptable tolerance of %18.12e", accp_count_);
+    log_->printf(hovSummary, " in %d iterations, optimization stops.\n", accp_tol_);
     return true;
   }
   return false;
@@ -737,7 +746,9 @@ void hiopAlgPrimalDecomposition::set_local_accum(const std::string local_accum) 
 #ifdef HIOP_USE_MPI
 hiopSolveStatus hiopAlgPrimalDecomposition::run()
 {
-  log_->printf(hovSummary, "===============\nHiop Primal Decomposition SOLVER\n===============\n");
+  log_->printf(hovSummary, "==================================\n");
+  log_->printf(hovSummary, " Hiop Primal Decomposition SOLVER \n");
+  log_->printf(hovSummary, "==================================\n");
   if(options_->GetString("print_options") != "no") {
     log_->write(nullptr, *options_, hovSummary);
   }
@@ -750,8 +761,8 @@ hiopSolveStatus hiopAlgPrimalDecomposition::run()
     return run_single();  // call the serial solver
   }
   if(my_rank_ == 0) {
-    log_->printf(hovSummary, "total number of recourse problems  %lu\n", S_);
-    log_->printf(hovSummary, "total ranks %d\n", comm_size_);
+    log_->printf(hovSummary, "PriDec: total number of recourse problems  %lu\n", S_);
+    log_->printf(hovSummary, "PriDec: total ranks %d\n", comm_size_);
   }
   // initial point set to all zero, for now
   x_->setToConstant(0.0);
@@ -790,7 +801,8 @@ hiopSolveStatus hiopAlgPrimalDecomposition::run()
   if(ver_ >= hovSummary) {
     hess_appx_2->set_verbosity(ver_);
   }
-
+  log_->printf(hovSummary, "PriDec: using initial (alpha) ratio %12.5e\n", alpha_ratio_);
+  
   double base_val = 0.;      // basecase objective value
   double base_valm1 = 0.;    // basecase objective value from the previous step
   double recourse_val = 0.;  // recourse objective value
@@ -827,8 +839,9 @@ hiopSolveStatus hiopAlgPrimalDecomposition::run()
 
       options_file_master_prob = options_->GetString("options_file_master_prob");
 
+      double ts = MPI_Wtime();
       solver_status_ = master_prob_->solve_master(*x_, false, 0, 0, 0, options_file_master_prob.c_str());
-
+      double te = MPI_Wtime();
       if(solver_status_) {
         // to do, what if solve fails?
       }
@@ -837,6 +850,11 @@ hiopSolveStatus hiopAlgPrimalDecomposition::run()
 
       base_val = master_prob_->get_objective();
       base_valm1 = master_prob_->get_objective();
+      log_->printf(hovSummary,
+                   "PriDec: iter 0 master solve %g seconds  objective %12.5e  status %d.\n",
+                   te-ts,
+                   base_val,
+                   solver_status_);
     }
 
     // send basecase solutions to all ranks
@@ -902,9 +920,9 @@ hiopSolveStatus hiopAlgPrimalDecomposition::run()
           int mpi_test_flag = rec_prob[r]->test();
           if(mpi_test_flag && (finish_flag[r] == 0)) {  // receive completed
             if(!last_loop && idx < static_cast<int>(S_)) {
-              log_->printf(hovLinesearch, "idx %d sent to rank %d\n", idx, r);
+              log_->printf(hovLinesearch, "PriDec: idx %d sent to rank %d\n", idx, r);
             } else {
-              log_->printf(hovLinesearch, "last loop for rank %d\n", r);
+              log_->printf(hovLinesearch, "PriDec: last loop for rank %d\n", r);
             }
             // add to the master rank variables
             rval += rec_prob[r]->value();
@@ -948,7 +966,7 @@ hiopSolveStatus hiopAlgPrimalDecomposition::run()
         req_cont_idx[r]->post_send(1, r, comm_world_);
       }
       t2 = MPI_Wtime();
-      log_->printf(hovFcnEval, "Elapsed time for entire iteration %d is %f\n", it, t2 - t1);
+      log_->printf(hovFcnEval, "PriDec: Elapsed time for entire iteration %d is %f\n", it, t2 - t1);
     }
 
     // evaluators
@@ -1010,8 +1028,8 @@ hiopSolveStatus hiopAlgPrimalDecomposition::run()
       req_cont_idx[my_rank_]->post_recv(1, rank_master, comm_world_);
       while(cont_idx[0] != -1) {  // loop until end signal received
         mpi_test_flag = req_cont_idx[my_rank_]->test();
-        /* contigency starts at 0
-         * sychronous implmentation of contingencist
+        /* contingency starts at 0
+         * sychronous implementation of contingencies
          */
         if(mpi_test_flag) {
           // log_->printf(hovIteration, "contingency index %d, rank %d)\n", cont_idx[0],my_rank_);
@@ -1086,7 +1104,7 @@ hiopSolveStatus hiopAlgPrimalDecomposition::run()
 
       recourse_val = rval;
 
-      log_->printf(hovSummary, "real rval %18.12e\n", rval);
+      log_->printf(hovSummary, "PriDec: real recourse val %18.12e\n", rval);
 
       hess_appx->setToConstant(1.0);
 
@@ -1101,7 +1119,7 @@ hiopSolveStatus hiopAlgPrimalDecomposition::run()
         hess_appx_2->initialize(rval, *x0, *grad_r);
         double alp_temp = hess_appx_2->get_alpha_f(*grad_r);
         // double alp_temp = hess_appx_2->get_alpha_tr(); // alternative update rule for alpha
-        log_->printf(hovSummary, "alpd %18.12e\n", alp_temp);
+        log_->printf(hovSummary, "PriDec: iter 0   Hessian alpd %18.12e\n", alp_temp);
 
         hess_appx->setToConstant(alp_temp);
       } else {
@@ -1117,12 +1135,12 @@ hiopSolveStatus hiopAlgPrimalDecomposition::run()
         // double alp_temp = hess_appx_2->get_alpha_tr();
 
         // double alp_temp2 = hess_appx_2->get_alpha_BB();
-        log_->printf(hovSummary, "alpd %18.12e\n", alp_temp);
+        log_->printf(hovSummary, "PriDec: iter %d   Hessian alpd %18.12e\n", it, alp_temp);
         // log_->printf(hovSummary, "alpd BB %18.12e\n", alp_temp2);
         convg_g = hess_appx_2->check_convergence_grad(*grad_r);
-        log_->printf(hovSummary, "gradient convergence measure %18.12e\n", convg_g);
+        log_->printf(hovSummary, "PriDec: gradient convergence measure %18.12e\n", convg_g);
         convg_f = hess_appx_2->check_convergence_fcn(base_val, base_valm1);
-        log_->printf(hovSummary, "function val convergence measure %18.12e\n", convg_f);
+        log_->printf(hovSummary, "PriDec: function val convergence measure %18.12e\n", convg_f);
         convg = std::min(convg_f, convg_g);
         hess_appx->setToConstant(alp_temp);
       }
@@ -1133,11 +1151,11 @@ hiopSolveStatus hiopAlgPrimalDecomposition::run()
 
       if(it > 0) {
         log_->printf(hovSummary,
-                     "iteration           objective                   residual                   "
+                     "PriDec: iteration           objective                   residual                   "
                      "step_size                   convg\n");
 
         log_->printf(hovSummary,
-                     "%d              %18.12e            %18.12e           %18.12e         "
+                     "PriDec: %d              %18.12e            %18.12e           %18.12e         "
                      "%18.12e\n",
                      it,
                      base_val + recourse_val,
@@ -1161,15 +1179,20 @@ hiopSolveStatus hiopAlgPrimalDecomposition::run()
 
       options_file_master_prob = options_->GetString("options_file_master_prob");
 
-      // log_->printf(hovIteration, "solving full problem starts, iteration %d \n", it);
+      double ts = MPI_Wtime();
       solver_status_ = master_prob_->solve_master(*x_, true, 0, 0, 0, options_file_master_prob.c_str());
-
-      log_->printf(hovSummary, "solved full problem with objective %18.12e\n", master_prob_->get_objective());
+      double te = MPI_Wtime();
+      log_->printf(hovSummary,
+                   "PriDec iter %d solved master in %g seconds  objective %12.5e  status %d.\n",
+                   it,
+                   master_prob_->get_objective(),
+                   te-ts,
+                   solver_status_);
 
       log_->write(nullptr, *x_, hovFcnEval);
 
       t2 = MPI_Wtime();
-      log_->printf(hovFcnEval, "Elapsed time for entire iteration %d is %f\n", it, t2 - t1);
+      log_->printf(hovFcnEval, "PriDec: Elapsed time for entire iteration %d is %f\n", it, t2 - t1);
 
       dinf = step_size_inf(nc_, *xc_idx_, *x_, *x0);
 
@@ -1223,8 +1246,10 @@ hiopSolveStatus hiopAlgPrimalDecomposition::run()
  */
 hiopSolveStatus hiopAlgPrimalDecomposition::run_local()
 {
-  log_->printf(hovSummary, "===============\nHiop Primal Decomposition SOLVER\n===============\n");
-  log_->printf(hovSummary, "===============\nUsing local accumulation OPTION\n===============\n");
+  log_->printf(hovSummary, "==================================\n");
+  log_->printf(hovSummary, " Hiop Primal Decomposition SOLVER \n");
+  log_->printf(hovSummary, "==================================\n");
+  log_->printf(hovSummary, "Using local accumulation option\n");
   if(options_->GetString("print_options") != "no") {
     log_->write(nullptr, *options_, hovSummary);
   }
@@ -1282,7 +1307,8 @@ hiopSolveStatus hiopAlgPrimalDecomposition::run_local()
   if(ver_ >= hovSummary) {
     hess_appx_2->set_verbosity(ver_);
   }
-
+  log_->printf(hovSummary, "PriDec: using initial (alpha) ratio %12.5e\n", alpha_ratio_);
+  
   double base_val = 0.;      // basecase objective value
   double base_valm1 = 0.;    // basecase objective value from the previous step
   double recourse_val = 0.;  // recourse objective value
@@ -1315,8 +1341,10 @@ hiopSolveStatus hiopAlgPrimalDecomposition::run_local()
       // log_->printf(hovIteration, "my rank for solver  %d\n", my_rank_);
 
       options_file_master_prob = options_->GetString("options_file_master_prob");
+      double ts = MPI_Wtime();
       solver_status_ = master_prob_->solve_master(*x_, false, 0, 0, 0, options_file_master_prob.c_str());
-
+      double te = MPI_Wtime();
+      
       if(solver_status_) {
         // to do, what if solve fails?
       }
@@ -1324,6 +1352,11 @@ hiopSolveStatus hiopAlgPrimalDecomposition::run_local()
       log_->write(nullptr, *x_, hovFcnEval);
       base_val = master_prob_->get_objective();
       base_valm1 = master_prob_->get_objective();
+      log_->printf(hovSummary,
+                   "PriDec iter 0 solved master in %g seconds  objective %12.5e  status %d.\n",
+                   te-ts,
+                   base_val,
+                   solver_status_);
     }
 
     // send basecase solutions to all ranks
@@ -1613,7 +1646,7 @@ hiopSolveStatus hiopAlgPrimalDecomposition::run_local()
       rval /= S_;
       grad_r->scale(1.0 / S_);
 
-      log_->printf(hovSummary, "real rval %18.12e\n", rval);
+      log_->printf(hovSummary, "PriDec: real recourse val %18.12e\n", rval);
 
       hess_appx->setToConstant(1.0);
 
@@ -1628,7 +1661,7 @@ hiopSolveStatus hiopAlgPrimalDecomposition::run_local()
         hess_appx_2->initialize(rval, *x0, *grad_r);
         double alp_temp = hess_appx_2->get_alpha_f(*grad_r);
         // double alp_temp = hess_appx_2->get_alpha_tr(); // alternative update rule for alpha
-        log_->printf(hovSummary, "alpd %18.12e\n", alp_temp);
+        log_->printf(hovSummary, "PriDec: iter 0   Hessian alpd %18.12e\n", alp_temp);
 
         hess_appx->setToConstant(alp_temp);
       } else {
@@ -1644,13 +1677,14 @@ hiopSolveStatus hiopAlgPrimalDecomposition::run_local()
         // double alp_temp = hess_appx_2->get_alpha_tr();
 
         // double alp_temp2 = hess_appx_2->get_alpha_BB();
-        log_->printf(hovSummary, "alpd %18.12e\n", alp_temp);
+        log_->printf(hovSummary, "PriDec: iter %d   Hessian alpd %18.12e\n", it, alp_temp);
         // log_->printf(hovSummary, "alpd BB %18.12e\n", alp_temp2);
         convg_g = hess_appx_2->check_convergence_grad(*grad_r);
-        log_->printf(hovSummary, "gradient convergence measure %18.12e\n", convg_g);
+        log_->printf(hovSummary, "PriDec: gradient convergence measure %18.12e\n", convg_g);
         convg_f = hess_appx_2->check_convergence_fcn(base_val, base_valm1);
-        log_->printf(hovSummary, "function val convergence measure %18.12e\n", convg_f);
+        log_->printf(hovSummary, "PriDec: function val convergence measure %18.12e\n", convg_f);
         convg = std::min(convg_f, convg_g);
+        log_->printf(hovSummary, "PriDec: Hessian set to %18.12e\n", alp_temp);
         hess_appx->setToConstant(alp_temp);
       }
 
@@ -1660,11 +1694,11 @@ hiopSolveStatus hiopAlgPrimalDecomposition::run_local()
 
       if(it > 0) {
         log_->printf(hovSummary,
-                     "iteration           objective                   residual                   "
+                     "PriDec: iteration           objective                   residual                   "
                      "step_size                   convg\n");
 
         log_->printf(hovSummary,
-                     "%d              %18.12e            %18.12e           %18.12e         "
+                     "PriDec: %d              %18.12e            %18.12e           %18.12e         "
                      "%18.12e\n",
                      it,
                      base_val + recourse_val,
@@ -1688,15 +1722,21 @@ hiopSolveStatus hiopAlgPrimalDecomposition::run_local()
 
       options_file_master_prob = options_->GetString("options_file_master_prob");
 
-      // log_->printf(hovIteration, "solving full problem starts, iteration %d \n", it);
+      const auto ts = MPI_Wtime();
       solver_status_ = master_prob_->solve_master(*x_, true, 0, 0, 0, options_file_master_prob.c_str());
+      const auto te = MPI_Wtime();
 
-      log_->printf(hovSummary, "solved full problem with objective %18.12e\n", master_prob_->get_objective());
+      log_->printf(hovSummary,
+                   "PriDec iter %d solved master in %g seconds  objective %12.5e  status %d.\n",
+                   it,
+                   master_prob_->get_objective(),
+                   te-ts,
+                   solver_status_);
 
       log_->write(nullptr, *x_, hovFcnEval);
 
       t2 = MPI_Wtime();
-      log_->printf(hovFcnEval, "Elapsed time for entire iteration %d is %f\n", it, t2 - t1);
+      log_->printf(hovFcnEval, "PriDec: Elapsed time for entire iteration %d is %f\n", it, t2 - t1);
 
       dinf = step_size_inf(nc_, *xc_idx_, *x_, *x0);
 
@@ -1747,7 +1787,9 @@ hiopSolveStatus hiopAlgPrimalDecomposition::run_local()
 #else
 hiopSolveStatus hiopAlgPrimalDecomposition::run()
 {
-  log_->printf(hovSummary, "===============\nHiop Primal Decomposition SOLVER\n===============\n");
+  log_->printf(hovSummary, "==================================\n");
+  log_->printf(hovSummary, " Hiop Primal Decomposition SOLVER \n");
+  log_->printf(hovSummary, "==================================\n");
   if(options_->GetString("print_options") != "no") {
     log_->write(nullptr, *options_, hovSummary);
   }
@@ -1759,7 +1801,8 @@ hiopSolveStatus hiopAlgPrimalDecomposition::run()
  */
 hiopSolveStatus hiopAlgPrimalDecomposition::run_single()
 {
-  printf("total number of recourse problems  %lu\n", S_);
+  log_->printf(hovSummary, "PriDec: run_single\n");
+  log_->printf(hovSummary, "PriDec: total number of recourse problems  %lu\n", S_);
   // initial point for now set to all zero
   x_->setToZero();
 
@@ -1782,7 +1825,8 @@ hiopSolveStatus hiopAlgPrimalDecomposition::run_single()
   HessianApprox* hess_appx_2 = new HessianApprox(nc_, alpha_ratio_, options_);
   hess_appx_2->set_alpha_min(alpha_min_);
   hess_appx_2->set_alpha_max(alpha_max_);
-
+  log_->printf(hovSummary, "PriDec: using initial (alpha) ratio %12.5e\n", alpha_ratio_);
+  
   hiopInterfacePriDecProblem::RecourseApproxEvaluator* evaluator =
       new hiopInterfacePriDecProblem::RecourseApproxEvaluator(nc_,
                                                               S_,
@@ -1813,6 +1857,12 @@ hiopSolveStatus hiopAlgPrimalDecomposition::run_single()
       }
       base_val = master_prob_->get_objective();
       base_valm1 = base_val;
+
+      log_->printf(hovSummary,
+                   "PriDec initial master: objective %12.5e  status %d.\n",
+                   master_prob_->get_objective(),
+                   solver_status_);
+
     }
 
     // array for number of indices, this is subjected to change
@@ -1856,18 +1906,18 @@ hiopSolveStatus hiopAlgPrimalDecomposition::run_single()
 
     rval /= S_;
     grad_r->scale(1.0 / S_);
-
-    log_->printf(hovSummary, "real rval %18.12e\n", rval);
+    
+    log_->printf(hovSummary, "PriDec: iter %d  real recourse val %18.12e\n", it, rval);
 
     recourse_val = rval;
 
-    hess_appx->setToConstant(1e6);
+    hess_appx->setToConstant(1e+6);
 
     if(it == 0) {
       hess_appx_2->initialize(rval, *x0, *grad_r);
       double alp_temp = hess_appx_2->get_alpha_f(*grad_r);
       // double alp_temp = hess_appx_2->get_alpha_tr(); // alternative update rule for alpha
-      log_->printf(hovSummary, "alpd %18.12e\n", alp_temp);
+      log_->printf(hovSummary, "PriDec: iter 0   Hessian alpd %18.12e\n", alp_temp);
 
       hess_appx->setToConstant(alp_temp);
     } else {
@@ -1881,15 +1931,15 @@ hiopSolveStatus hiopAlgPrimalDecomposition::run_single()
 
       double alp_temp = hess_appx_2->get_alpha_f(*grad_r);
       // double alp_temp = hess_appx_2->get_alpha_tr();
-      log_->printf(hovSummary, "alpd %18.12e\n", alp_temp);
+      log_->printf(hovSummary, "PriDec: iter %d   Hessian alpd %18.12e\n", it, alp_temp);
 
       convg_g = hess_appx_2->check_convergence_grad(*grad_r);
 
-      log_->printf(hovSummary, "convergence measure %18.12e\n", convg_g);
+      log_->printf(hovSummary, "PriDec: grad convergence measure %18.12e\n", convg_g);
 
       convg_f = hess_appx_2->check_convergence_fcn(base_val, base_valm1);
 
-      log_->printf(hovSummary, "function val convergence measure %18.12e\n", convg_f);
+      log_->printf(hovSummary, "PriDec: function val convergence measure %18.12e\n", convg_f);
 
       convg = std::min(convg_f, convg_g);
       hess_appx->setToConstant(alp_temp);
@@ -1898,14 +1948,14 @@ hiopSolveStatus hiopAlgPrimalDecomposition::run_single()
     // for debugging purpose print out the recourse gradient
     log_->write(nullptr, *grad_r, hovFcnEval);
 
-    // nc_ is the demesnion of coupled x
+    // nc_ is the dimension of coupled x
 
     if(it > 0) {
       log_->printf(hovSummary,
-                   "iteration           objective                   residual                   "
+                   "PriDec: iteration           objective                   residual                   "
                    "step_size                   convg\n");
       log_->printf(hovSummary,
-                   "%d              %18.12e            %18.12e           %18.12e         "
+                   "PriDec: %d              %18.12e            %18.12e           %18.12e         "
                    "%18.12e\n",
                    it,
                    base_val + recourse_val,
@@ -1915,9 +1965,13 @@ hiopSolveStatus hiopAlgPrimalDecomposition::run_single()
       fflush(stdout);
     }
 
-    assert(evaluator->get_rgrad() != NULL);  // should be defined
+    assert(nullptr != evaluator->get_rgrad());  // should be defined
     evaluator->set_rval(rval);
+    //!
+    //grad_r->setToZero();
     evaluator->set_rgrad(nc_, *grad_r);
+    //!
+    hess_appx->setToConstant(0.);
     evaluator->set_rhess(nc_, *hess_appx);
     evaluator->set_x0(nc_, *x0);
 
@@ -1926,8 +1980,15 @@ hiopSolveStatus hiopAlgPrimalDecomposition::run_single()
       // TODO
     }
     options_file_master_prob = options_->GetString("options_file_master_prob");
-    log_->printf(hovSummary, "solving full problem starts, iteration %d \n", it);
+    log_->printf(hovSummary, "PriDec: solving master problem starts, iteration %d \n", it);
+
     solver_status_ = master_prob_->solve_master(*x_, true, 0, 0, 0, options_file_master_prob.c_str());
+
+    log_->printf(hovSummary,
+                 "PriDec iter %d solved master: objective %12.5e  status %d.\n",
+                 it,
+                 master_prob_->get_objective(),
+                 solver_status_);
 
     dinf = step_size_inf(nc_, *xc_idx_, *x_, *x0);
 

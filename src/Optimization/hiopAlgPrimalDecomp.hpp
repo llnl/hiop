@@ -435,10 +435,10 @@ private:
   /// consecutive iteration count where NLP residual is lower than acceptable tolerance
   int accp_count_ = 10;
   /// initial alpha_ratio if used
-  double alpha_ratio_ = 1.0;
+  double alpha_ratio_ = 1.;
 
   double alpha_min_ = 1e-5;
-  double alpha_max_ = 1e6;
+  double alpha_max_ = 1e8;
 
 protected:
   hiopOptions* options_;
