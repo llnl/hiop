@@ -379,17 +379,17 @@ void hiopAlgPrimalDecomposition::HessianApprox::update_ratio_tr(const double rho
 
 void hiopAlgPrimalDecomposition::HessianApprox::update_ratio(const double base_v, const double base_vm1)
 {
+  //prediction at previous
   double rk = fkm1 + fkm1_lin;
-
-  rk += 0.5 * alpha_ * (skm1->twonorm()) * (skm1->twonorm());
+  rk += 0.5 * alpha_ * skm1->dotProductWith(*skm1);
   // include basecase objective
   double rho_k = (base_vm1 + fkm1 - fk - base_v) / (fkm1 + base_vm1 - rk - base_v);
   log_->printf(hovSummary, "PriDec: updating ratio (w/ basecase) ratio_=%12.5e ...\n", ratio_);
-  log_->printf(hovSummary, "PriDec: previous basecase %18.12e", base_vm1);
-  log_->printf(hovSummary, " basecase %18.12e", base_v);
-  log_->printf(hovSummary, " func val %18.12e\n", fkm1);
-  log_->printf(hovSummary, "PriDec: real/true val %18.12e", fk);
-  log_->printf(hovSummary, " predicted val %18.12e", rk);
+  log_->printf(hovSummary, "PriDec: previous basecase val %18.12e", base_vm1);
+  log_->printf(hovSummary, " new basecase val %18.12e", base_v);
+  log_->printf(hovSummary, " previous real/true val fk %18.12e\n", fkm1);
+  log_->printf(hovSummary, "PriDec: new real/true val fk %18.12e", fk);
+  log_->printf(hovSummary, " previous predicted val rk %18.12e", rk);
   log_->printf(hovSummary, " rho_k %18.12e\n", rho_k);
 
   // using a trust region criteria for adjusting ratio
