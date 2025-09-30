@@ -61,7 +61,7 @@
 
 namespace hiop
 {
-/** Solver status codes. */
+// Solver status codes
 enum hiopSolveStatus
 {
   //(partial) success
@@ -141,6 +141,24 @@ public:
     hiopLinear = 0,
     hiopQuadratic,
     hiopNonlinear
+  };
+  /**
+   * Type of weighting to be used internally for computing norm and inner products, for determining
+   * representations of dual bound variables, and initial quasi-Newton Hessian approximations.
+   */
+  enum WeightedSpaceType
+  {
+    // no weighted space.
+    Euclidean = 0,
+    
+    // lumps mass matrix and uses lumped matrix everywhere
+    HilbertLumped,
+    
+    /**
+     * Experimental: lumps mass matrix and uses for dual bound representers and initial Hessian
+     * approximations, however, uses H and H-inverse norms in termination criteria
+     */
+    Hilbert
   };
 
 public:
@@ -256,7 +274,10 @@ public:
    *
    *  @note When MPI is enabled, every rank populates @p cons since the constraints are not distributed.
    */
-  virtual bool eval_cons(const size_type& n, const size_type& m, const double* x, bool new_x, double* cons) { return false; }
+  virtual bool eval_cons(const size_type& n, const size_type& m, const double* x, bool new_x, double* cons)
+  {
+    return false;
+  }
 
   /** Passes the communicator, defaults to MPI_COMM_WORLD (dummy for non-MPI builds)  */
   virtual bool get_MPI_comm(MPI_Comm& comm_out)
@@ -279,6 +300,99 @@ public:
     return false;  // defaults to serial
   }
 
+  /**
+   * Computes action y of the mass matrix on a vector x, namely y=M*x
+   *
+   * The mass matrix is generally the weight matrix associated with L^2 finite element 
+   * discretizations. This matrix is used internally to build and maintain Riesz-like 
+   * representations of the dual variables (associated with bound constraints) to ensure
+   * mesh independent performance of the algorithm. Currently M is lumped into a diagonal
+   * and used internally for the abovementioned dual variables.
+   *
+   * @note If the variables are not coming from discretizations (specified by 
+   * a hiopInterfaceBase::Euclidean return value from @get_weighted_space_type), the method is
+   * not called and HiOp will use internally M=I. Otherwise, should true or false depending 
+   * on whether the user code succesfully applied M. 
+   *
+   * @param[in] n the (global) number of variables
+   * @param[in] x the array to which mass action is applied
+   * @param[out] y the result of apply
+   * @return see note above.
+   */
+  virtual bool apply_M(const size_type& n, const double* x, double* y)
+  {
+    return true;
+  }
+  
+  /**
+   * Computes action y of the inner product weight matrix H on a vector x, namely y=H*x
+   *
+   * The weight matrix H is generally associated with L^2 or H^1 finite element 
+   * discretizations and corresponding weighted inner products: <u_h,v_h> = u^T H v. For L^2, 
+   * H is the mass matrix, while for H^1 is the mass plus stiffness. This matrix is applied 
+   * internally to obtain termination criteria and derive Hessian representations that are 
+   * mesh independent and consistent with the function space nature of the problem.
+   *
+   * Additional info: C. G. Petra et. al., On the implementation of a quasi-Newton 
+   * interior-point method for PDE-constrained optimization using finite element 
+   * discretizations, Optimiz. Meth. and Software, Vol. 38, 2023.
+   *
+   * @note The method is called only when hiopInterfaceBase::Hilbert is returned by 
+   * @get_weighted_space_type. In this case, it should return true or false depending on 
+   * whether the user code succesfully applied H.
+   * 
+   * @note Currently HiOp only uses H for computing the inner products and norms (including
+   * for vector representations of duals discretizations). The lumped mass matrix M is used
+   * in the quasi-Newton Hessian approximations. This can be revisited, but will require
+   * the user to provide a method for solve with H plus a diagonal positive definite matrix.
+   *
+   * @param[in] n the (global) number of variables
+   * @param[in] x the array to which the H matrix is applied
+   * @param[out] y the result of apply
+   * @return see note above
+   */
+  virtual bool apply_H(const size_type& n, const double* x, double* y)
+  {
+    return true;
+  }
+
+  /**
+   * Computes action y of the inverse of H on a vector x, namely y=H^{-1}*x
+   *
+   * See @apply_H for a discussion of H and additional notes. The inverse of H plays an
+   * important role in computing the "dual" norms and, in turn, to ensure mesh
+   * independent behavior of the IPM solver(s). Also see notes from @apply_H.
+   *
+   * @param[in] n the (global) number of variables
+   * @param[in] x the array to which the inverse is applied
+   * @param[out] y the result of apply
+   * @return see return of @apply_H
+   */
+  virtual bool apply_Hinv(const size_type& n, const double* x, double* y)
+  {
+    return true;
+  }
+
+  /**
+   * Enables the use of weighted inner products via @apply_M, @apply_H, and @apply_Hinv
+   * 
+   * See @WeightedSpaceType for the return values of this function and their meaning. If the
+   * return value is
+   *  - hiopInterfaceBase::Euclidean: @apply_M, @apply_H, and @apply_Hinv need not be overriden by user.
+   * If provided, they are not called.
+   *  - hiopInterfaceBase::HilbertLumped: only @apply_M is called. @apply_H and @apply_Hinv are not.
+   *  - hiopInterfaceBase::Hilbert: @apply_M, @apply_H, and @apply_Hinv are called.
+   *
+   * See also notes for @apply_M, @apply_H, and @apply_Hinv.
+   *
+   * @return WeightedSpaceType (see @WeightedSpaceType and notes above
+   */
+  virtual WeightedSpaceType get_weighted_space_type()
+  {
+    //the default impl. instructs HiOp to use Euclidean/l^2 variables (H=I) internally
+    return Euclidean;
+  }
+  
   /**
    * Method provides a primal or starting point. This point is subject to internal adjustments.
    *

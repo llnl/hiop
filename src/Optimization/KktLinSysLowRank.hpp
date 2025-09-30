@@ -131,10 +131,18 @@ public:
                                hiopVector& dx,
                                hiopVector& dyc,
                                hiopVector& dyd);
-
-  // LAPACK wrappers
+protected:
+  // LAPACK wrappers to solve with N_ 
   int solve(hiopMatrixDense& M, hiopVector& rhs);
-  int solveWithRefin(hiopMatrixDense& M, hiopVector& rhs);
+
+  /** @brief Factorizes N. 
+   * 
+   *  Returns info flag from LAPACK, namely, 0 if the matrix is positive definite, negative if error occured,
+   * and positive if the matrix is not pd.
+   */
+  int factorize_N();
+  int solveWithRefin(hiopVector& rhs);
+public:
 #ifdef HIOP_DEEPCHECKS
   static double solveError(const hiopMatrixDense& M, const hiopVector& x, hiopVector& rhs);
   double errorCompressedLinsys(const hiopVector& rx,
@@ -157,13 +165,12 @@ protected:
 private:
   /// The kxk reduced matrix
   hiopMatrixDense* N_;
-#ifdef HIOP_DEEPCHECKS
   /// A copy of the above to compute the residual
   hiopMatrixDense* Nmat_;
-#endif
-  // internal buffers: k is usually 2 x quasi-Newton memory; n is the size of primal variable vector
-  hiopMatrixDense* kxn_mat_;
-  hiopVector* k_vec1_;
+  // Jacobian of the constraints (both eq and ineq), size m x n 
+  hiopMatrixDense* J_;
+  // Working buffer vector, size of constraints
+  hiopVector* m_vec1_;
 };
 }  // namespace hiop
 

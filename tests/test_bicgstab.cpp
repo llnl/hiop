@@ -171,9 +171,10 @@ int main(int argc, char** argv)
 
     hiopBiCGStabSolver bicgstab_solver(N_local, A_opr, Minv_opr, nullptr, nullptr);
 
-    [[maybe_unused]] bool is_solved = bicgstab_solver.solve(rhs);
+    bool is_solved = bicgstab_solver.solve(rhs);
 
-    std::cout << mem_space << ": " << bicgstab_solver.get_convergence_info() << std::endl;
+    std::cout << mem_space << ": conv info " << bicgstab_solver.get_convergence_info()
+              << "   was solved " << is_solved << std::endl;
 
     // Destroy testing objects
     delete A_opr;

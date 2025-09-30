@@ -210,7 +210,7 @@ hiopSolveStatus PriDecMasterProblemEx1::solve_master(hiopVector& x,
     }
   }
 
-  [[maybe_unused]] bool ierr = my_nlp->set_include(include_r);
+  my_nlp->set_include(include_r);
   if(include_r) {
     assert(my_nlp->quad_is_defined());
   }

@@ -231,8 +231,10 @@ public:
   virtual void negate();
   /// @brief Invert (1/x) the elements of this
   virtual void invert();
-  /// @brief compute log barrier term, that is sum{ln(x_i):i=1,..,n}
+  /// @brief compute log barrier term, that is sum{ln(x_i):i=1,..,n : select[i]==1}
   virtual double logBarrier_local(const hiopVector& select) const;
+  /// @brief compute log barrier term, that is sum{weights[i]*ln(x_i):select[i]==1}
+  virtual double logBarrierWeighted_local(const hiopVector& select, const hiopVector& weights) const;
   /// @brief adds the gradient of the log barrier, namely this=this+alpha*1/select(x)
   virtual void addLogBarrierGrad(double alpha, const hiopVector& xvec, const hiopVector& select);
   /// @brief compute sum{(x_i):i=1,..,n}
@@ -343,6 +345,28 @@ public:
   /// @brief check if `this` vector is identical to `vec`
   virtual bool is_equal(const hiopVector& vec) const;
 
+  /** 
+   * @brief Set element with index 'idx_global' to value 'val'.
+   *
+   * @pre idx_global must be a valid (global) index
+   *
+   * @note Avoid using this method repeatedly in performance-oriented part of the code since 
+   * cpu-device communication occurs for device implementations.
+   */
+  virtual void set_elem(const index_type& idx_global, const double& val);
+
+  /** 
+   * @brief Returns value of element with index 'idx_global'.
+   *
+   * The element is returned on all rank in MPI-based implementations.
+   * 
+   * @pre idx_global must be a valid (global) index
+   *
+   * @note Avoid using this method repeatedly in performance-oriented part of the code since 
+   * cpu-device or inter-process communication occurs.
+   */
+  virtual double get_elem(const index_type& idx_global) const;
+  
   /* functions for this class */
   inline MPI_Comm get_mpi_comm() const { return comm_; }
 
@@ -351,7 +375,7 @@ public:
 
 private:
   ExecSpace<MemBackendCuda, ExecPolicyCuda> exec_space_;
-  ExecSpace<MemBackendCpp, ExecPolicySeq> exec_space_host_;
+  mutable ExecSpace<MemBackendCpp, ExecPolicySeq> exec_space_host_;
 
   MPI_Comm comm_;
   double* data_host_mirror_;

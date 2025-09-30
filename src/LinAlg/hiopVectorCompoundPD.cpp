@@ -712,6 +712,18 @@ double hiopVectorCompoundPD::logBarrier_local(const hiopVector& select) const
   return sum;
 }
 
+double hiopVectorCompoundPD::logBarrierWeighted_local(const hiopVector& select, const hiopVector& weights) const
+{
+  double sum = 0.0;
+  const hiopVectorCompoundPD& ix = dynamic_cast<const hiopVectorCompoundPD&>(select);
+  const hiopVectorCompoundPD& w = dynamic_cast<const hiopVectorCompoundPD&>(weights);
+  assert(this->get_num_parts() == ix.get_num_parts());
+  for(index_type i = 0; i < n_parts_; i++) {
+    sum += vectors_[i]->logBarrierWeighted_local(ix.getVector(i), w.getVector(i));
+  }
+  return sum;
+}
+
 double hiopVectorCompoundPD::sum_local() const
 {
   double sum = 0.0;

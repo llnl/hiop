@@ -64,6 +64,7 @@
 
 #include <stdlib.h> /* exit, EXIT_FAILURE */
 #include <cassert>
+#include <sstream>
 
 using namespace std;
 namespace hiop
@@ -77,7 +78,9 @@ hiopNlpFormulation::hiopNlpFormulation(hiopInterfaceBase& interface_, const char
       prob_type_(hiopInterfaceBase::hiopNonlinear),
       nlp_evaluated_(false),
       nlp_transformations_(this),
-      interface_base(interface_)
+      disable_nlp_transformations_(false),
+      interface_base(interface_),
+      vec_space_(nullptr)
 {
   strFixedVars_ = "";    // uninitialized
   dFixedVarsTol_ = -1.;  // uninitialized
@@ -143,6 +146,8 @@ hiopNlpFormulation::hiopNlpFormulation(hiopInterfaceBase& interface_, const char
   temp_x_ = nullptr;
   nlp_scaling_ = nullptr;
   relax_bounds_ = nullptr;
+  fixed_vars_remover_ = nullptr;
+  fixed_vars_relaxer_ = nullptr;
 }
 
 hiopNlpFormulation::~hiopNlpFormulation()
@@ -183,15 +188,40 @@ hiopNlpFormulation::~hiopNlpFormulation()
   delete temp_eq_;
   delete temp_ineq_;
   delete temp_x_;
-  /// nlp_scaling_ and relax_bounds_ are deleted inside nlp_transformations_
+  delete vec_space_;
+  // nlp_scaling_, relax_bounds_, fixed_vars_remover_, fixed_vars_relaxer_ are deleted by nlp_transformations_
 }
 
 bool hiopNlpFormulation::finalizeInitialization()
 {
   // check if there was a change in the user options that requires reinitialization of 'this'
   bool doinit = false;
+
   if(strFixedVars_ != options->GetString("fixed_var")) {
     doinit = true;
+    
+    if(strFixedVars_ == "remove") {
+      //remove fixed vars NLP transformation
+      assert(fixed_vars_remover_);
+      nlp_transformations_.remove(fixed_vars_remover_);
+      fixed_vars_remover_ = nullptr;
+    } else if(strFixedVars_ == "relax") {
+      //remove relaxers
+      assert(fixed_vars_relaxer_!=nullptr || relax_bounds_!=nullptr);
+      if(fixed_vars_relaxer_) {
+        nlp_transformations_.remove(fixed_vars_relaxer_);
+        fixed_vars_relaxer_ = nullptr;
+        assert(relax_bounds_==nullptr);
+      }
+      if(relax_bounds_) {
+        nlp_transformations_.remove(relax_bounds_);
+        relax_bounds_ = nullptr;
+        assert(fixed_vars_relaxer_==nullptr);
+      }
+    }
+
+    // save the new value of 'fixed_var' option
+    strFixedVars_ = options->GetString("fixed_var");
   }
   const double fixedVarTol = options->GetNumeric("fixed_var_tolerance");
   if(dFixedVarsTol_ != fixedVarTol) {
@@ -203,7 +233,8 @@ bool hiopNlpFormulation::finalizeInitialization()
   if(!doinit) {
     return true;
   }
-
+  log->printf(hovWarning, "Triggering partial reinitialization since some user options has changed.\n");
+  
   // Select memory space where to create linear algebra objects
   string mem_space = options->GetString("mem_space");
   log->printf(hovScalars, "NlpFormulation initialization: using mem_space='%s'\n", mem_space.c_str());
@@ -254,6 +285,10 @@ bool hiopNlpFormulation::finalizeInitialization()
   ixl_ = xu_->alloc_clone();
   ixu_ = xu_->alloc_clone();
 
+  // create NLP space (H-weighted or Euclidean)
+  delete vec_space_;
+  vec_space_ = new VectorSpace(this);
+  
   //
   // preprocess variables bounds - this is curently done on the CPU
   //
@@ -269,28 +304,27 @@ bool hiopNlpFormulation::finalizeInitialization()
   int ierr = MPI_Allreduce(&nfixed_vars_local, &nfixed_vars, 1, MPI_HIOP_SIZE_TYPE, MPI_SUM, comm_);
   assert(MPI_SUCCESS == ierr);
 #endif
-  hiopFixedVarsRemover* fixedVarsRemover = NULL;
+
   if(nfixed_vars > 0) {
-    log->printf(hovWarning, "Detected %lld fixed variables out of a total of %lld.\n", nfixed_vars, n_vars_);
+    log->printf(hovSummary, "Detected %lld fixed variables out of a total of %lld.\n", nfixed_vars, n_vars_);
 
     if(options->GetString("fixed_var") == "remove") {
       //
       // remove free variables
       //
-      log->printf(hovWarning, "Fixed variables will be removed internally.\n");
+      log->printf(hovSummary, "Fixed variables will be removed internally.\n");
 
-      fixedVarsRemover = new hiopFixedVarsRemover(this, *xl_, *xu_, fixedVarTol, nfixed_vars, nfixed_vars_local);
+      fixed_vars_remover_ = new hiopFixedVarsRemover(this, *xl_, *xu_, fixedVarTol, nfixed_vars, nfixed_vars_local);
 
 #ifdef HIOP_USE_MPI
-      fixedVarsRemover->setFSVectorDistrib(vec_distrib_, num_ranks_);
-      fixedVarsRemover->setMPIComm(comm_);
+      fixed_vars_remover_->set_fs_vector_distrib(vec_distrib_, num_ranks_);
 #endif
-      bret = fixedVarsRemover->setupDecisionVectorPart();
+      bret = fixed_vars_remover_->setupDecisionVectorPart();
       assert(bret && "error while removing fixed variables");
 
-      n_vars_ = fixedVarsRemover->rs_n();
+      n_vars_ = fixed_vars_remover_->rs_n();
 #ifdef HIOP_USE_MPI
-      index_type* vec_distrib_rs = fixedVarsRemover->allocRSVectorDistrib();
+      index_type* vec_distrib_rs = fixed_vars_remover_->alloc_rs_vector_distrib();
       delete[] vec_distrib_;
       vec_distrib_ = vec_distrib_rs;
 #endif
@@ -310,14 +344,14 @@ bool hiopNlpFormulation::finalizeInitialization()
       hiopVector* ixl_rs = xl_rs->alloc_clone();
       hiopVector* ixu_rs = xu_rs->alloc_clone();
 
-      fixedVarsRemover->copyFsToRs(*xl_, *xl_rs);
-      fixedVarsRemover->copyFsToRs(*xu_, *xu_rs);
-      fixedVarsRemover->copyFsToRs(*ixl_, *ixl_rs);
-      fixedVarsRemover->copyFsToRs(*ixu_, *ixu_rs);
+      fixed_vars_remover_->copyFsToRs(*xl_, *xl_rs);
+      fixed_vars_remover_->copyFsToRs(*xu_, *xu_rs);
+      fixed_vars_remover_->copyFsToRs(*ixl_, *ixl_rs);
+      fixed_vars_remover_->copyFsToRs(*ixu_, *ixu_rs);
 
       nlocal = xl_rs->get_local_size();
       hiopInterfaceBase::NonlinearityType* vars_type_rs = new hiopInterfaceBase::NonlinearityType[nlocal];
-      fixedVarsRemover->copyFsToRs(vars_type_, vars_type_rs);
+      fixed_vars_remover_->copyFsToRs(vars_type_, vars_type_rs);
 
       delete xl_;
       delete xu_;
@@ -334,30 +368,35 @@ bool hiopNlpFormulation::finalizeInitialization()
       n_bnds_upp_local_ -= nfixed_vars_local;
       n_bnds_lu_ -= nfixed_vars_local;
 
-      nlp_transformations_.append(fixedVarsRemover);
+      nlp_transformations_.append(fixed_vars_remover_);
     } else {
       /*
        * Relax fixed variables according to 2 conditions:
        * 1. bound_relax_perturb==0.0: Relax fixed variables according to fixed_var_perturb and fixed_var_tolerance.
        *    Other variables are not relaxed. hiopFixedVarsRelaxer is used to relax fixed var
-       * 2. bound_relax_perturb!=0.0: Later we will use hiopBoundsRelaxer to relax the variable and inequlity bounds,
+       * 2. bound_relax_perturb!=0.0: Later we will use hiopBoundsRelaxer to relax the variables and inequality bounds,
        *    according to bound_relax_perturb. It will also relax the fixed variables, hence we can skip relax fixed var here.
        */
-      if(options->GetString("fixed_var") == "relax" && options->GetNumeric("bound_relax_perturb") == 0.0) {
-        log->printf(hovWarning, "Fixed variables will be relaxed internally.\n");
-        auto* fixedVarsRelaxer = new hiopFixedVarsRelaxer(this, *xl_, *xu_, nfixed_vars, nfixed_vars_local);
-        fixedVarsRelaxer->setup();
+      if(options->GetString("fixed_var") == "relax" &&
+         options->GetNumeric("bound_relax_perturb") == 0.0 &&
+         options->GetString("elastic_mode")=="none") {
+        assert(nullptr==fixed_vars_relaxer_);
+        log->printf(hovSummary,
+                    "Fixed variables (bounds) will be relaxed internally with all other variables "
+                    "(fixed var strategy (1)).\n");
+        fixed_vars_relaxer_ = new hiopFixedVarsRelaxer(this, *xl_, *xu_, nfixed_vars, nfixed_vars_local);
+        fixed_vars_relaxer_->setup();
 
         const double fv_tol = options->GetNumeric("fixed_var_tolerance");
         const double fv_per = options->GetNumeric("fixed_var_perturb");
-        fixedVarsRelaxer->relax(fv_tol, fv_per, *xl_, *xu_);
+        fixed_vars_relaxer_->relax(fv_tol, fv_per, *xl_, *xu_);
 
-        nlp_transformations_.append(fixedVarsRelaxer);
+        nlp_transformations_.append(fixed_vars_relaxer_);
 
-      } else if(options->GetNumeric("bound_relax_perturb") == 0.0) {
+      } else if(options->GetNumeric("bound_relax_perturb") == 0.0 && options->GetString("elastic_mode")=="none") {
         log->printf(hovError,
-                    "detected fixed variables but HiOp was not instructed how to deal with them (option "
-                    "'fixed_var' is 'none').\n");
+                    "Fixed variables were detected but HiOp was not instructed how to deal with them (option "
+                    "'fixed_var' is 'none', option 'bound_relax_perturb' is 0.0, and 'elastic_mode' is 'none').\n");
         exit(EXIT_FAILURE);
       }
     }
@@ -370,11 +409,9 @@ bool hiopNlpFormulation::finalizeInitialization()
     return false;
   }
 
-  if(fixedVarsRemover) {
-    fixedVarsRemover->setupConstraintsPart(n_cons_eq_, n_cons_ineq_);
+  if(fixed_vars_remover_) {
+    fixed_vars_remover_->setupConstraintsPart(n_cons_eq_, n_cons_ineq_);
   }
-  // save the new value of 'fixed_var' option
-  strFixedVars_ = options->GetString("fixed_var");
 
   // compute the overall n_low and n_upp
 #ifdef HIOP_USE_MPI
@@ -391,17 +428,26 @@ bool hiopNlpFormulation::finalizeInitialization()
 #endif
 
   //
-  // relax bounds for simple bounds and constraints)
+  // relax bounds for simple bounds and constraints
   //
-  if(options->GetNumeric("bound_relax_perturb") > 0.0) {
+  if((options->GetNumeric("bound_relax_perturb")>0.0) || (options->GetString("elastic_mode")!="none")) {
+    if(nfixed_vars>0 && nullptr==fixed_vars_remover_) {
+      log->printf(hovSummary,
+                  "Fixed variables (bounds) will be relaxed internally together with the other variables.\n");
+    }
     relax_bounds_ = new hiopBoundsRelaxer(this, *xl_, *xu_, *dl_, *du_);
     relax_bounds_->setup();
     if(options->GetString("elastic_mode") == "none") {
-      relax_bounds_->relax(options->GetNumeric("bound_relax_perturb"), *xl_, *xu_, *dl_, *du_);
+      const double bound_relax_perturb = options->GetNumeric("bound_relax_perturb");
+      relax_bounds_->relax(bound_relax_perturb, *xl_, *xu_, *dl_, *du_);
+      log->printf(hovSummary, "Relaxing bounds simple strategy (2) - perturb=%g\n",  bound_relax_perturb);
     } else {
-      relax_bounds_->relax(options->GetNumeric("elastic_mode_bound_relax_initial"), *xl_, *xu_, *dl_, *du_);
+      const double bound_relax_perturb = options->GetNumeric("elastic_mode_bound_relax_initial");
+      relax_bounds_->relax(bound_relax_perturb, *xl_, *xu_, *dl_, *du_);
+      log->printf(hovSummary, "Relaxing bounds elastic strategy (3) - (initial) perturb=%g\n",  bound_relax_perturb);
     }
     nlp_transformations_.append(relax_bounds_);
+
   }
 
   // reset/release info and data related to one-call constraints evaluation
@@ -757,6 +803,322 @@ bool hiopNlpFormulation::eval_grad_f(hiopVector& x, bool new_x, hiopVector& grad
   return bret;
 }
 
+bool hiopNlpFormulation::eval_M(const hiopVector& x, hiopVector& y)
+{
+  //x is in the reduced space used by HiOp
+  //x_full is x in the full/untransformed/user space
+  hiopVector* x_full = nlp_transformations_.apply_inv_to_x(const_cast<hiopVector&>(x), true/*new_x*/);
+
+  // We need to also transform y to a y_full, pass it to user apply, and then the reverse, y_full back to y.
+  // The following works, unless a "remove fixed variables" NLP transformation is present.
+  // TODO: Either add functionality in hiopFixedVarRemovers to allow apply_inv_to_x for more than one vector
+  // simultaneously, or create y_full here use apply_inv_to_x with copying from the return to y_full
+  hiopVector* y_full = &y;
+  assert(x_full->get_size() == y.get_size() &&
+         "weighted vector spaces not supported when fixed variables are removed");
+  
+  runStats.tm_eval_M_apply.start();
+  bool bret = interface_base.apply_M(nlp_transformations_.n_pre(),
+                                     x_full->local_data_const(),
+                                     y_full->local_data());
+  runStats.tm_eval_M_apply.stop();
+  runStats.n_eval_M_apply++;
+
+  // TODO: see note above
+  
+  return bret;  
+}
+
+bool hiopNlpFormulation::eval_H(const hiopVector& x, hiopVector& y)
+{
+  //x is in the reduced space used by HiOp
+  //x_full is x in the full/untransformed/user space
+  hiopVector* x_full = nlp_transformations_.apply_inv_to_x(const_cast<hiopVector&>(x), true/*new_x*/);
+
+  // TODO: see notes from eval_M
+  hiopVector* y_full = &y;
+  assert(x_full->get_size() == y.get_size() &&
+         "weighted vector spaces not supported when fixed variables are removed");
+
+  runStats.tm_eval_H_apply.start();
+  bool bret = interface_base.apply_H(nlp_transformations_.n_pre(),
+                                     x_full->local_data_const(),
+                                     y_full->local_data());
+  runStats.tm_eval_H_apply.stop();
+  runStats.n_eval_H_apply++;
+  
+  return bret;  
+}
+
+bool hiopNlpFormulation::eval_H_inv(const hiopVector& x, hiopVector& y)
+{
+  //x is in the reduced space used by HiOp
+  //x_full is x in the full/untransformed/user space
+  hiopVector* x_full = nlp_transformations_.apply_inv_to_x(const_cast<hiopVector&>(x), true/*new_x*/);
+
+  // TODO: see notes from eval_M
+  hiopVector* y_full = &y;
+  assert(x_full->get_size() == y.get_size() &&
+         "weighted vector spaces not supported when fixed variables are removed");
+
+  runStats.tm_eval_Hinv_apply.start();
+  bool bret = interface_base.apply_Hinv(nlp_transformations_.n_pre(),
+                                        x_full->local_data_const(),
+                                        y_full->local_data());
+  runStats.tm_eval_Hinv_apply.stop();
+  runStats.n_eval_Hinv_apply++;
+  
+  return bret;  
+}
+
+void hiopNlpFormulation::run_derivative_checker()
+{
+  auto* it_hiop = new hiopIterate(this);
+  hiopVector* lambdas = this->alloc_dual_vec();
+  assert(n_cons_ == it_hiop->get_yc()->get_size() + it_hiop->get_yd()->get_size());
+
+  // finite difference (FD) check at initial point provided by the user 
+  hiopVector* x0_user = nlp_transformations_.apply_inv_to_x(*it_hiop->get_x(), true);
+
+  double* zL0_for_user = it_hiop->get_zl()->local_data();
+  double* zU0_for_user = it_hiop->get_zu()->local_data();
+  double* lambda_for_user = lambdas->local_data();
+  double* d_for_user = it_hiop->get_d()->local_data();
+
+  if(options->GetString("warm_start") == "yes") {
+    log->printf(hovError,
+                "Derivative check NOT supported for 'warm' starting points. Use 'get_starting_point' "
+                "instead to specifiy the point to which the derivatives should be checked.");
+    return;
+  }
+  bool duals_avail = false;
+  bool slacks_avail = false;
+  bool bret = interface_base.get_starting_point(nlp_transformations_.n_pre(),
+                                                n_cons_,
+                                                x0_user->local_data(),
+                                                duals_avail,
+                                                zL0_for_user,
+                                                zU0_for_user,
+                                                lambda_for_user,
+                                                slacks_avail,
+                                                d_for_user);
+  //if above failed, try the other user-provided starting point method
+  if(!bret) {
+    bret = interface_base.get_starting_point(nlp_transformations_.n_pre(), x0_user->local_data());
+  }
+  if(!bret) {
+    log->printf(hovError, "Derivate check error in user-provided starting point methods. Using vector of all zero.");
+    x0_user->setToConstant(0.0);
+  }
+  
+  hiopVector& x_ref = *x0_user;
+  const double pert = options->GetNumeric("derivative_check_perturbation");
+  const double derivative_check_tolerance = options->GetNumeric("derivative_check_tolerance");
+  const bool print_all = ( options->GetString("derivative_check_print_all") != "no" );
+  hiopVector* x_pert = x_ref.alloc_clone();
+
+  hiopVector* grad_exact = x_ref.alloc_clone();
+  bret = interface_base.eval_grad_f(nlp_transformations_.n_pre(),
+                                    x_ref.local_data_const(),
+                                    true,
+                                    grad_exact->local_data());
+  bool user_eval_err = false;
+  if(!bret) {
+    log->printf(hovError, "Derivative check error: in evaluating user gradient.");
+    user_eval_err = true;
+  }
+    
+  
+  //evaluate "exact"/user Jacobian(s)
+  //alocate Jacobians at the reference point - need to be in the user's sizes
+  hiopMatrix* Jac_c_ref = this->alloc_Jac_c_user();
+  hiopMatrix* Jac_d_ref = this->alloc_Jac_c_user();
+  
+  if(!eval_Jac_c_d(x_ref, true, *Jac_c_ref, *Jac_d_ref)) {
+    log->printf(hovError, "Derivative checker error: in user Jacobian function.\n");
+    user_eval_err = true;
+  }
+
+  //
+  // gradient and Jacobian
+  //
+  if(options->GetString("derivative_check") == "first-order") {
+    
+    log->printf(hovSummary, "Starting derivative checker for gradient ...\n");
+    size_t num_errs = 0;
+
+    // objective function
+    double f_ref;
+    bret = interface_base.eval_f(nlp_transformations_.n_pre(), x_ref.local_data_const(), true, f_ref);
+    if(!bret) {
+      log->printf(hovError, "Derivative check error: in evaluating user objective.\n");
+      user_eval_err = true;
+    }
+    
+    // grad_fd = (f(x_pert) - f(x_ref)) / pert    
+    for(index_type idx=0; idx<nlp_transformations_.n_pre() && !user_eval_err; ++idx) {
+      const double val_ref = x_ref.get_elem(idx);
+
+      x_pert->copyFrom(x_ref);
+      x_pert->set_elem(idx, val_ref+pert*max(abs(val_ref), 1.0));
+      
+      //evaluate at the perturbed point
+      double f_pert;
+      bret = interface_base.eval_f(nlp_transformations_.n_pre(), x_pert->local_data_const(), true, f_pert);
+      if(!bret) {
+        log->printf(hovError, "Derivative check error: in evaluating user objective.\n");
+        user_eval_err = true;
+        break;
+      }
+      const double grad_fd = (f_pert-f_ref)/pert;
+      const double grad_ex = grad_exact->get_elem(idx);
+      const double scale = max(grad_ex, max(abs(grad_fd), derivative_check_tolerance));
+      double rel_error = abs(grad_fd - grad_ex) / scale;
+
+      const bool b_err = rel_error > derivative_check_tolerance;
+      char err_marker = ' ';
+      if(b_err) {
+        err_marker = '!';
+        num_errs++;
+      }
+      if(b_err || print_all) {
+        stringstream ss;
+        ss << err_marker << " grad[" << setw(5) << idx << "] "
+           << "user " << fixed << setprecision(14) << setw(21) << grad_ex << "  "
+           << "fd " << fixed << setprecision(14) << setw(21) << grad_fd
+           << " relerr [" << scientific << setprecision(3) << setw(9) << rel_error << "]";
+        log->printf(hovSummary, "%s\n", ss.str().c_str());
+        fflush(stdout);
+      }
+      
+    }
+    if(user_eval_err) {
+      log->printf(hovSummary, "Derivative checker halted because of error(s) in user provided functions.\n");
+    } else {
+      log->printf(hovSummary, "Derivative checker for gradient finished: %d errors detected.\n", num_errs);
+
+      //
+      // Jacobian check
+      //
+      log->printf(hovSummary, "Starting derivative checker for Jacobian ...\n");
+      num_errs = 0;
+      disable_nlp_transformations_ = true;
+      
+      hiopVector* cons_ref = this->alloc_dual_vec();
+      if(temp_eq_ == nullptr) {
+        temp_eq_ = this->alloc_dual_eq_vec();
+      }
+      if(temp_ineq_ == nullptr) {
+        temp_ineq_ = this->alloc_dual_ineq_vec();
+      }
+      hiopVector& cons_c_ref = *temp_eq_;
+      hiopVector& cons_d_ref = *temp_ineq_;
+      
+      if(!this->eval_c_d(x_ref, true, cons_c_ref, cons_d_ref)) {
+        log->printf(hovError, "Derivative checker error: in user constraint function.\n");
+        user_eval_err = true;
+      }
+      cons_ref->copy_from_two_vec_w_pattern(cons_c_ref,
+                                            *cons_eq_mapping_,
+                                            cons_d_ref,
+                                            *cons_ineq_mapping_);
+      // perturbed constraint body
+      hiopVector* cons_pert = cons_ref->alloc_clone();
+      
+      // ith column in the "exact" user Jacobian
+      hiopVector* Jac_ex_col = cons_ref->alloc_clone();
+      //perturbed equality/c constraint body
+      hiopVector* cons_c_pert = cons_c_ref.alloc_clone();
+      //perturbed inequality/d constraint body
+      hiopVector* cons_d_pert = cons_d_ref.alloc_clone();
+      // vector of all zero except ith position which is one
+      hiopVector* ei = x_ref.alloc_clone();
+      
+      //main loop
+      for(index_type idx=0; idx<nlp_transformations_.n_pre() && !user_eval_err; ++idx) {
+        
+        const double val_ref = x_ref.get_elem(idx);
+        x_pert->copyFrom(x_ref);
+        x_pert->set_elem(idx, val_ref+pert*max(abs(val_ref), 1.0));
+        
+        //eval at the perturbed point
+        if(!this->eval_c_d(*x_pert, true, *cons_c_pert, *cons_d_pert)) {
+          log->printf(hovError, "Derivative checker error: in user constraint function.\n");
+          user_eval_err = true;
+        }
+        cons_pert->copy_from_two_vec_w_pattern(*cons_c_pert, *cons_eq_mapping_, *cons_d_pert, *cons_ineq_mapping_);
+        
+        // compute finite difference Jacobian (ith column)
+        hiopVector& Jac_fd_col = *cons_pert;
+        Jac_fd_col.axpy(-1.0, *cons_ref);
+        Jac_fd_col.scale(1/pert);
+
+        //we multiply Jacobian with ei=(0,...,1,...0) to get the ith column
+        ei->setToZero();
+        ei->set_elem(idx, 1.);
+        //reuse
+        hiopVector& Jac_ex_d_col = *cons_d_pert;
+        hiopVector& Jac_ex_c_col = *cons_c_pert;
+        Jac_c_ref->timesVec(0, Jac_ex_c_col, 1.0, *ei);
+        Jac_d_ref->timesVec(0, Jac_ex_d_col, 1.0, *ei);
+        Jac_ex_col->copy_from_two_vec_w_pattern(Jac_ex_c_col, *cons_eq_mapping_, Jac_ex_d_col, *cons_ineq_mapping_);
+        
+        // compute error
+        for(index_type row=0; row<m() && !user_eval_err; ++row) {
+          const double Jac_fd_ij = Jac_fd_col.get_elem(row);
+          const double Jac_ex_ij = Jac_ex_col->get_elem(row);
+          const double scale = max(abs(Jac_ex_ij), max(abs(Jac_fd_ij), derivative_check_tolerance));
+          double rel_error = abs(Jac_fd_ij - Jac_ex_ij) / scale;
+          
+          const bool b_err = rel_error > derivative_check_tolerance;
+          char err_marker = ' ';
+          if(b_err) {
+            err_marker = '!';
+            num_errs++;
+          }
+          if(b_err || print_all) {
+            stringstream ss;
+            ss << err_marker << " Jac[" << setw(5) << row << "," << setw(5) << idx << "] "
+               << "user " << fixed << setprecision(14) << setw(21) << Jac_ex_ij << "  "
+               << "fd " << fixed << setprecision(14) << setw(21) << Jac_fd_ij
+               << " relerr [" << scientific << setprecision(3) << setw(9) << rel_error << "]";
+            log->printf(hovSummary, "%s\n", ss.str().c_str());
+            fflush(stdout);
+          }
+        } // end for row=1,..,m
+      }
+      if(user_eval_err) {
+        log->printf(hovSummary, "Derivative checker halted because of error(s) in user provided functions.");        
+      } else {
+        log->printf(hovSummary, "Derivative checker for Jacobian finished: %d errors detected.\n", num_errs);
+      }
+      delete Jac_ex_col;
+      delete ei;
+      delete cons_d_pert;
+      delete cons_c_pert;
+      delete cons_pert;
+      delete cons_ref;
+    } // end of Jacobian check
+  } //end of first-order check
+
+  //
+  // Second-order checks
+  //  
+  if(!user_eval_err && options->GetString("derivative_check") == "second-order") {
+    //TODO - finish 2nd order derivatives (Hessian of Lagrangian) check
+    //run_derivative_checker_order2(*x0_user, *grad_exact, *Jac_c_ref, *Jac_d_ref);
+  }
+  
+  disable_nlp_transformations_ = false;
+  //clean up
+  delete Jac_d_ref;
+  delete Jac_c_ref;
+  delete grad_exact;  
+  delete x_pert;
+  delete it_hiop;
+  delete lambdas;
+}
+
 bool hiopNlpFormulation::get_starting_point(hiopVector& x0_for_hiop,
                                             bool& duals_avail,
                                             hiopVector& zL0_for_hiop,
@@ -863,7 +1225,10 @@ bool hiopNlpFormulation::get_warmstart_point(hiopVector& x0_for_hiop,
 
 bool hiopNlpFormulation::eval_c(hiopVector& x, bool new_x, hiopVector& c)
 {
-  hiopVector* xx = nlp_transformations_.apply_inv_to_x(x, new_x);
+  hiopVector* xx = &x;
+  if(!disable_nlp_transformations_) {
+    xx = nlp_transformations_.apply_inv_to_x(x, new_x);
+  }
   hiopVector* cc = &c;
   // nlp_transformations_.apply_inv_to_cons_eq(c, n_cons_eq_);  // NOT required
 
@@ -878,13 +1243,18 @@ bool hiopNlpFormulation::eval_c(hiopVector& x, bool new_x, hiopVector& c)
   runStats.tmEvalCons.stop();
   runStats.nEvalCons_eq++;
 
-  // scale the constraint
-  c = *(nlp_transformations_.apply_to_cons_eq(c, n_cons_eq_));
+  if(!disable_nlp_transformations_) {
+    // scale the constraint
+    c = *(nlp_transformations_.apply_to_cons_eq(c, n_cons_eq_));
+  }
   return bret;
 }
 bool hiopNlpFormulation::eval_d(hiopVector& x, bool new_x, hiopVector& d)
 {
-  hiopVector* xx = nlp_transformations_.apply_inv_to_x(x, new_x);
+  hiopVector* xx = &x;
+  if(!disable_nlp_transformations_) {
+    xx = nlp_transformations_.apply_inv_to_x(x, new_x);
+  }
   hiopVector* dd = &d;
   // nlp_transformations_.apply_inv_to_cons_ineq(d, n_cons_ineq_);  // NOT required for now
 
@@ -899,8 +1269,10 @@ bool hiopNlpFormulation::eval_d(hiopVector& x, bool new_x, hiopVector& d)
   runStats.tmEvalCons.stop();
   runStats.nEvalCons_ineq++;
 
-  // scale the constraint
-  d = *(nlp_transformations_.apply_to_cons_ineq(d, n_cons_ineq_));
+  if(!disable_nlp_transformations_) {
+    // scale the constraint
+    d = *(nlp_transformations_.apply_to_cons_ineq(d, n_cons_ineq_));
+  }
   return bret;
 }
 
@@ -940,10 +1312,14 @@ bool hiopNlpFormulation::eval_c_d(hiopVector& x, bool new_x, hiopVector& c, hiop
     assert(1 == cons_eval_type_);
     assert(cons_body_ != nullptr);
 
-    hiopVector* xx = nlp_transformations_.apply_inv_to_x(x, new_x);
+    hiopVector* xx = &x;
+    if(!disable_nlp_transformations_) {
+      xx = nlp_transformations_.apply_inv_to_x(x, new_x);
+    }
     // FIXME do NOT support removing fixed var for now
     // double* body = cons_body_;//nlp_transformations_.apply_inv_to_cons(d, n_cons_ineq_); //not needed for now
-
+    //also observe disable_nlp_transformations_
+    
     runStats.tmEvalCons.start();
     bool bret = interface_base.eval_cons(nlp_transformations_.n_pre(),
                                          n_cons_,
@@ -953,12 +1329,13 @@ bool hiopNlpFormulation::eval_c_d(hiopVector& x, bool new_x, hiopVector& c, hiop
     // copy back to c and d
     cons_body_->copy_to_two_vec_w_pattern(c, *cons_eq_mapping_, d, *cons_ineq_mapping_);
 
-    // scale c
-    c = *(nlp_transformations_.apply_to_cons_eq(c, n_cons_eq_));
-
-    // scale d
-    d = *(nlp_transformations_.apply_to_cons_ineq(d, n_cons_ineq_));
-
+    if(!disable_nlp_transformations_) {
+      // scale c
+      c = *(nlp_transformations_.apply_to_cons_eq(c, n_cons_eq_));
+      
+      // scale d
+      d = *(nlp_transformations_.apply_to_cons_ineq(d, n_cons_ineq_));
+    }
     runStats.tmEvalCons.stop();
     runStats.nEvalCons_eq++;
     runStats.nEvalCons_ineq++;
@@ -985,6 +1362,7 @@ bool hiopNlpFormulation::eval_Jac_c_d(hiopVector& x, bool new_x, hiopMatrix& Jac
         cons_body_ = this->alloc_dual_vec();
         // cons_body_ = new double[n_cons_];
         cons_Jac_ = alloc_Jac_cons();
+
       } else {
         cons_eval_type_ = 0;
         return false;
@@ -996,10 +1374,11 @@ bool hiopNlpFormulation::eval_Jac_c_d(hiopVector& x, bool new_x, hiopMatrix& Jac
   }
 
   if(0 == cons_eval_type_) {
-    if(do_eval_Jac_c)
+    if(do_eval_Jac_c) {
       if(!eval_Jac_c(x, new_x, Jac_c)) {
         return false;
       }
+    }
     if(!eval_Jac_d(x, new_x, Jac_d)) {
       return false;
     }
@@ -1391,6 +1770,7 @@ void hiopNlpFormulation::adjust_bounds(const hiopIterate& it)
 
 void hiopNlpFormulation::reset_bounds(double bound_relax_perturb)
 {
+  assert(relax_bounds_);
   relax_bounds_->relax_from_ori(bound_relax_perturb, *xl_, *xu_, *dl_, *du_);
 }
 
@@ -1421,8 +1801,12 @@ bool hiopNlpDenseConstraints::eval_Jac_c(hiopVector& x, bool new_x, double* Jac_
     return true;
   }
 
-  hiopVector* x_user  = nlp_transformations_.apply_inv_to_x(x, new_x);
-  double* Jac_c_user = nlp_transformations_.apply_inv_to_jacob_eq(Jac_c, n_cons_eq_);
+  hiopVector* x_user  = &x;
+  double* Jac_c_user = Jac_c;
+  if(!disable_nlp_transformations_) {
+    x_user = nlp_transformations_.apply_inv_to_x(x, new_x);
+    Jac_c_user = nlp_transformations_.apply_inv_to_jacob_eq(Jac_c, n_cons_eq_);
+  }
 
   runStats.tmEvalJac_con.start();
   bool bret = interface.eval_Jac_cons(nlp_transformations_.n_pre(), n_cons_,
@@ -1430,7 +1814,10 @@ bool hiopNlpDenseConstraints::eval_Jac_c(hiopVector& x, bool new_x, double* Jac_
                                       x_user->local_data_const(), new_x, Jac_c_user);
   runStats.tmEvalJac_con.stop(); runStats.nEvalJac_con_eq++;
 
-  Jac_c = nlp_transformations_.apply_to_jacob_eq(Jac_c_user, n_cons_eq_);
+  Jac_c = Jac_c_user;
+  if(!disable_nlp_transformations_) {
+    Jac_c = nlp_transformations_.apply_to_jacob_eq(Jac_c_user, n_cons_eq_);
+  }
 #endif  // 0
 
   assert(0 && "not needed");
@@ -1444,8 +1831,12 @@ bool hiopNlpDenseConstraints::eval_Jac_d(hiopVector& x, bool new_x, double* Jac_
     return true;
   }
 
-  hiopVector* x_user  = nlp_transformations_.apply_inv_to_x(x, new_x);
-  double* Jac_d_user = nlp_transformations_.apply_inv_to_jacob_ineq(Jac_d, n_cons_ineq_);
+  hiopVector* x_user  = &x;
+  double* Jac_d_user = Jac_d;
+  if(!disable_nlp_transformations_) {
+    x_user = nlp_transformations_.apply_inv_to_x(x, new_x);
+    Jac_d_user = nlp_transformations_.apply_inv_to_jacob_ineq(Jac_d, n_cons_ineq_);
+  }
 
   runStats.tmEvalJac_con.start();
   bool bret = interface.eval_Jac_cons(nlp_transformations_.n_pre(), n_cons_,
@@ -1453,7 +1844,10 @@ bool hiopNlpDenseConstraints::eval_Jac_d(hiopVector& x, bool new_x, double* Jac_
                                       x_user->local_data_const(), new_x,Jac_d_user);
   runStats.tmEvalJac_con.stop(); runStats.nEvalJac_con_ineq++;
 
-  Jac_d = nlp_transformations_.apply_to_jacob_ineq(Jac_d_user, n_cons_ineq_);
+  Jac_d = Jac_d_user;
+  if(!disable_nlp_transformations_) {    
+    Jac_d = nlp_transformations_.apply_to_jacob_ineq(Jac_d_user, n_cons_ineq_);
+  }
 #endif  // 0
 
   assert(0 && "not needed");
@@ -1468,12 +1862,17 @@ bool hiopNlpDenseConstraints::eval_Jac_c_d_interface_impl(hiopVector& x, bool ne
     return false;
   }
 
-  hiopVector* x_user = nlp_transformations_.apply_inv_to_x(x, new_x);
+  hiopVector* x_user = &x;
   double* Jac_consde = cons_Jac_de->local_data();
-  hiopMatrix* Jac_user = nlp_transformations_.apply_inv_to_jacob_cons(*cons_Jac_, n_cons_);
+  hiopMatrix* Jac_user = cons_Jac_;
+
+  if(!disable_nlp_transformations_) {
+    x_user = nlp_transformations_.apply_inv_to_x(x, new_x);
+    Jac_user = nlp_transformations_.apply_inv_to_jacob_cons(*cons_Jac_, n_cons_);
+  }
 
   hiopMatrixDense* cons_Jac_user_de = dynamic_cast<hiopMatrixDense*>(Jac_user);
-  if(cons_Jac_user_de == NULL) {
+  if(cons_Jac_user_de == nullptr) {
     log->printf(hovError, "[internal error] hiopNlpDenseConstraints NLP received an unexpected matrix\n");
     return false;
   }
@@ -1485,7 +1884,10 @@ bool hiopNlpDenseConstraints::eval_Jac_c_d_interface_impl(hiopVector& x, bool ne
                                       new_x,
                                       cons_Jac_user_de->local_data());
 
-  cons_Jac_ = nlp_transformations_.apply_to_jacob_cons(*Jac_user, n_cons_);
+  cons_Jac_ = Jac_user;
+  if(!disable_nlp_transformations_) {
+    cons_Jac_ = nlp_transformations_.apply_to_jacob_cons(*Jac_user, n_cons_);
+  }
 
   hiopMatrixDense* Jac_cde = dynamic_cast<hiopMatrixDense*>(&Jac_c);
   hiopMatrixDense* Jac_dde = dynamic_cast<hiopMatrixDense*>(&Jac_d);
@@ -1500,9 +1902,11 @@ bool hiopNlpDenseConstraints::eval_Jac_c_d_interface_impl(hiopVector& x, bool ne
   Jac_cde->copyRowsFrom(*cons_Jac_, cons_eq_mapping_->local_data_const(), n_cons_eq_);
   Jac_dde->copyRowsFrom(*cons_Jac_, cons_ineq_mapping_->local_data_const(), n_cons_ineq_);
 
-  // scale Jacobian matrices
-  Jac_c = *(nlp_transformations_.apply_inv_to_jacob_eq(Jac_c, n_cons_eq_));
-  Jac_d = *(nlp_transformations_.apply_inv_to_jacob_ineq(Jac_d, n_cons_ineq_));
+  if(!disable_nlp_transformations_) {
+    // scale Jacobian matrices
+    Jac_c = *(nlp_transformations_.apply_inv_to_jacob_eq(Jac_c, n_cons_eq_));
+    Jac_d = *(nlp_transformations_.apply_inv_to_jacob_ineq(Jac_d, n_cons_ineq_));
+  }
 
   runStats.tmEvalJac_con.stop();
   runStats.nEvalJac_con_eq++;
@@ -1522,8 +1926,13 @@ bool hiopNlpDenseConstraints::eval_Jac_c(hiopVector& x, bool new_x, hiopMatrix& 
     log->printf(hovError, "[internal error] hiopNlpDenseConstraints NLP works only with dense matrices\n");
     return false;
   } else {
-    hiopVector* x_user = nlp_transformations_.apply_inv_to_x(x, new_x);
-    hiopMatrix* Jac_c_user = nlp_transformations_.apply_inv_to_jacob_eq(Jac_c, n_cons_eq_);
+    hiopVector* x_user = &x;
+    hiopMatrix* Jac_c_user = &Jac_c;
+
+    if(!disable_nlp_transformations_) {
+      nlp_transformations_.apply_inv_to_x(x, new_x);
+      Jac_c_user = nlp_transformations_.apply_inv_to_jacob_eq(Jac_c, n_cons_eq_);
+    }
     if(Jac_c_user == nullptr) {
       log->printf(hovError, "[internal error] hiopFixedVarsRemover works only with dense matrices\n");
       return false;
@@ -1542,10 +1951,13 @@ bool hiopNlpDenseConstraints::eval_Jac_c(hiopVector& x, bool new_x, hiopMatrix& 
     runStats.tmEvalJac_con.stop();
     runStats.nEvalJac_con_eq++;
 
-    auto* Jac_c_p = nlp_transformations_.apply_to_jacob_eq(*Jac_c_user, n_cons_eq_);
-    if(Jac_c_p == nullptr) {
-      log->printf(hovError, "[internal error] hiopFixedVarsRemover works only with dense matrices\n");
-      return false;
+    auto* Jac_c_p = Jac_c_user;
+    if(!disable_nlp_transformations_) {
+      Jac_c_p = nlp_transformations_.apply_to_jacob_eq(*Jac_c_user, n_cons_eq_);
+      if(Jac_c_p == nullptr) {
+        log->printf(hovError, "[internal error] hiopFixedVarsRemover works only with dense matrices\n");
+        return false;
+      }
     }
     Jac_c = *Jac_c_p;
     return bret;
@@ -1563,8 +1975,14 @@ bool hiopNlpDenseConstraints::eval_Jac_d(hiopVector& x, bool new_x, hiopMatrix& 
     log->printf(hovError, "[internal error] hiopNlpDenseConstraints NLP works only with dense matrices\n");
     return false;
   } else {
-    hiopVector* x_user = nlp_transformations_.apply_inv_to_x(x, new_x);
-    hiopMatrix* Jac_d_user = nlp_transformations_.apply_inv_to_jacob_ineq(Jac_d, n_cons_ineq_);
+    hiopVector* x_user = &x;
+    hiopMatrix* Jac_d_user = &Jac_d;
+
+    if(!disable_nlp_transformations_) {
+      x_user = nlp_transformations_.apply_inv_to_x(x, new_x);
+      Jac_d_user = nlp_transformations_.apply_inv_to_jacob_ineq(Jac_d, n_cons_ineq_);
+    }
+    
     if(Jac_d_user == nullptr) {
       log->printf(hovError, "[internal error] hiopFixedVarsRemover works only with dense matrices\n");
       return false;
@@ -1583,21 +2001,80 @@ bool hiopNlpDenseConstraints::eval_Jac_d(hiopVector& x, bool new_x, hiopMatrix& 
     runStats.tmEvalJac_con.stop();
     runStats.nEvalJac_con_ineq++;
 
-    auto* Jac_d_p = nlp_transformations_.apply_to_jacob_ineq(*Jac_d_user, n_cons_ineq_);
-    if(Jac_d_p == nullptr) {
-      log->printf(hovError, "[internal error] hiopFixedVarsRemover works only with dense matrices\n");
-      return false;
+    auto* Jac_d_p = Jac_d_user;
+
+    if(!disable_nlp_transformations_) {
+      Jac_d_p = nlp_transformations_.apply_to_jacob_ineq(*Jac_d_user, n_cons_ineq_);
+    
+      if(Jac_d_p == nullptr) {
+        log->printf(hovError, "[internal error] hiopFixedVarsRemover works only with dense matrices\n");
+        return false;
+      }
     }
     Jac_d = *Jac_d_p;
     return bret;
   }
 }
 
-hiopMatrixDense* hiopNlpDenseConstraints::alloc_Jac_c() { return alloc_multivector_primal(n_cons_eq_); }
+hiopMatrixDense* hiopNlpDenseConstraints::alloc_Jac_c()
+{
+  return alloc_multivector_primal(n_cons_eq_);
+}
 
-hiopMatrixDense* hiopNlpDenseConstraints::alloc_Jac_d() { return alloc_multivector_primal(n_cons_ineq_); }
+hiopMatrixDense* hiopNlpDenseConstraints::alloc_Jac_d()
+{
+  return alloc_multivector_primal(n_cons_ineq_);
+}
 
-hiopMatrixDense* hiopNlpDenseConstraints::alloc_Jac_cons() { return alloc_multivector_primal(n_cons_); }
+hiopMatrixDense* hiopNlpDenseConstraints::alloc_Jac_cons()
+{
+  return alloc_multivector_primal(n_cons_);
+}
+
+hiopMatrixDense* hiopNlpDenseConstraints::alloc_Jac_c_user()
+{
+  if(nullptr==fixed_vars_remover_) {      
+    return alloc_multivector_primal(n_cons_eq_);
+  }
+  const size_type n_user = nlp_transformations_.n_pre();
+  assert(n_user == fixed_vars_remover_->fs_n() && "Somehow order or NLP transformations is incorrect.");
+#ifdef HIOP_USE_MPI
+  index_type* vec_distrib_user = fixed_vars_remover_->get_fs_vector_distrib();
+  return LinearAlgebraFactory::create_matrix_dense("DEFAULT", n_cons_eq_, n_user, vec_distrib_user, comm_);
+#else
+  return LinearAlgebraFactory::create_matrix_dense("DEFAULT", n_cons_eq_, n_user);
+#endif
+}
+
+hiopMatrixDense* hiopNlpDenseConstraints::alloc_Jac_d_user()
+{
+  if(nullptr==fixed_vars_remover_) {
+    return alloc_multivector_primal(n_cons_ineq_);
+  }
+  const size_type n_user = nlp_transformations_.n_pre();
+  assert(n_user == fixed_vars_remover_->fs_n() && "Somehow order or NLP transformations is incorrect.");
+#ifdef HIOP_USE_MPI
+  index_type* vec_distrib_user = fixed_vars_remover_->get_fs_vector_distrib();
+  return LinearAlgebraFactory::create_matrix_dense("DEFAULT", n_cons_ineq_, n_user, vec_distrib_user, comm_);
+#else
+  return LinearAlgebraFactory::create_matrix_dense("DEFAULT", n_cons_ineq_, n_user);
+#endif
+}
+
+hiopMatrixDense* hiopNlpDenseConstraints::alloc_Jac_cons_user()
+{
+  if(nullptr==fixed_vars_remover_) {
+    return alloc_multivector_primal(n_cons_);
+  }
+  const size_type n_user = nlp_transformations_.n_pre();
+  assert(n_user == fixed_vars_remover_->fs_n() && "Somehow order or NLP transformations is incorrect.");
+#ifdef HIOP_USE_MPI
+  index_type* vec_distrib_user = fixed_vars_remover_->get_fs_vector_distrib();
+  return LinearAlgebraFactory::create_matrix_dense("DEFAULT", n_cons_, n_user, vec_distrib_user, comm_);
+#else
+  return LinearAlgebraFactory::create_matrix_dense("DEFAULT", n_cons_, n_user);
+#endif
+}
 
 hiopMatrix* hiopNlpDenseConstraints::alloc_Hess_Lagr()
 {
@@ -1657,7 +2134,10 @@ bool hiopNlpMDS::eval_Jac_c(hiopVector& x, bool new_x, hiopMatrix& Jac_c)
   hiopMatrixMDS* pJac_c = dynamic_cast<hiopMatrixMDS*>(&Jac_c);
   assert(pJac_c);
   if(pJac_c) {
-    hiopVector* x_user = nlp_transformations_.apply_inv_to_x(x, new_x);
+    hiopVector* x_user = &x;
+    if(!disable_nlp_transformations_) {
+      x_user = nlp_transformations_.apply_inv_to_x(x, new_x);
+    }
 
     // NOT needed for now
     //    hiopMatrix* Jac_c_user = nlp_transformations_.apply_inv_to_jacob_eq(Jac_c, n_cons_eq);
@@ -1679,9 +2159,10 @@ bool hiopNlpMDS::eval_Jac_c(hiopVector& x, bool new_x, hiopMatrix& Jac_c)
                                         pJac_c->sp_jcol(),
                                         pJac_c->sp_M(),
                                         pJac_c->de_local_data());
-
-    // scale the matrix
-    Jac_c = *(nlp_transformations_.apply_to_jacob_eq(Jac_c, n_cons_eq_));
+    if(!disable_nlp_transformations_) {
+      // scale the matrix
+      Jac_c = *(nlp_transformations_.apply_to_jacob_eq(Jac_c, n_cons_eq_));
+    }
 
     runStats.tmEvalJac_con.stop();
     runStats.nEvalJac_con_eq++;
@@ -1700,7 +2181,10 @@ bool hiopNlpMDS::eval_Jac_d(hiopVector& x, bool new_x, hiopMatrix& Jac_d)
   hiopMatrixMDS* pJac_d = dynamic_cast<hiopMatrixMDS*>(&Jac_d);
   assert(pJac_d);
   if(pJac_d) {
-    hiopVector* x_user = nlp_transformations_.apply_inv_to_x(x, new_x);
+    hiopVector* x_user = &x;
+    if(!disable_nlp_transformations_) {
+      x_user = nlp_transformations_.apply_inv_to_x(x, new_x);
+    }
 
     // NOT needed for now
     //    hiopMatrix* Jac_d_user = nlp_transformations_.apply_inv_to_jacob_ineq(Jac_d, n_cons_ineq_);
@@ -1722,9 +2206,10 @@ bool hiopNlpMDS::eval_Jac_d(hiopVector& x, bool new_x, hiopMatrix& Jac_d)
                                         pJac_d->sp_jcol(),
                                         pJac_d->sp_M(),
                                         pJac_d->de_local_data());
-    // scale the matrix
-    Jac_d = *(nlp_transformations_.apply_to_jacob_ineq(Jac_d, n_cons_ineq_));
-
+    if(!disable_nlp_transformations_) {
+      // scale the matrix
+      Jac_d = *(nlp_transformations_.apply_to_jacob_ineq(Jac_d, n_cons_ineq_));
+    }
     runStats.tmEvalJac_con.stop();
     runStats.nEvalJac_con_ineq++;
     return bret;
@@ -1746,7 +2231,10 @@ bool hiopNlpMDS::eval_Jac_c_d_interface_impl(hiopVector& x, bool new_x, hiopMatr
     assert(cons_Jac->n_sp() == pJac_d->n_sp());
     assert(cons_Jac->sp_nnz() == pJac_c->sp_nnz() + pJac_d->sp_nnz());
 
-    hiopVector* x_user = nlp_transformations_.apply_inv_to_x(x, new_x);
+    hiopVector* x_user = &x;
+    if(!disable_nlp_transformations_) {
+      x_user = nlp_transformations_.apply_inv_to_x(x, new_x);
+    }
     //! todo -> need hiopNlpTransformation::apply_to_jacob_ineq to work with MDS Jacobian
     // double** Jac_d_user = nlp_transformations_.apply_inv_to_jacob_ineq(Jac_d, n_cons_ineq_);
 
@@ -1768,9 +2256,11 @@ bool hiopNlpMDS::eval_Jac_c_d_interface_impl(hiopVector& x, bool new_x, hiopMatr
     pJac_c->copyRowsFrom(*cons_Jac, cons_eq_mapping_->local_data_const(), n_cons_eq_);
     pJac_d->copyRowsFrom(*cons_Jac, cons_ineq_mapping_->local_data_const(), n_cons_ineq_);
 
-    // scale the matrices
-    Jac_c = *(nlp_transformations_.apply_to_jacob_eq(Jac_c, n_cons_eq_));
-    Jac_d = *(nlp_transformations_.apply_to_jacob_ineq(Jac_d, n_cons_ineq_));
+    if(!disable_nlp_transformations_) {
+      // scale the matrices
+      Jac_c = *(nlp_transformations_.apply_to_jacob_eq(Jac_c, n_cons_eq_));
+      Jac_d = *(nlp_transformations_.apply_to_jacob_ineq(Jac_d, n_cons_ineq_));
+    }
 
     runStats.tmEvalJac_con.stop();
     runStats.nEvalJac_con_eq++;
@@ -1812,7 +2302,9 @@ bool hiopNlpMDS::eval_Hess_Lagr(const hiopVector& x,
 
     // scale lambda before passing it to user interface to compute Hess
     int n_cons_eq_ineq = n_cons_eq_ + n_cons_ineq_;
-    buf_lambda_ = nlp_transformations_.apply_to_cons(*buf_lambda_, n_cons_eq_ineq);
+    if(!disable_nlp_transformations_) {
+      buf_lambda_ = nlp_transformations_.apply_to_cons(*buf_lambda_, n_cons_eq_ineq);
+    }
 
     double obj_factor_with_scale = obj_factor * get_obj_scale();
 
@@ -1878,7 +2370,10 @@ bool hiopNlpSparse::eval_Jac_c(hiopVector& x, bool new_x, hiopMatrix& Jac_c)
   hiopMatrixSparse* pJac_c = dynamic_cast<hiopMatrixSparse*>(&Jac_c);
   assert(pJac_c);
   if(pJac_c) {
-    hiopVector* x_user = nlp_transformations_.apply_inv_to_x(x, new_x);
+    hiopVector* x_user = &x;
+    if(!disable_nlp_transformations_) {
+      x_user = nlp_transformations_.apply_inv_to_x(x, new_x);
+    }
 
     runStats.tmEvalJac_con.start();
 
@@ -1893,9 +2388,10 @@ bool hiopNlpSparse::eval_Jac_c(hiopVector& x, bool new_x, hiopMatrix& Jac_c)
                                         pJac_c->i_row(),
                                         pJac_c->j_col(),
                                         pJac_c->M());
-
-    // scale the matrix
-    Jac_c = *(nlp_transformations_.apply_to_jacob_eq(Jac_c, n_cons_eq_));
+    if(!disable_nlp_transformations_) {
+      // scale the matrix
+      Jac_c = *(nlp_transformations_.apply_to_jacob_eq(Jac_c, n_cons_eq_));
+    }
 
     runStats.tmEvalJac_con.stop();
     runStats.nEvalJac_con_eq++;
@@ -1914,8 +2410,10 @@ bool hiopNlpSparse::eval_Jac_d(hiopVector& x, bool new_x, hiopMatrix& Jac_d)
   hiopMatrixSparse* pJac_d = dynamic_cast<hiopMatrixSparse*>(&Jac_d);
   assert(pJac_d);
   if(pJac_d) {
-    hiopVector* x_user = nlp_transformations_.apply_inv_to_x(x, new_x);
-
+    hiopVector* x_user = &x;
+    if(!disable_nlp_transformations_) {
+      x_user = nlp_transformations_.apply_inv_to_x(x, new_x);
+    }
     runStats.tmEvalJac_con.start();
 
     int nnz = pJac_d->numberOfNonzeros();
@@ -1930,9 +2428,10 @@ bool hiopNlpSparse::eval_Jac_d(hiopVector& x, bool new_x, hiopMatrix& Jac_d)
                                         pJac_d->i_row(),
                                         pJac_d->j_col(),
                                         pJac_d->M());
-
-    // scale the matrix
-    Jac_d = *(nlp_transformations_.apply_to_jacob_ineq(Jac_d, n_cons_ineq_));
+    if(!disable_nlp_transformations_) {
+      // scale the matrix
+      Jac_d = *(nlp_transformations_.apply_to_jacob_ineq(Jac_d, n_cons_ineq_));
+    }
 
     runStats.tmEvalJac_con.stop();
     runStats.nEvalJac_con_ineq++;
@@ -1949,11 +2448,16 @@ bool hiopNlpSparse::eval_Jac_c_d_interface_impl(hiopVector& x, bool new_x, hiopM
   hiopMatrixSparse* cons_Jac = dynamic_cast<hiopMatrixSparse*>(cons_Jac_);
   if(pJac_c && pJac_d) {
     assert(cons_Jac);
-    if(NULL == cons_Jac) return false;
+    if(nullptr == cons_Jac) {
+      return false;
+    }
 
     assert(cons_Jac->numberOfNonzeros() == pJac_c->numberOfNonzeros() + pJac_d->numberOfNonzeros());
 
-    hiopVector* x_user = nlp_transformations_.apply_inv_to_x(x, new_x);
+    hiopVector* x_user = &x;
+    if(!disable_nlp_transformations_) {
+      x_user = nlp_transformations_.apply_inv_to_x(x, new_x);
+    }
 
     runStats.tmEvalJac_con.start();
 
@@ -1977,10 +2481,11 @@ bool hiopNlpSparse::eval_Jac_c_d_interface_impl(hiopVector& x, bool new_x, hiopM
     // copy back to Jac_c and Jac_d
     pJac_c->copyRowsFrom(*cons_Jac, cons_eq_mapping_->local_data_const(), n_cons_eq_);
     pJac_d->copyRowsFrom(*cons_Jac, cons_ineq_mapping_->local_data_const(), n_cons_ineq_);
-
-    // scale the matrix
-    Jac_c = *(nlp_transformations_.apply_to_jacob_eq(Jac_c, n_cons_eq_));
-    Jac_d = *(nlp_transformations_.apply_to_jacob_ineq(Jac_d, n_cons_ineq_));
+    if(!disable_nlp_transformations_) {
+      // scale the matrix
+      Jac_c = *(nlp_transformations_.apply_to_jacob_eq(Jac_c, n_cons_eq_));
+      Jac_d = *(nlp_transformations_.apply_to_jacob_ineq(Jac_d, n_cons_ineq_));
+    }
 
     runStats.tmEvalJac_con.stop();
     runStats.nEvalJac_con_eq++;
@@ -2022,7 +2527,9 @@ bool hiopNlpSparse::eval_Hess_Lagr(const hiopVector& x,
 
     // scale lambda before passing it to user interface to compute Hess
     int n_cons_eq_ineq = n_cons_eq_ + n_cons_ineq_;
-    buf_lambda_ = nlp_transformations_.apply_to_cons(*buf_lambda_, n_cons_eq_ineq);
+    if(!disable_nlp_transformations_) {
+      buf_lambda_ = nlp_transformations_.apply_to_cons(*buf_lambda_, n_cons_eq_ineq);
+    }
 
     double obj_factor_with_scale = obj_factor * get_obj_scale();
 
@@ -2075,6 +2582,131 @@ bool hiopNlpSparse::finalizeInitialization()
   assert(nx == n_vars_);
   return hiopNlpFormulation::finalizeInitialization();
 }
+
+size_type hiopNlpSparse::run_derivative_checker_order2(hiopVector& x_ref,
+                                                       hiopVector& grad_ref,
+                                                       hiopMatrix& Jacc_ref,
+                                                       hiopMatrix& Jacd_ref)
+{
+  size_type num_errs=0;
+  if(options->GetString("derivative_check") != "second-order") {
+    return 0;
+  }
+  log->printf(hovSummary, "Starting derivative checker for Hessian ...\n");
+
+  // perturbation of x working vector
+  hiopVector* x_pert = x_ref.alloc_clone();
+  // gradient at perturbed x
+  hiopVector* grad_pert = grad_ref.alloc_clone();
+  // ei vector used to get columns of the Hessian(s0
+  hiopVector* ei = x_ref.alloc_clone();
+  // vector to store a column of the Hessian
+  hiopVector* Hess_ex_col = x_ref.alloc_clone();
+  //user "exact" Hessian
+  auto* Hess_exact = alloc_Hess_Lagr();
+
+  bool user_eval_err = false; 
+  
+  //
+  //objective reference Hessian first
+  //
+  //evaluate 
+  double obj_factor = 1.5;
+  hiopVector* lambda_eq = this->alloc_dual_eq_vec();
+  hiopVector* lambda_ineq = this->alloc_dual_ineq_vec();
+  lambda_eq->setToZero();
+  lambda_ineq->setToZero();
+
+  if(!eval_Hess_Lagr(x_ref, true, obj_factor, *lambda_eq, *lambda_ineq, true, *Hess_exact)) {
+    log->printf(hovError, "Derivative checker (2nd order) error in user Hessian function.\n");
+    user_eval_err = true;
+  }
+
+  const double pert = options->GetNumeric("derivative_check_perturbation");
+  const double derivative_check_tolerance = options->GetNumeric("derivative_check_tolerance");
+  const bool print_all = ( options->GetString("derivative_check_print_all") != "no" );
+
+  
+  for(index_type idx=0; idx<n() && !user_eval_err; idx++) {
+    const double val_ref = x_ref.get_elem(idx);
+    x_pert->copyFrom(x_ref);
+    x_pert->set_elem(idx, val_ref+pert*max(abs(val_ref), 1.0));
+
+    //evaluate gradient (of objective)
+    if(!interface_base.eval_grad_f(nlp_transformations_.n_pre(),
+                                   x_pert->local_data_const(),
+                                   true,
+                                   grad_pert->local_data())) {
+      user_eval_err = true;
+      log->printf(hovError, "Derivative check error: in evaluating user gradient at perturbed point.\n");
+      break;
+    }
+
+    hiopVector& Hess_fd_col = *grad_pert;
+    Hess_fd_col.axpy(-1.0, grad_ref);
+    Hess_fd_col.scale(1/pert);
+    
+    //obtain 'idx' column of the Hessian
+    ei->setToZero();
+    ei->set_elem(idx, 1.);
+    Hess_exact->timesVec(0, *Hess_ex_col, 1.0, *ei);
+
+    //loop over (i,j) <- (idx,row)
+    for(index_type row=0; row<n() && !user_eval_err; row++) {
+      const double Hess_fd_ij = Hess_fd_col.get_elem(row);
+      const double Hess_ex_ij = Hess_ex_col->get_elem(row);
+      const double scale = max(abs(Hess_ex_ij), max(abs(Hess_fd_ij), derivative_check_tolerance));
+      double rel_error = abs(Hess_fd_ij-Hess_ex_ij) / scale;
+
+      const bool b_err = rel_error > derivative_check_tolerance;
+      char err_marker = ' ';
+      if(b_err) {
+        err_marker = '!';
+        num_errs++;
+      }
+      if(b_err || print_all) {
+        stringstream ss;
+        ss << err_marker << " Hess[" << setw(5) << idx << "," << setw(5) << row << "] "
+           << "user " << fixed << setprecision(14) << setw(21) << Hess_ex_ij << "  "
+           << "fd " << fixed << setprecision(14) << setw(21) << Hess_fd_ij
+           << " relerr [" << scientific << setprecision(3) << setw(9) << rel_error << "]";
+        log->printf(hovSummary, "%s\n", ss.str().c_str());
+        fflush(stdout);
+
+      }
+    } // end for row=1,2,...
+  }
+
+  if(!user_eval_err) {
+    log->printf(hovSummary, "Derivative checker for Objective Hessian finished: %d errors detected.\n", num_errs);
+    
+  } else {
+    
+  }
+  delete grad_pert;
+  
+  //
+  // constraints Hessian
+  //
+  // Jacobians at perturbed x (TODO)
+  hiopMatrix* Jacc_pert = Jacc_ref.alloc_clone();
+  hiopMatrix* Jacd_pert = Jacd_ref.alloc_clone();
+
+
+  //cleanup
+  delete Jacd_pert;
+  delete Jacc_pert;
+  delete lambda_eq;
+  delete lambda_ineq;
+  delete Hess_exact;
+  delete Hess_ex_col;
+  delete ei;
+  delete x_pert;
+  
+  return num_errs;
+}
+
+
 
 /////////////////////////////////////////////////////////////
 //   hiopNlpSparseIneq

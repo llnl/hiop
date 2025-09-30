@@ -597,8 +597,7 @@ bool hiopFRProbSparse::iterate_callback(int iter,
     it_base_trial->get_d()->copyFrom(*wrk_d_);
 
     // compute other slacks in the base problem
-    [[maybe_unused]] const size_type n_adjusted_slacks =
-        it_base_trial->compute_safe_slacks(*it_base_curr, solver_base_.get_mu());
+    it_base_trial->compute_safe_slacks(*it_base_curr, solver_base_.get_mu());
 
     // evaluate base problem log barr
     solver_base_.get_logbar()->updateWithNlpInfo_trial_funcOnly(*it_base_trial, obj_base_, *wrk_cbody_, *wrk_dbody_);
@@ -1221,8 +1220,7 @@ bool hiopFRProbMDS::iterate_callback(int iter,
     it_base_trial->get_d()->copyFrom(*wrk_d_);
 
     // compute other slacks in the base problem
-    [[maybe_unused]] const size_type n_adjusted_slacks =
-        it_base_trial->compute_safe_slacks(*it_base_curr, solver_base_.get_mu());
+    it_base_trial->compute_safe_slacks(*it_base_curr, solver_base_.get_mu());
 
     // evaluate base problem log barr
     solver_base_.get_logbar()->updateWithNlpInfo_trial_funcOnly(*it_base_trial, obj_base_, *wrk_cbody_, *wrk_dbody_);
@@ -1397,7 +1395,7 @@ hiopFRProbDense::hiopFRProbDense(hiopAlgFilterIPMBase& solver_base)
   m_eq_ = nlp_base_->m_eq();
   m_ineq_ = nlp_base_->m_ineq();
 #ifdef HIOP_USE_MPI
-  vec_distrib_base_ = nlp_base_->getVecDistInfo();
+  vec_distrib_base_ = nlp_base_->get_vector_distrib();
 #endif
   n_ = n_x_ + 2 * m_eq_ + 2 * m_ineq_;
   m_ = m_eq_ + m_ineq_;
@@ -1432,7 +1430,7 @@ hiopFRProbDense::hiopFRProbDense(hiopAlgFilterIPMBase& solver_base)
 #ifdef HIOP_USE_MPI
   if(vec_distrib_base_) {
     for(int i = 0; i < comm_size_; ++i) {
-      col_partition_[i] = nlp_base_->getVecDistInfo()[i];
+      col_partition_[i] = nlp_base_->get_vector_distrib()[i];
     }
   }
   if(col_partition_) {
@@ -1907,7 +1905,6 @@ bool hiopFRProbDense::iterate_callback(int iter,
   if(nrmInf_feas_ori <= max_nrmInf_feas && iter > 0) {
     // termination condition 2) (theta and logbar) are not in the original filter
     // check (original) filter condition
-    [[maybe_unused]] double trial_obj_ori = obj_base_;  // obj_base_ has been updated in the FR loop when we evaluate obj
 
     // compute the original logbar objective from the trial point given by the FR problem
     // Note that this function will updates the slack and dual variables
@@ -1919,7 +1916,7 @@ bool hiopFRProbDense::iterate_callback(int iter,
     it_base_trial->get_d()->copyFrom(*wrk_d_);
 
     // compute other slacks in the base problem
-    [[maybe_unused]] size_type n_adjusted_slacks = it_base_trial->compute_safe_slacks(*it_base_curr, solver_base_.get_mu());
+    it_base_trial->compute_safe_slacks(*it_base_curr, solver_base_.get_mu());
 
     // evaluate base problem log barr
     solver_base_.get_logbar()->updateWithNlpInfo_trial_funcOnly(*it_base_trial, obj_base_, *wrk_cbody_, *wrk_dbody_);

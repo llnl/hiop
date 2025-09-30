@@ -1,0 +1,170 @@
+%!TEX root = ../techrep_main.tex
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% HiOpBBpy
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{HiOpBBpy}
+
+\Hi offers a Bayesian optimization \Hibbpy solver to determine approximate global optimizers of black-box functions. That is to solve
+\begin{align*}
+\min_{x\in\mathbb{R}^n}f(x)\\
+\text{s.t. } x\in \mathcal{B}
+\end{align*}
+where $\mathcal{B}$ constitutes box constraints on $x$. Here, we detail how to install and utilize \Hibbpy.
+
+\subsection{HiOpBBpy installation}
+
+\Hibbpy depends on the surrogate modeling toolkit (SMT), to install \Hibbpy from the home directory of \Hi:
+\begin{verbatim}
+> pip install .
+\end{verbatim}
+
+\Hibbpy also supports using nonlinear optimization solver Ipopt \cite{ipopt_impl} as its internal solver. 
+In order to use Ipopt, \Hibbpy optionally depends on {\it{cyipopt}}, which is a Python wrapper of Ipopt.
+To use Ipopt via {\it{cyipopt}}, one can install Ipopt from source, and then export the \verb~IPOPT_PATH~ and 
+\begin{verbatim}
+> export PKG_CONFIG_PATH=$PKG_CONFIG_PATH:$IPOPT_PATH/lib/pkgconfig
+> export PATH=$PATH:$IPOPT_PATH/bin
+\end{verbatim}
+
+The Ipopt libaries are then exposed:
+\begin{verbatim}
+> export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$IPOPT_PATH/lib
+\end{verbatim}
+
+After exposing Ipopt via the specified environment variables, cyipopt can be installed using standard Python package 
+managers (e.g., pip or conda). It is highly recommended to perform the installation inside a Python virtual environment. 
+For example, the following code can create a virtual environment, named as `myvenv'
+\begin{verbatim}
+> python -m venv myvenv 
+\end{verbatim}
+Then, for example, in Linux/MacOS, one can activate this virtual environment via command
+\begin{verbatim}
+> source myvenv/bin/activate
+\end{verbatim}
+Once activated, one can install dependencies isolated from their system Python.
+
+\subsection{The Python interface}
+
+An objective function is defined as a class that inherits from \verb~Problem~ and has a required \verb~_evaluate~ method such as
+
+
+\begin{lstlisting} 
+import numpy as np
+from hiopbbpy.problems.problem import Problem
+
+class LpNormProblem(Problem):
+  def __init__(self, ndim, xlimits, p=2.0, constraints=[]):
+    name = "LpNormProblem"
+    super().__init__(ndim, xlimits, name=name, constraints=constraints)
+    self.p = p
+
+  def _evaluate(self, x):
+    ne, nx = x.shape
+    assert nx == self.ndim
+    y = np.atleast_2d(np.linalg.norm(x, ord=self.p, axis=1)).T
+    return y
+\end{lstlisting} 
+
+
+One example to the \Hibbpy Bayesian optimization algorithm is the following:
+
+
+\begin{lstlisting}[language=Python]
+import numpy as np
+from hiopbbpy.surrogate_modeling import smtKRG
+from hiopbbpy.opt import BOAlgorithm
+
+### parameters
+n_samples = 5  # number of the initial samples to train GP
+theta = 1.e-2  # hyperparameter for GP kernel
+nx = 2         # dimension of the optimization variable
+xlower = -5.0
+xupper =  5.0
+xlimits = np.array([[xlower, xupper]] * nx) # bounds on optimization variable
+
+if __name__ == "__main__":
+  problem = LpNormProblem(nx, xlimits)
+
+  ### initial training set
+  x_train = problem.sample(n_samples)
+  y_train = problem.evaluate(x_train)
+
+  ### Define the GP surrogate model
+  gp_model = smtKRG(theta, xlimits, nx)
+  gp_model.train(x_train, y_train)
+
+  acq_type = "EI" # EI or LCB
+  options = {
+	'acquisition\_type': acq_type,
+	'log_level': 'info',
+	'bo_maxiter': 10,
+  }
+  # Instantiate and run Bayesian Optimization
+  bo = BOAlgorithm(problem, gp_model, x_train, y_train, options = options)
+  bo.optimize()
+\end{lstlisting}
+
+\subsection{Parallel runs}
+
+\Hibbpy offers two approaches to utilize parallelism in the context of Bayesian optimization. The first approach is the parallel evaluation of the black-box objective function on a batch of points that arises in batched Bayesian optimization methods as well as in the generation of initial training points to train the Gaussian process surrogate on. The second approach is the parallel evaluation of an optimization algorithm, which converges to locally optimal points, on a batch of random starting points in order to estimate a global optima. Both are demonstrated in the example below:
+
+\begin{lstlisting}
+import numpy as np
+from hiopbbpy.surrogate_modeling import smtKRG
+from hiopbbpy.opt import BOAlgorithm
+from hiopbbpy.utils import MPIEvaluator
+
+### parameters
+n_samples = 5  # number of the initial samples to train GP
+theta = 1.e-2  # hyperparameter for GP kernel
+nx = 2         # dimension of the optimization variable
+xlower = -5.0
+xupper =  5.0
+xlimits = np.array([[xlower, xupper]] * nx) # bounds on optimization variable
+
+if __name__ == "__main__":
+  problem = LpNormProblem(nx, xlimits)
+  """
+  obj_evaluator -- mpi evaluator for batch
+  evaluation of the objective
+  opt_evaluator -- mpi evaluator for multi-point
+  local search used for determining
+  acquisition function global optima
+  function_mode is set to False given that
+  the optimizer callback returns more than
+  a single scalar value
+  """
+  obj_evaluator = MPIEvaluator()
+  opt_evaluator = MPIEvaluator(function_mode=False)
+
+  ### initial training set
+  x_train = problem.sample(n_samples)
+  y_train = obj_evaluator.run(problem.evaluate, x_train)
+
+  ### Define the GP surrogate model
+  gp_model = smtKRG(theta, xlimits, nx)
+  gp_model.train(x_train, y_train)
+
+  acq_type = "EI" # EI or LCB
+  options = {
+     'acquisition_type': acq_type,
+     'log_level': 'info',
+     'bo_maxiter': 10,
+     'batch_size': 4,
+     'obj_evaluator': obj_evaluator,
+     'opt_evaluator': opt_evaluator
+  }
+  # Instantiate and run Bayesian Optimization
+  bo = BOAlgorithm(problem, gp_model, x_train, y_train, options = options)
+  bo.optimize()
+\end{lstlisting}
+
+To run this Python script \verb~BODriver.py~, in a Python environment in which \verb~mpi4py~, and \Hibbpy, the following command can be used
+\begin{verbatim}
+> mpirun -np 4 python -m mpi4py.futures BODriver.py 
+\end{verbatim}
+In a Slurm-based scheduling system, the command should look be issued as 
+\begin{verbatim}
+> srun -n 4 python -m mpi4py.futures BODriver.py 
+\end{verbatim}

@@ -136,6 +136,46 @@ public:
     return reduceReturn(fail, &x);
   }
 
+  /// Test set_elem method of HiOp vector
+  bool vector_set_elem(hiop::hiopVector& x, const int rank)
+  {
+    int fail = 0;
+    global_ordinal_type sz = x.get_size();
+    if(sz>0) {
+
+      //first set to zero, then set select entries to one and two
+      x.setToConstant(zero);
+      
+      if(sz==1) {
+        x.set_elem(0, three);
+      } else {
+        const global_ordinal_type idx1 = 1;
+        const global_ordinal_type idx2 = sz-1;
+        
+        x.set_elem(idx1, two);
+        x.set_elem(idx2, one);
+      }
+      const real_type nrm1 = x.onenorm();
+      fail = (std::abs(nrm1-three) > std::numeric_limits<real_type>::epsilon());
+    }
+    printMessage(fail, __func__);
+    return reduceReturn(fail, &x);
+  }
+
+  /// Test get_elem of HiOp vector
+  bool vector_get_elem(hiop::hiopVector& x, const int rank)
+  {
+    int fail = 0;
+    global_ordinal_type sz = x.get_size();
+    if(sz>0) {
+      x.setToConstant(quarter);
+      fail += (x.get_elem(0)!=quarter);
+      fail += (x.get_elem(sz-1)!=quarter);
+    }
+    printMessage(fail, __func__);
+    return reduceReturn(fail, &x);
+  }
+  
   /// Test set_to_random_uniform method of hiop vector implementation
   bool vector_set_to_random_uniform(hiop::hiopVector& x, const int rank)
   {
@@ -147,12 +187,7 @@ public:
     }
 
     x.set_to_random_uniform(one, two);
-
     fail = verifyAnswer(&x, one, two);
-    if(fail > 0) {
-      std::cout << "num fails = " << fail << std::endl;
-    }
-
     printMessage(fail, __func__, rank);
 
     return reduceReturn(fail, &x);
@@ -1205,6 +1240,55 @@ public:
 
     expected = std::log(x_val);
     result = x.logBarrier_local(pattern);
+    fail += !isEqual(result, expected);
+
+    printMessage(fail, __func__, rank);
+    return reduceReturn(fail, &x);
+  }
+
+    /**
+   * @brief Test:
+   * sum{w[i]*ln(x[i]): pattern[i] = 1}
+   */
+  bool vectorLogBarrierWeighted(hiop::hiopVector& x,
+                                hiop::hiopVector& pattern,
+                                hiop::hiopVector& weight,
+                                const int rank)
+  {
+    const local_ordinal_type N = getLocalSize(&x);
+    assert(N == getLocalSize(&pattern));
+    assert(N == getLocalSize(&weight));
+
+    // Ensure that only N-1 elements of x are
+    // used in the log calculation
+    pattern.setToConstant(one);
+    setLocalElement(&pattern, N - 1, zero);
+
+    const real_type x_val = three;
+    x.setToConstant(x_val);
+    // Make sure pattern eliminates the correct element
+    setLocalElement(&x, N - 1, 1000 * three);
+
+    const real_type w_val = 1./N;
+    weight.setToConstant(w_val);
+    // Make sure pattern eliminates the correct element
+    setLocalElement(&weight, N-1, 100);
+    
+    real_type expected = (N - 1) * std::log(x_val) / N;
+    real_type result = x.logBarrierWeighted_local(pattern, weight);
+    
+    int fail = !isEqual(result, expected);
+
+    // Make sure pattern eliminates the correct elements
+    pattern.setToConstant(zero);
+    setLocalElement(&pattern, N - 1, one);
+    x.setToConstant(three);
+    setLocalElement(&x, N - 1, x_val);
+    weight.setToConstant(three);
+    setLocalElement(&weight, N - 1, w_val);
+    
+    expected = std::log(x_val)*w_val;
+    result = x.logBarrierWeighted_local(pattern, weight);
     fail += !isEqual(result, expected);
 
     printMessage(fail, __func__, rank);
