@@ -14,6 +14,7 @@ from .acquisition import LCBacquisition, EIacquisition
 from ..problems.problem import Problem
 from .optproblem import IpoptProb
 from ..utils.util import Evaluator, Logger
+from .bnbalgorithm import BnBAlgorithm
 
 # A base class defining a general framework for Bayesian Optimization
 class BOAlgorithmBase:
@@ -92,6 +93,10 @@ class BOAlgorithm(BOAlgorithmBase):
     acquisition_type = options.get('acquisition_type', "LCB")
     assert acquisition_type in ["LCB", "EI"], f"Invalid acquisition_type: {acquisition_type}"
 
+    acqf_method = options.get('acquisition_method', "multi_start") 
+    assert acqf_method in ["multi_start", "bnb"], f"Invalid acqf_method: {acqf_method}"
+    self.acqf_method = acqf_method
+    
     batch_size = options.get('batch_size', 1)
     assert isinstance(batch_size, int), f"batch_size {batch_size} not an integer"
     assert batch_size > 0, f"batch_size {batch_size} is not strictly positive"
@@ -172,34 +177,53 @@ class BOAlgorithm(BOAlgorithmBase):
 
     opt_output = self.opt_evaluator.run(acqf_minimizer.minimizer_callback, x0_pts)
 
-    x_all = []
-    y_all = []
-    n_failures = 0
-    for ii in range(self.n_start):
-      success = False
-      xopt, yopt, success, msg = opt_output[ii]
-      if success:
-        x_all.append(xopt)
-        y_all.append(yopt)
-      else:
-        n_failures += 1
-        self.logger.debug(f"Acquisition optimizer failed at start {ii}: {msg}")
+    if self.acqf_method == "multi_start":
+      x_all = []
+      y_all = []
+      n_failures = 0
+      for ii in range(self.n_start):
+        success = False
+        xopt, yopt, success, msg = opt_output[ii]
+        if success:
+          x_all.append(xopt)
+          y_all.append(yopt)
+        else:
+          n_failures += 1
+          self.logger.debug(f"Acquisition optimizer failed at start {ii}: {msg}")
 
-    if not x_all:
-      self.logger.error("All acquisition minimizations failed.")
-      raise RuntimeError("Optimization failed for all initial points — no solution found.")
+      if not x_all:
+        self.logger.error("All acquisition minimizations failed.")
+        raise RuntimeError("Optimization failed for all initial points — no solution found.")
 
-    # Compute some stats
-    y_all = np.array(y_all)
-    best_xopt = x_all[np.argmin(y_all)]
-    y_min, y_max, y_mean = np.min(y_all), np.max(y_all), np.mean(y_all)
+      # Compute some stats
+      y_all = np.array(y_all)
+      best_xopt = x_all[np.argmin(y_all)]
+      y_min, y_max, y_mean = np.min(y_all), np.max(y_all), np.mean(y_all)
 
-    self.logger.scalars(
-        f"  Acquisition optimization finished with {len(y_all)} successes, {n_failures} failures"
-    )
-    self.logger.scalars(
-        f"  Acquisition values: min = {y_min:.4e}, mean = {y_mean:.4e}, max = {y_max:.4e}"
-    )
+      self.logger.scalars(
+          f"  Acquisition optimization finished with {len(y_all)} successes, {n_failures} failures"
+      )
+      self.logger.scalars(
+          f"  Acquisition values: min = {y_min:.4e}, mean = {y_mean:.4e}, max = {y_max:.4e}"
+      )
+    elif self.acqf_method == "bnb":
+      l_init = np.array([b[0] for b in self.bounds])
+      u_init = np.array([b[1] for b in self.bounds])
+
+      # Instantiate BnB with GP surrogate and BO callback
+      bnb = BnBAlgorithm(
+          x = x_train, 
+          y = y_train,
+          gpsurrogate=self.gpsurrogate,
+          acqf_minimizer_callback=acqf_minimizer.minimizer_callback,
+          acquisition_type=self.acquisition_type,
+      )
+
+      # Run BnB optimization
+      best_l, best_u, _ = bnb.optimize(l_init, u_init)
+
+      # Take the midpoint of the best box as the candidate point
+      best_xopt = 0.5 * (best_l + best_u)
     self.logger.debug(f"Estimated optimal point x: {best_xopt}")
 
     return best_xopt

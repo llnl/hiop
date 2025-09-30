@@ -7,3 +7,4 @@ _dist-default-build
 _dist-DEBUG
 *hiopbbpy.egg-info
 *__pycache__
+*.ipynb_checkpoints/
