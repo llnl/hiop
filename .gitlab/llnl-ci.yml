@@ -27,6 +27,14 @@ default:
     CUSTOM_CI_BUILDS_DIR: "/usr/workspace/hiop/gitlab_ci/dane/${CI_PIPELINE_ID}"
     MY_CLUSTER: dane
 
+.matrix: 
+  tags:
+    - shell
+    - matrix
+  variables:
+    CUSTOM_CI_BUILDS_DIR: "/usr/workspace/hiop/gitlab_ci/matrix/${CI_PIPELINE_ID}"
+    MY_CLUSTER: matrix
+
 .llnl_script_config:
   stage: config 
   script:
@@ -85,7 +93,7 @@ default:
       rm -rf "$CUSTOM_CI_BUILDS_DIR"
       #rm -rf "/usr/workspace/hiop/gitlab_ci/scripts/$CI_RUNNER_SHORT_TOKEN"
 
-.llnl_jsrun_script_test: 
+.llnl_srun_script_test: 
   stage: test
   variables:
     GIT_STRATEGY: none
@@ -96,7 +104,7 @@ default:
       echo "CUSTOM_CI_BUILDS_DIR = ${CUSTOM_CI_BUILDS_DIR}"
       set -xv
       cd "$CUSTOM_CI_BUILDS_DIR"
-      lalloc 1 -W 35 -q pbatch ./BUILD.sh --test-only
+      srun -N 1 -t 35 -p pbatch ./BUILD.sh --test-only
       res=$?
       exit $res
 
@@ -169,3 +177,28 @@ clean_on_dane:
     - .dane
     - .llnl_script_clean
   needs: ['test_on_dane_hiopbbpy', 'test_on_dane']
+
+
+# For LLNL/matrix CI
+config_on_matrix:
+  extends:
+    - .matrix
+    - .llnl_script_config
+
+build_on_matrix:
+  extends:
+    - .matrix
+    - .llnl_script_build
+  needs: ['config_on_matrix']
+
+test_on_matrix:
+  extends:
+    - .matrix
+    - .llnl_jsrun_script_test
+  needs: ['build_on_matrix']
+
+clean_on_matrix:
+  extends:
+    - .matrix
+    - .llnl_script_clean
+  needs: ['test_on_matrix']
