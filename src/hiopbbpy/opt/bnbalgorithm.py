@@ -6,6 +6,8 @@ from scipy.stats import norm
 from .acquisition import EIacquisition
 from ..utils.util import Evaluator
 from numpy.random import uniform
+
+
 class BnBNode:
     def __init__(self, l, u, aq_L, aq_U):
         self.l = l
@@ -61,11 +63,9 @@ class BnBAlgorithmBase:
     # --- kernel / corr selection ---
     corr = sm.options["corr"]  # e.g., 'squar_exp', 'pow_exp', 'abs_exp', 'matern32', 'matern52'
 
-    print("corr = ", sm.options["corr"])
     if corr == "pow_exp":
       # OptionsDictionary -> use membership + indexing (no .get)
       p = float(sm.options["pow_exp_power"]) if "pow_exp_power" in sm.options else 2.0
-      print("p = ", p)      
       if p not in (1.0, 2.0):
         # tighten if your 1D bound code only supports p in {1,2}
         raise ValueError("Single-d bounds support pow_exp only for p=1 or p=2")
