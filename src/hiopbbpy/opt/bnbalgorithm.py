@@ -351,30 +351,16 @@ class BnBAlgorithm(BnBAlgorithmBase):
                     else:
                         raise NotImplementedError("No implemented acquisition_type associated to" + self.acquisition_type)
 
-                    acqf_obj_callback = lambda x: float(np.array(acqf.evaluate(np.atleast_2d(x))).flat[0])
-                    acqf_callback = {'obj': acqf_obj_callback}
-                    if acqf.has_gradient == True:
-                                acqf_grad_callback = lambda x: np.array(acqf.eval_g(np.atleast_2d(x)))
-                                acqf_callback['grad'] = acqf_grad_callback
+                    acqf_callback = {'obj': acqf.scalar_evaluate}
+                    if acqf.has_gradient:
+                      acqf_callback['grad'] = acqf.scalar_eval_g
 
                     
                     print("l = ", l) 
                     print("u = ", u)
                     x0 = np.array([[uniform(l[i], u[i]) for i in range(len(l))] for _ in range(1)])
                     opt_output = self.evaluator.run(self.acqf_minimizer_callback, x0)
-                    print(opt_output)
                     xopt, yout, success, _ = opt_output[0] 
-                    ##if x0 is None: #Need to fix this.
-                    #x0 = np.array(uniform(l, u))
-                    #
-                    #print("x0 = ", x0)
-                    #output = self.acqf_minimizer_callback(x0)
-                    #print(output)
-                    #exit()
-                    #
-                    #
-                    ##xopt, yout, success = self.acqf_minimizer_callback(acqf_callback, x0)
-
                     if not success:
                         raise RuntimeError("EI maximization failed")
 
