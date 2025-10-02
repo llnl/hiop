@@ -194,7 +194,7 @@ build_on_matrix:
 test_on_matrix:
   extends:
     - .matrix
-    - .llnl_jsrun_script_test
+    - .llnl_srun_script_test
   needs: ['build_on_matrix']
 
 clean_on_matrix:
