@@ -369,7 +369,7 @@ public:
     double ratio_min = 0.5;
     double ratio_max = 5.0;
     double alpha_min = 1e-5;
-    double alpha_max = 1e6;
+    double alpha_max = 1e8;
 
     double fk;              /// current RECOURSE objective value at k. Due to initial design, this is not the full objective,
                             /// meaning it does not contain the basecase objective.
@@ -427,7 +427,7 @@ private:
   hiopVectorInt* xc_idx_;
 
   /// tolerance of the convergence stopping criteria. User options from options file via hiop_pridec.options
-  double tol_ = 1e-8;
+  double tol_ = 1e-6;
 
   /// acceptable tolerance is used to terminate hiop if NLP residuals are below the
   /// default value for 10 consecutive iterations

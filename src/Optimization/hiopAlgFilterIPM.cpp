@@ -1729,11 +1729,11 @@ void hiopAlgFilterIPMQuasiNewton::load_state_from_sidre_group(const sidre::Group
   //
   // algorithmic parameters
   //
-  //!!!note: nparams needs to match the nparams from save_state_to_data_store
+  //Note: nparams needs to match the nparams from save_state_to_data_store
   const int nparams = 4;
   double alg_params[nparams];
   SidreHelper::copy_array_from_view(group, "alg_params", alg_params, nparams);
-  //!!! dev note: match order in save_state_to_data_store
+  // dev note: make sure to match order in save_state_to_data_store
   _mu = alg_params[0];
   iter_num_total_ = alg_params[1];
 
@@ -1769,7 +1769,7 @@ void hiopAlgFilterIPMQuasiNewton::load_state_from_sidre_group(const sidre::Group
   // state of quasi-Newton Hessian approximation
   //
   HessianDiagPlusRowRank& hqn = dynamic_cast<HessianDiagPlusRowRank&>(*_Hess_Lagr);
-  //!!!note: nparams needs to match the # of params from save_state_to_sidre_group
+  //note: nparams needs to match the # of params from save_state_to_sidre_group
   const int nhqn_params = 5;
   double hqn_params[nhqn_params];
   SidreHelper::copy_array_from_view(group, "Hess_quasiNewton_params", hqn_params, nhqn_params);
