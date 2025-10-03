@@ -1660,7 +1660,7 @@ void hiopOptionsPriDec::register_options()
   // convergence and stopping criteria
   //
   {
-    register_num_option("alpha_max", 1e6, 1, 1e14, "Upper bound of quadratic coefficient alpha (default 1e6)");
+    register_num_option("alpha_max", 1e9, 1, 1e14, "Upper bound of quadratic coefficient alpha (default 1e6)");
 
     register_num_option("alpha_min", 1e-5, 1e-8, 1e3, "Lower bound of quadratic coefficient alpha (default 1e6)");
 
