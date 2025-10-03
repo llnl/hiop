@@ -362,14 +362,14 @@ public:
 
   private:
     int n_;
-    double alpha_ =
-        1e6;  // this parameter is the quadratic coefficient alpha in the pridec paper, see user manual for details
+    // Quadratic coefficient alpha in the pridec paper, see user manual for details
+    double alpha_ = 1e6;  
     double ratio_ = 1.0;
     double tr_ratio_ = 1.0;
     double ratio_min = 0.5;
     double ratio_max = 5.0;
-    double alpha_min = 1e-5;
-    double alpha_max = 1e8;
+    double alpha_min_;
+    double alpha_max_;
 
     double fk;              /// current RECOURSE objective value at k. Due to initial design, this is not the full objective,
                             /// meaning it does not contain the basecase objective.
@@ -437,8 +437,8 @@ private:
   /// initial alpha_ratio if used
   double alpha_ratio_ = 1.;
 
-  double alpha_min_ = 1e-5;
-  double alpha_max_ = 1e8;
+  double alpha_min_;
+  double alpha_max_;
 
 protected:
   hiopOptions* options_;

@@ -438,9 +438,8 @@ double hiopAlgPrimalDecomposition::HessianApprox::get_alpha_BB()
   temp2 = skm1->dotProductWith(*ykm1);
 
   alpha_ = temp2 / temp1;
-  alpha_ = std::max(alpha_min, alpha_);
-  alpha_ = std::min(alpha_max, alpha_);
-  // printf("alpha max %18.12e\n",alpha_max);
+  alpha_ = std::max(alpha_min_, alpha_);
+  alpha_ = std::min(alpha_max_, alpha_);
   return alpha_;
 }
 
@@ -451,8 +450,8 @@ double hiopAlgPrimalDecomposition::HessianApprox::get_alpha_f(const hiopVector& 
   const double alpha = temp3 / 2.0 / fk;
 
   alpha_ = alpha * ratio_;
-  alpha_ = std::max(alpha_min, alpha_);
-  alpha_ = std::min(alpha_max, alpha_);
+  alpha_ = std::max(alpha_min_, alpha_);
+  alpha_ = std::min(alpha_max_, alpha_);
   log_->printf(hovSummary,
                "PriDec: get_alpha_f: alpha %12.5e  ratio %12.5e  final alpha %12.5e\n",
                alpha,
@@ -464,8 +463,8 @@ double hiopAlgPrimalDecomposition::HessianApprox::get_alpha_f(const hiopVector& 
 double hiopAlgPrimalDecomposition::HessianApprox::get_alpha_tr()
 {
   alpha_ *= tr_ratio_;
-  alpha_ = std::max(alpha_min, alpha_);
-  alpha_ = std::min(alpha_max, alpha_);
+  alpha_ = std::max(alpha_min_, alpha_);
+  alpha_ = std::min(alpha_max_, alpha_);
   log_->printf(hovScalars, "PriDec: get_alpha_tr: alpha ratio %18.12e\n", ratio_);
   return alpha_;
 }
@@ -546,9 +545,15 @@ void hiopAlgPrimalDecomposition::HessianApprox::set_alpha_ratio_max(const double
   ratio_max = alp_ratio_max;
 }
 
-void hiopAlgPrimalDecomposition::HessianApprox::set_alpha_min(const double alp_min) { alpha_min = alp_min; }
+void hiopAlgPrimalDecomposition::HessianApprox::set_alpha_min(const double alp_min)
+{
+  alpha_min_ = alp_min;
+}
 
-void hiopAlgPrimalDecomposition::HessianApprox::set_alpha_max(const double alp_max) { alpha_max = alp_max; }
+void hiopAlgPrimalDecomposition::HessianApprox::set_alpha_max(const double alp_max)
+{
+  alpha_max_ = alp_max;
+}
 
 hiopAlgPrimalDecomposition::hiopAlgPrimalDecomposition(hiopInterfacePriDecProblem* prob_in,
                                                        MPI_Comm comm_world /*=MPI_COMM_WORLD*/)
@@ -743,9 +748,15 @@ void hiopAlgPrimalDecomposition::set_initial_alpha_ratio(const double alpha)
   alpha_ratio_ = alpha;
 }
 
-void hiopAlgPrimalDecomposition::set_alpha_min(const double alp_min) { alpha_min_ = alp_min; }
+void hiopAlgPrimalDecomposition::set_alpha_min(const double alp_min)
+{
+  alpha_min_ = alp_min;
+}
 
-void hiopAlgPrimalDecomposition::set_alpha_max(const double alp_max) { alpha_max_ = alp_max; }
+void hiopAlgPrimalDecomposition::set_alpha_max(const double alp_max)
+{
+  alpha_max_ = alp_max;
+}
 
 void hiopAlgPrimalDecomposition::set_local_accum(const std::string local_accum) { local_accum_ = local_accum; }
 
