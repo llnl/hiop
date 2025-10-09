@@ -1,4 +1,3 @@
-# https://spack.readthedocs.io/en/latest/binary_caches.html#spack-build-cache-for-github-actions
 name: Spack Builds (Ubuntu x86_64 Buildcache)
 
 on: [pull_request]
@@ -193,6 +192,22 @@ jobs:
           ctest -VV
 
       - name: Push binaries to buildcache
-        run: |
-          spack -e . buildcache push --force --base-image ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.BASE_VERSION }} --unsigned --update-index local-buildcache
         if: ${{ !cancelled() }}
+        env:
+          # What Spack’s example expects
+          GITHUB_USER: ${{ env.USERNAME }}          # e.g. hiop-bot
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # packages: write perms
+        run: |
+          # Ensure the mirror uses these env var names for auth (idempotent)
+          spack -e . mirror set \
+            --oci-username-variable GITHUB_USER \
+            --oci-password-variable GITHUB_TOKEN \
+            local-buildcache
+
+          # Push (NO username/password flags here!)
+          spack -e . buildcache push \
+            --force \
+            --base-image ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.BASE_VERSION }} \
+            --unsigned \
+            --update-index \
+            local-buildcache
