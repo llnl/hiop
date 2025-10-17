@@ -24,7 +24,7 @@ class BnBAlgorithmBase:
   def __init__(self, x = None, y = None):
     # Node class for priority queue
     self.BnBNode = BnBNode
-    self.BnB_LBmethod = "IPOPT"
+    #self.BnB_LBmethod = "IPOPT"
     #self.BnB_LBmethod = None  # Use CVXPY for lower bounds
 
     # Stopping criteria
@@ -62,7 +62,6 @@ class BnBAlgorithmBase:
 
     # --- kernel / corr selection ---
     corr = sm.options["corr"]  # e.g., 'squar_exp', 'pow_exp', 'abs_exp', 'matern32', 'matern52'
-
     if corr == "pow_exp":
       # OptionsDictionary -> use membership + indexing (no .get)
       p = float(sm.options["pow_exp_power"]) if "pow_exp_power" in sm.options else 2.0
@@ -152,7 +151,20 @@ class BnBAlgorithmBase:
           (1 + np.sqrt(5) * np.sqrt(d) + (5/3) * d) *
           np.exp(-np.sqrt(5) * np.sqrt(d))
       )
-    
+ 
+  def distance_bounds(self, l, u):
+    # normalize the box
+    l_c = self._normalize(l).ravel()
+    u_c = self._normalize(u).ravel()
+
+    Xc  = self.Xc                # (nt, d)
+    th  = self.theta.ravel()     # (d,)
+    spec = self.kernel_spec
+
+    # per-point, per-dimension distance extremes (normalized space)
+    dmin = np.maximum(0.0, np.maximum(l_c - Xc, Xc - u_c))        # (nt,d)
+    dmax = np.maximum(np.abs(l_c - Xc), np.abs(u_c - Xc))         # (nt,d)
+    return dmin, dmax   
   def ker_bounds(self, l, u):
    
     """
@@ -216,6 +228,72 @@ class BnBAlgorithmBase:
     mu_U = self.y_mean + self.y_std * mu_U_n
     return mu_L, mu_U
 
+  #def sigma2_bounds(self, kL, kU, lb_passes=2, clip_nonneg=True):
+  #    """
+  #    Variance bounds over r ∈ [kL,kU] for SMT KRG (poly='constant'),
+  #    returned in ORIGINAL y-units (σ^2 * y_std^2).
+  #    """
+  #    
+  #    kL = np.asarray(kL, float).ravel()
+  #    kU = np.asarray(kU, float).ravel()
+  #    n  = kL.size
+  #    assert hasattr(self, "C") and hasattr(self, "sigma2"), "Call sync_from_smt() first"
+  #    assert kL.shape == kU.shape == (n,) and np.all(kL <= kU), "bad kL/kU"
+
+  #    C      = self.C
+  #    sigma2 = float(self.sigma2)  # normalized-y process variance
+  #    ones   = np.ones(n)
+
+  #    from scipy import linalg
+  #    tmp   = linalg.solve_triangular(C, ones, lower=True)    # C tmp = 1
+  #    a_vec = linalg.solve_triangular(C.T, tmp,  lower=False) # C^T a = tmp
+  #    S     = float(ones @ a_vec)
+
+  #    def bracket(r):
+  #        r  = np.asarray(r, float).ravel()
+  #        rt = linalg.solve_triangular(C, r, lower=True)      # C^{-1} r
+  #        tau = float(a_vec @ r)
+  #        return 1.0 - float(rt @ rt) + (1.0 - tau)**2 / S
+
+  #    # ----- UPPER bound via convex relaxation in z with r = C z (drop -||z||^2) -----
+  #    import cvxpy as cp
+  #    A = C.T @ a_vec
+  #    Q = (2.0 / S) * np.outer(A, A)   # PSD
+  #    b = (-2.0 / S) * A
+
+  #    z = cp.Variable(n)
+  #    cons = [C @ z >= kL, C @ z <= kU]
+  #    obj  = 0.5 * cp.quad_form(z, Q) + b @ z
+  #    cp.Problem(cp.Minimize(obj), cons).solve(solver="OSQP")
+
+  #    r_ub = (C @ z.value).reshape(-1)
+  #    tau  = float(A @ z.value)
+  #    f_ub = (1.0 + 1.0/S) + (tau**2)/S - (2.0/S)*tau  # UB after dropping -||z||^2
+  #    if clip_nonneg: f_ub = max(f_ub, 0.0)
+  #    s2_U_n = sigma2 * f_ub  # normalized-y variance UB
+
+  #    # ----- LOWER bound: tiny coordinate descent on r-box (optional) -----
+  #    if self.BnB_LBmethod != "IPOPT":
+  #        r = r_ub.copy()
+  #        f = bracket(r)
+  #        for _ in range(max(0, int(lb_passes))):
+  #            improved = False
+  #            for i in range(n):
+  #                r_lo = r.copy(); r_lo[i] = kL[i]; f_lo = bracket(r_lo)
+  #                r_hi = r.copy(); r_hi[i] = kU[i]; f_hi = bracket(r_hi)
+  #                if f_lo + 1e-6 < f: r, f, improved = r_lo, f_lo, True
+  #                if f_hi + 1e-6 < f: r, f, improved = r_hi, f_hi, True
+  #            if not improved: break
+  #        if clip_nonneg: f = max(f, 0.0)
+  #        s2_L_n = sigma2 * f
+  #    else:
+  #        s2_L_n = 0.0
+
+  #    # de-normalize like SMT: σ^2_orig = y_std^2 * σ^2_norm
+  #    ys2 = (self.y_std ** 2)
+  #    return ys2 * s2_L_n, ys2 * s2_U_n
+
+
   def sigma2_bounds(self, kL, kU, lb_passes=2, clip_nonneg=True):
     """
     Variance bounds over r ∈ [kL,kU] for SMT KRG (poly='constant'),
@@ -232,9 +310,13 @@ class BnBAlgorithmBase:
     sigma2 = float(self.sigma2)  # normalized-y process variance
     ones   = np.ones(n)
 
-    tmp   = linalg.solve_triangular(C, ones, lower=True)    # C tmp = 1
-    a_vec = linalg.solve_triangular(C.T, tmp,  lower=False) # C^T a = tmp
-    S     = float(ones @ a_vec)
+    # a = R^-1 1
+    # R = C C^T
+    # a = C^-T (C^-1 1)
+    u   = linalg.solve_triangular(C, ones, lower=True)    # C u = 1
+    #a_vec = linalg.solve_triangular(C.T, u,  lower=False) # C^T a = u
+    S = float(u @ u)
+    #S     = float(ones @ a_vec)
 
     def bracket(r):
       r  = np.asarray(r, float).ravel()
@@ -243,20 +325,19 @@ class BnBAlgorithmBase:
       return 1.0 - float(rt @ rt) + (1.0 - tau)**2 / S
 
     # ----- UPPER bound via convex relaxation in z with r = C z (drop -||z||^2) -----
-    A = C.T @ a_vec
-    Q = (2.0 / S) * np.outer(A, A)   # PSD
-    b = (-2.0 / S) * A
+    #A = C.T @ a_vec
+    Q = 2.0 * (-1.0 * np.identity(n) + np.outer(u, u) / S)   # PSD
+    b = (-2.0 / S) * u
 
     z = cp.Variable(n)
     cons = [C @ z >= kL, C @ z <= kU]
-    obj  = 0.5 * cp.quad_form(z, Q) + b @ z
-    cp.Problem(cp.Minimize(obj), cons).solve(solver="OSQP")
+    obj  = 0.5 * cp.quad_form(z, Q) + b @ z + (1. + 1. / S)
+    f_ub = cp.Problem(cp.Maximize(obj), cons).solve(solver="OSQP")
+    assert np.isfinite(f_ub), "convex optimizer did not converge"
 
-    r_ub = (C @ z.value).reshape(-1)
-    tau  = float(A @ z.value)
-    f_ub = (1.0 + 1.0/S) + (tau**2)/S - (2.0/S)*tau  # UB after dropping -||z||^2
     if clip_nonneg: f_ub = max(f_ub, 0.0)
     s2_U_n = sigma2 * f_ub  # normalized-y variance UB
+    r_ub = (C @ z.value).reshape(-1)
 
     # ----- LOWER bound: tiny coordinate descent on r-box (optional) -----
     if self.BnB_LBmethod != "IPOPT":
@@ -356,8 +437,6 @@ class BnBAlgorithm(BnBAlgorithmBase):
                       acqf_callback['grad'] = acqf.scalar_eval_g
 
                     
-                    print("l = ", l) 
-                    print("u = ", u)
                     x0 = np.array([[uniform(l[i], u[i]) for i in range(len(l))] for _ in range(1)])
                     opt_output = self.evaluator.run(self.acqf_minimizer_callback, x0)
                     xopt, yout, success, _ = opt_output[0] 

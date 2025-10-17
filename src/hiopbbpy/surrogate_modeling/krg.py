@@ -12,7 +12,7 @@ from smt.design_space import DesignSpace
 
 
 class smtKRG(GaussianProcess):
-  def __init__(self, theta, xlimits, ndim, corr="pow_exp", pow_exp_power=2.0, noise0=None, random_state=None):
+  def __init__(self, theta, xlimits, ndim, corr="pow_exp", pow_exp_power=1.0, noise0=None, random_state=None):
     super().__init__(ndim, xlimits)
     if random_state is None:
       random_state = 42
