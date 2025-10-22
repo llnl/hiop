@@ -127,7 +127,16 @@ class BnBAlgorithmBase:
     self.sigma2 = np.asarray(par.get("sigma2", 1.0), float).reshape(()).item()
     self.sigma2_ri = float(par["sigma2_ri"] if "sigma2_ri" in par else self.sigma2)
 
-    self._solve_C = lambda v: linalg.solve_triangular(self.C, v, lower=True)
+    x_regression = [np.mean(self.gpsurrogate.xlimits[i]) for i in range(self.gpsurrogate.ndim)]
+    w = linalg.solve_triangular(par["G"].T, sm._regression_types['constant'](x_regression).T)
+    
+    ntrain = sm.nt
+    self.A_obj = 2.0 * (-1.0 * np.identity(ntrain) + par["Q"].dot(par["Q"].T))
+    self.b_obj = -2.0 * par["Q"].dot(w)
+    self.c_obj = 1. + np.dot(w, w)
+    self.z = cp.Variable(ntrain)
+    self.obj = 0.5 * cp.quad_form(self.z, self.A_obj) + self.b_obj.T @ self.z + self.c_obj
+
     
 
   def set_kernel(self, kernel_spec):
@@ -228,73 +237,7 @@ class BnBAlgorithmBase:
     mu_U = self.y_mean + self.y_std * mu_U_n
     return mu_L, mu_U
 
-  #def sigma2_bounds(self, kL, kU, lb_passes=2, clip_nonneg=True):
-  #    """
-  #    Variance bounds over r ∈ [kL,kU] for SMT KRG (poly='constant'),
-  #    returned in ORIGINAL y-units (σ^2 * y_std^2).
-  #    """
-  #    
-  #    kL = np.asarray(kL, float).ravel()
-  #    kU = np.asarray(kU, float).ravel()
-  #    n  = kL.size
-  #    assert hasattr(self, "C") and hasattr(self, "sigma2"), "Call sync_from_smt() first"
-  #    assert kL.shape == kU.shape == (n,) and np.all(kL <= kU), "bad kL/kU"
-
-  #    C      = self.C
-  #    sigma2 = float(self.sigma2)  # normalized-y process variance
-  #    ones   = np.ones(n)
-
-  #    from scipy import linalg
-  #    tmp   = linalg.solve_triangular(C, ones, lower=True)    # C tmp = 1
-  #    a_vec = linalg.solve_triangular(C.T, tmp,  lower=False) # C^T a = tmp
-  #    S     = float(ones @ a_vec)
-
-  #    def bracket(r):
-  #        r  = np.asarray(r, float).ravel()
-  #        rt = linalg.solve_triangular(C, r, lower=True)      # C^{-1} r
-  #        tau = float(a_vec @ r)
-  #        return 1.0 - float(rt @ rt) + (1.0 - tau)**2 / S
-
-  #    # ----- UPPER bound via convex relaxation in z with r = C z (drop -||z||^2) -----
-  #    import cvxpy as cp
-  #    A = C.T @ a_vec
-  #    Q = (2.0 / S) * np.outer(A, A)   # PSD
-  #    b = (-2.0 / S) * A
-
-  #    z = cp.Variable(n)
-  #    cons = [C @ z >= kL, C @ z <= kU]
-  #    obj  = 0.5 * cp.quad_form(z, Q) + b @ z
-  #    cp.Problem(cp.Minimize(obj), cons).solve(solver="OSQP")
-
-  #    r_ub = (C @ z.value).reshape(-1)
-  #    tau  = float(A @ z.value)
-  #    f_ub = (1.0 + 1.0/S) + (tau**2)/S - (2.0/S)*tau  # UB after dropping -||z||^2
-  #    if clip_nonneg: f_ub = max(f_ub, 0.0)
-  #    s2_U_n = sigma2 * f_ub  # normalized-y variance UB
-
-  #    # ----- LOWER bound: tiny coordinate descent on r-box (optional) -----
-  #    if self.BnB_LBmethod != "IPOPT":
-  #        r = r_ub.copy()
-  #        f = bracket(r)
-  #        for _ in range(max(0, int(lb_passes))):
-  #            improved = False
-  #            for i in range(n):
-  #                r_lo = r.copy(); r_lo[i] = kL[i]; f_lo = bracket(r_lo)
-  #                r_hi = r.copy(); r_hi[i] = kU[i]; f_hi = bracket(r_hi)
-  #                if f_lo + 1e-6 < f: r, f, improved = r_lo, f_lo, True
-  #                if f_hi + 1e-6 < f: r, f, improved = r_hi, f_hi, True
-  #            if not improved: break
-  #        if clip_nonneg: f = max(f, 0.0)
-  #        s2_L_n = sigma2 * f
-  #    else:
-  #        s2_L_n = 0.0
-
-  #    # de-normalize like SMT: σ^2_orig = y_std^2 * σ^2_norm
-  #    ys2 = (self.y_std ** 2)
-  #    return ys2 * s2_L_n, ys2 * s2_U_n
-
-
-  def sigma2_bounds(self, kL, kU, lb_passes=2, clip_nonneg=True):
+  def sigma2_bounds(self, kL, kU, clip_nonneg=True):
     """
     Variance bounds over r ∈ [kL,kU] for SMT KRG (poly='constant'),
     returned in ORIGINAL y-units (σ^2 * y_std^2).
@@ -304,61 +247,20 @@ class BnBAlgorithmBase:
     kU = np.asarray(kU, float).ravel()
     n  = kL.size
     assert hasattr(self, "C") and hasattr(self, "sigma2"), "Call sync_from_smt() first"
-    assert kL.shape == kU.shape == (n,) and np.all(kL <= kU), "bad kL/kU"
+    assert kL.shape == kU.shape == (n,) and np.all(kL <= kU), "kL/kU corrupted"
 
-    C      = self.C
-    sigma2 = float(self.sigma2)  # normalized-y process variance
-    ones   = np.ones(n)
+    # lower-bound
+    s2_L_n = 0.0
 
-    # a = R^-1 1
-    # R = C C^T
-    # a = C^-T (C^-1 1)
-    u   = linalg.solve_triangular(C, ones, lower=True)    # C u = 1
-    #a_vec = linalg.solve_triangular(C.T, u,  lower=False) # C^T a = u
-    S = float(u @ u)
-    #S     = float(ones @ a_vec)
-
-    def bracket(r):
-      r  = np.asarray(r, float).ravel()
-      rt = linalg.solve_triangular(C, r, lower=True)      # C^{-1} r
-      tau = float(a_vec @ r)
-      return 1.0 - float(rt @ rt) + (1.0 - tau)**2 / S
-
-    # ----- UPPER bound via convex relaxation in z with r = C z (drop -||z||^2) -----
-    #A = C.T @ a_vec
-    Q = 2.0 * (-1.0 * np.identity(n) + np.outer(u, u) / S)   # PSD
-    b = (-2.0 / S) * u
-
-    z = cp.Variable(n)
-    cons = [C @ z >= kL, C @ z <= kU]
-    obj  = 0.5 * cp.quad_form(z, Q) + b @ z + (1. + 1. / S)
-    f_ub = cp.Problem(cp.Maximize(obj), cons).solve(solver="OSQP")
-    assert np.isfinite(f_ub), "convex optimizer did not converge"
-
-    if clip_nonneg: f_ub = max(f_ub, 0.0)
-    s2_U_n = sigma2 * f_ub  # normalized-y variance UB
-    r_ub = (C @ z.value).reshape(-1)
-
-    # ----- LOWER bound: tiny coordinate descent on r-box (optional) -----
-    if self.BnB_LBmethod != "IPOPT":
-      r = r_ub.copy()
-      f = bracket(r)
-      for _ in range(max(0, int(lb_passes))):
-        improved = False
-        for i in range(n):
-          r_lo = r.copy(); r_lo[i] = kL[i]; f_lo = bracket(r_lo)
-          r_hi = r.copy(); r_hi[i] = kU[i]; f_hi = bracket(r_hi)
-          if f_lo + 1e-6 < f: r, f, improved = r_lo, f_lo, True
-          if f_hi + 1e-6 < f: r, f, improved = r_hi, f_hi, True
-        if not improved: break
-      if clip_nonneg: f = max(f, 0.0)
-      s2_L_n = sigma2 * f
-    else:
-      s2_L_n = 0.0
-
-    # de-normalize like SMT: σ^2_orig = y_std^2 * σ^2_norm
-    ys2 = (self.y_std ** 2)
-    return ys2 * s2_L_n, ys2 * s2_U_n
+    # variance upper-bound (in terms of kernel k) defined by convex QP
+    cons = [self.C @ self.z >= kL, self.C @ self.z <= kU]
+    s2_U_n = cp.Problem(cp.Maximize(self.obj), cons).solve(solver="OSQP")
+    assert np.isfinite(s2_U_n), "convex optimizer did not converge"
+    
+    # re-scale
+    s2_L = s2_L_n * self.sigma2
+    s2_U = s2_U_n * self.sigma2 
+    return s2_L, s2_U
 
   def rs_ei(self, mu, sigma):
     y_min = np.min(self.y)
