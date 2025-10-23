@@ -3,7 +3,7 @@ import cvxpy as cp
 import heapq
 from scipy import linalg
 from scipy.stats import norm
-from .acquisition import EIacquisition
+from .acquisition import EIacquisition, LCBacquisition
 from ..utils.util import Evaluator
 from numpy.random import uniform
 
@@ -24,7 +24,7 @@ class BnBAlgorithmBase:
   def __init__(self, x = None, y = None):
     # Node class for priority queue
     self.BnBNode = BnBNode
-    #self.BnB_LBmethod = "IPOPT"
+    self.BnB_LBmethod = "IPOPT"
     #self.BnB_LBmethod = None  # Use CVXPY for lower bounds
 
     # Stopping criteria
