@@ -7,7 +7,9 @@ from .acquisition import EIacquisition, LCBacquisition
 from ..utils.util import Evaluator
 from numpy.random import uniform
 
-
+# BnBNode
+# corners of interval [l, u]
+# upper and lower bounds of acquisition function
 class BnBNode:
     def __init__(self, l, u, aq_L, aq_U):
         self.l = l
@@ -311,7 +313,8 @@ class BnBAlgorithm(BnBAlgorithmBase):
         l1, u1 = l.copy(), u.copy()
         l2, u2 = l.copy(), u.copy()
         
-        # Split along midpoint
+        # Split the largest axis
+        # along along midpoint of said axis
         u1[d] = mid
         l2[d] = mid
 
@@ -478,6 +481,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
                 assert L_top <= min_rest + 1e-12, f"Heap not ordered by L (popped {L_top}, min_rest {min_rest})"
 
             # Update GUB
+            # smallest upper bound
             if node.aq_U < self.best_val:
                 self.best_val = node.aq_U
                 self.best_l, self.best_u = node.l, node.u
