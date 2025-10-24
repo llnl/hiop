@@ -404,12 +404,12 @@ class BnBAlgorithm(BnBAlgorithmBase):
     heapq.heapify(pruned)
     return pruned
   def optimize(self):
-    opt = self.optimize(self.gpsurrogate.xlimits[:,0], self.gpsurrogate.xlimits[:,1])
+    opt = self.bnboptimize(self.gpsurrogate.xlimits[:,0], self.gpsurrogate.xlimits[:,1])
     lopt = opt[0]
     uopt = opt[1]
     midpoint_opt = np.mean(np.array([lopt, uopt]), axis=0)
     return midpoint_opt   
-  def optimize(self, l_init, u_init):
+  def bnboptimize(self, l_init, u_init):
     """
     Branch & Bound minimization with tolerance stopping.
     Core logic only: correct heap order, pruning on GUB tightening,

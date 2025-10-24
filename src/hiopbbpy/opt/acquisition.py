@@ -19,6 +19,10 @@ class acquisition(object):
   # Abstract method to evaluate the acquisition function at x.
   def evaluate(self, x: np.ndarray) -> np.ndarray:
     raise NotImplementedError("Child class of acquisition should implement method evaluate")
+  # Abstract method to evaluate the acquisition function in terms
+  # of known mean and variance
+  def evaluate_meansig2(self, mean : np.ndarray, sig2 : np.ndarray) -> np.ndarray:
+    raise NotImplementedError("Child class of acquisition should implement method evaluate_mean_sig")
   def scalar_evaluate(self, x: np.ndarray) -> float:
     assert len(x.shape) == 1, f"scalar_evaluate intended for use with vector inputs and not arrays of vector values x"
     return self.evaluate(np.atleast_2d(x))[0][0]  
@@ -41,7 +45,10 @@ class LCBacquisition(acquisition):
   def evaluate(self, x : np.ndarray) -> np.ndarray:
     mu = self.gpsurrogate.mean(x)
     sig2 = self.gpsurrogate.variance(x)
-    return mu - self.beta * np.sqrt(sig2)
+    return self.evaluate_meansig2(mu, sig2)
+  # Method to evaluate acquisition for known mean and standard deviation
+  def evaluate_meansig2(self, mean : np.ndarray, sig2 : np.ndarray) -> np.ndarray:
+    return mean - self.beta * np.sqrt(sig2) 
 
   def eval_g(self, x: np.ndarray) -> np.ndarray:
     mu = self.gpsurrogate.mean(x)

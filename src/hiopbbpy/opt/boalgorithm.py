@@ -207,9 +207,6 @@ class BOAlgorithm(BOAlgorithmBase):
           f"  Acquisition values: min = {y_min:.4e}, mean = {y_mean:.4e}, max = {y_max:.4e}"
       )
     elif self.acqf_method == "bnb":
-      l_init = np.array([b[0] for b in self.bounds])
-      u_init = np.array([b[1] for b in self.bounds])
-
       # Instantiate BnB with GP surrogate and BO callback
       bnb = BnBAlgorithm(
           x = x_train, 
@@ -218,12 +215,9 @@ class BOAlgorithm(BOAlgorithmBase):
           acqf_minimizer_callback=acqf_minimizer.minimizer_callback,
           acquisition_type=self.acquisition_type,
       )
-
+      
       # Run BnB optimization
-      best_l, best_u, _ = bnb.optimize(l_init, u_init)
-
-      # Take the midpoint of the best box as the candidate point
-      best_xopt = 0.5 * (best_l + best_u)
+      best_xopt = bnb.optimize()
     self.logger.debug(f"Estimated optimal point x: {best_xopt}")
 
     return best_xopt
