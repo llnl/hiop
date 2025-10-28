@@ -212,7 +212,7 @@ class BOAlgorithm(BOAlgorithmBase):
           x = x_train, 
           y = y_train,
           gpsurrogate=self.gpsurrogate,
-          acqf_minimizer_callback=acqf_minimizer.minimizer_callback,
+          acqf_minimizer=acqf_minimizer,
           acquisition_type=self.acquisition_type,
       )
       

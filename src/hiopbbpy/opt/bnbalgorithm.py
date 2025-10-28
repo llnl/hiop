@@ -31,10 +31,6 @@ class BnBAlgorithmBase:
     self.BnB_LBmethod = "IPOPT"
     #self.BnB_LBmethod = None  # Use CVXPY for lower bounds
 
-    # Stopping criteria
-    self.epsilon_gap = 1e-3
-    self.epsilon_diam = 1e-2
-
     # Kernel info for bounds
     self.kernel_spec = None
     self.kernel_func = None
@@ -241,7 +237,7 @@ class BnBAlgorithmBase:
     mu_U = self.y_mean + self.y_std * mu_U_n
     return mu_L, mu_U
 
-  def sigma2_bounds(self, kL, kU, clip_nonneg=True):
+  def sigma2_bounds(self, kL, kU, l = None, u = None, clip_nonneg=True):
     """
     Variance bounds over r ∈ [kL,kU] for SMT KRG (poly='constant'),
     returned in ORIGINAL y-units (σ^2 * y_std^2).
@@ -254,7 +250,13 @@ class BnBAlgorithmBase:
     assert kL.shape == kU.shape == (n,) and np.all(kL <= kU), "kL/kU corrupted"
 
     # lower-bound
-    s2_L_n = 0.0
+    #s2_L_n = 0.0
+    if l is None or u is None:
+      s2_L = 0.0
+    else:
+      X = np.atleast_2d(np.linspace(l[0], u[0], num=10000))
+      S2 = self.gpsurrogate.variance(X.T)
+      s2_L = min(S2.flatten())
 
     # variance upper-bound (in terms of kernel k) defined by convex QP
     cons = [self.C @ self.z >= kL, self.C @ self.z <= kU]
@@ -262,7 +264,6 @@ class BnBAlgorithmBase:
     assert np.isfinite(s2_U_n), "convex optimizer did not converge"
     
     # re-scale
-    s2_L = s2_L_n * self.sigma2
     s2_U = s2_U_n * self.sigma2 
     return s2_L, s2_U
 
@@ -284,13 +285,20 @@ class BnBAlgorithmBase:
 
 
 class BnBAlgorithm(BnBAlgorithmBase):
-  def __init__(self, x, y, gpsurrogate, acqf_minimizer_callback, acquisition_type):
+  def __init__(self, x, y, gpsurrogate, acqf_minimizer, acquisition_type):
     super().__init__(x = x, y =y)
     self.gpsurrogate = gpsurrogate
-    self.acqf_minimizer_callback = acqf_minimizer_callback
+    #self.acqf_minimizer_callback = acqf_minimizer_callback
+    self.acqf_minimizer = acqf_minimizer
     self.acquisition_type = acquisition_type
     self.evaluator = Evaluator() 
     self.sync_from_smt()
+    
+    # Stopping criteria
+    self.epsilon_gap = 1e-3
+    self.epsilon_diam = 1e-2
+
+    self.max_bnbiter = 2000
 
   def _branch(self, l, u):
     # Force to float to avoid truncation issues
@@ -330,10 +338,10 @@ class BnBAlgorithm(BnBAlgorithmBase):
       if acqf.has_gradient:
         acqf_callback['grad'] = acqf.scalar_eval_g
       x0 = np.array([[uniform(l[i], u[i]) for i in range(len(l))] for _ in range(1)])
-      opt_output = self.evaluator.run(self.acqf_minimizer_callback, x0)
+      opt_output = self.evaluator.run(self.acqf_minimizer.minimizer_callback, x0)
       xopt, yout, success, _ = opt_output[0] 
       if not success:
-        raise RuntimeError("EI maximization failed")
+        raise RuntimeError("acquisition maximization failed")
       return float(yout)
     else:
       # We compute the upper bound of the acquisition function based on bounds of the kernel, mu and sigma.
@@ -341,7 +349,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
       kL, kU = self.ker_bounds(l, u)
       # Compute the mean bounds
       mu_L, mu_U = self.mu_bounds(kL, kU)
-      var_L, var_U = self.sigma2_bounds(kL, kU)
+      var_L, var_U = self.sigma2_bounds(kL, kU, l=l, u=u)
       if self.acquisition_type == "LCB":
         lcb_U = self.rs_lcb(mu_U, np.sqrt(var_L))
         return lcb_U
@@ -357,7 +365,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
     kL, kU = self.ker_bounds(l, u)
     # Compute the mean bounds
     mu_L, mu_U = self.mu_bounds(kL, kU)
-    var_L,var_U = self.sigma2_bounds(kL, kU)
+    var_L,var_U = self.sigma2_bounds(kL, kU, l=l, u=u)
     
     if self.enable_debug_checks:
       l_check = np.asarray(l).reshape(-1)
@@ -439,10 +447,14 @@ class BnBAlgorithm(BnBAlgorithmBase):
 
     diameters = [float(np.max(u_init - l_init))]
     self.total_nodes = 1
-    iteration = 0
+    bnb_iter = 0
 
     while queue:
-      iteration += 1
+      bnb_iter += 1
+      if bnb_iter > self.max_bnbiter:
+        print(f"max bnb iterations ({self.max_bnbiter}) reached")
+        return queue
+        #break
       # pop the node with smallest L
       L_top, _, node = heapq.heappop(queue)
 
@@ -454,12 +466,14 @@ class BnBAlgorithm(BnBAlgorithmBase):
 
       # Update GUB
       # smallest upper bound
+      # best_val = min( aq_U )
       if node.aq_U < self.best_val:
         self.best_val = node.aq_U
         self.best_l, self.best_u = node.l, node.u
+        # remove all entries that have a lower-bound > new best_val
         queue = self._prune_queue(queue, self.best_val, self.epsilon_gap)
 
-      print(f"\n--- Iteration {iteration} ---")
+      print(f"\n--- BnB Iteration {bnb_iter} ---")
       print(f"Node bounds: l={node.l}, u={node.u}")
       print(f"Node acquisition bounds: L={node.aq_L}, U={node.aq_U}")
       print(f"Current best feasible value (GUB): {self.best_val}")
@@ -495,6 +509,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
         if aq_U_r < self.best_val:
           self.best_val = aq_U_r
           self.best_l, self.best_u = l_child, u_child
+          #queue = self._prune_queue(queue, self.best_val, 0.0)
           queue = self._prune_queue(queue, self.best_val, self.epsilon_gap)
 
         # Child-level prune (same tolerance)
