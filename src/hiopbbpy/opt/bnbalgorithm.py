@@ -5,6 +5,7 @@ from scipy import linalg
 from scipy.stats import norm
 from scipy.optimize import minimize
 from .acquisition import EIacquisition, LCBacquisition
+from .opt_utils import minimizer_wrapper
 from ..utils.util import Evaluator
 from numpy.random import uniform
 from itertools import count
@@ -285,12 +286,21 @@ class BnBAlgorithmBase:
 
 
 class BnBAlgorithm(BnBAlgorithmBase):
-  def __init__(self, x, y, gpsurrogate, acqf_minimizer, acquisition_type):
-    super().__init__(x = x, y =y)
-    self.gpsurrogate = gpsurrogate
-    #self.acqf_minimizer_callback = acqf_minimizer_callback
-    self.acqf_minimizer = acqf_minimizer
-    self.acquisition_type = acquisition_type
+  def __init__(self, acqf):
+    self.acqf = acqf
+    self.gpsurrogate = acqf.gpsurrogate
+    super().__init__(x = self.gpsurrogate.training_x, y = self.gpsurrogate.training_y)
+    
+    #self.acqf_minimizer = acqf_minimizer
+    if isinstance(self.acqf, LCBacquisition):
+      self.acquisition_type = "LCB"
+    elif isinstance(self.acqf, EIacquisition):
+      self.acquisition_type = "EI"
+    else:
+      raise NotImplementedError("Unrecognized acquisition function type")
+    self.acqf_callback = {'obj': acqf.scalar_evaluate}
+    if acqf.has_gradient:
+      self.acqf_callback['grad'] = acqf.scalar_eval_g
     self.evaluator = Evaluator() 
     self.sync_from_smt()
     
@@ -328,17 +338,16 @@ class BnBAlgorithm(BnBAlgorithmBase):
   # For minimization, we find a feasible function value as the upper bound on the minimum value of the acquisition function.
   def compute_acq_upper_bound(self, l, u):
     if self.BnB_LBmethod == "IPOPT":
-      if self.acquisition_type == "LCB":
-        acqf = LCBacquisition(self.gpsurrogate)
-      elif self.acquisition_type == "EI":
-        acqf = EIacquisition(self.gpsurrogate)
-      else:
-        raise NotImplementedError("No implemented acquisition_type associated to" + self.acquisition_type)
-      acqf_callback = {'obj': acqf.scalar_evaluate}
-      if acqf.has_gradient:
-        acqf_callback['grad'] = acqf.scalar_eval_g
+      #if self.acquisition_type == "LCB":
+      #  acqf = LCBacquisition(self.gpsurrogate)
+      #elif self.acquisition_type == "EI":
+      #  acqf = EIacquisition(self.gpsurrogate)
+      #acqf_callback = {'obj': acqf.scalar_evaluate}
+      #if acqf.has_gradient:
+      #  acqf_callback['grad'] = acqf.scalar_eval_g
+      acqf_minimizer = minimizer_wrapper(self.acqf_callback, "IPOPT", self.gpsurrogate.xlimits, [], {})
       x0 = np.array([[uniform(l[i], u[i]) for i in range(len(l))] for _ in range(1)])
-      opt_output = self.evaluator.run(self.acqf_minimizer.minimizer_callback, x0)
+      opt_output = self.evaluator.run(acqf_minimizer.minimizer_callback, x0)
       xopt, yout, success, _ = opt_output[0] 
       if not success:
         raise RuntimeError("acquisition maximization failed")
@@ -350,6 +359,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
       # Compute the mean bounds
       mu_L, mu_U = self.mu_bounds(kL, kU)
       var_L, var_U = self.sigma2_bounds(kL, kU, l=l, u=u)
+      #TODO: replace rs_lcb with actual acqf evaluations
       if self.acquisition_type == "LCB":
         lcb_U = self.rs_lcb(mu_U, np.sqrt(var_L))
         return lcb_U

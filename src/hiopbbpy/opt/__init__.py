@@ -1,7 +1,8 @@
-from .boalgorithm import (BOAlgorithmBase, BOAlgorithm, minimizer_wrapper)
+from .boalgorithm import (BOAlgorithmBase, BOAlgorithm)
 from .bnbalgorithm import (BnBAlgorithmBase, BnBAlgorithm, BnBNode)
 from .acquisition import (acquisition, LCBacquisition, EIacquisition)
 from .optproblem import (IpoptProb)
+from .opt_utils import minimizer_wrapper
 
 __all__ = [
         "BOAlgorithmBase"

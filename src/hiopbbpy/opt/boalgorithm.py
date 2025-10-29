@@ -7,14 +7,15 @@ Authors:    Tucker Hartland <hartland1@llnl.gov>
 
 import numpy as np
 from numpy.random import uniform
-from scipy.optimize import minimize, NonlinearConstraint
+#from scipy.optimize import minimize, NonlinearConstraint
 from scipy.stats import qmc
 from ..surrogate_modeling.gp import GaussianProcess
 from .acquisition import LCBacquisition, EIacquisition
 from ..problems.problem import Problem
-from .optproblem import IpoptProb
+#from .optproblem import IpoptProb
 from ..utils.util import Evaluator, Logger
 from .bnbalgorithm import BnBAlgorithm
+from .opt_utils import minimizer_wrapper
 
 # A base class defining a general framework for Bayesian Optimization
 class BOAlgorithmBase:
@@ -208,13 +209,7 @@ class BOAlgorithm(BOAlgorithmBase):
       )
     elif self.acqf_method == "bnb":
       # Instantiate BnB with GP surrogate and BO callback
-      bnb = BnBAlgorithm(
-          x = x_train, 
-          y = y_train,
-          gpsurrogate=self.gpsurrogate,
-          acqf_minimizer=acqf_minimizer,
-          acquisition_type=self.acquisition_type,
-      )
+      bnb = BnBAlgorithm(acqf)
       
       # Run BnB optimization
       best_xopt = bnb.optimize()
@@ -346,50 +341,3 @@ class BOAlgorithm(BOAlgorithmBase):
     self.logger.critical("===================================")
 
 
-class minimizer_wrapper:
-  def __init__(self, fun, method, bounds, constraints, solver_options):
-    self.fun = fun
-    self.method = method
-    self.bounds = bounds
-    self.constraints = constraints
-    self.solver_options = solver_options
-  # Find the minimum of the input objective `fun`, using the minimize function from SciPy. 
-  def minimizer_callback(self, x0s):
-    output = []
-    msg = ""
-    for x0 in x0s:
-      if self.method == "SLSQP":
-        if 'grad' in self.fun:
-          y = minimize(self.fun['obj'], x0, method=self.method, bounds=self.bounds, jac=self.fun['grad'], constraints=self.constraints, options=self.solver_options)
-        else:
-          y = minimize(self.fun['obj'], x0, method=self.method, bounds=self.bounds, constraints=self.constraints, options=self.solver_options)
-        success = y.success
-        if not success:
-          msg = y.message
-        xopt = y.x
-        yopt = y.fun
-      elif self.method == "trust-constr":
-        nonlinear_constraint = NonlinearConstraint(self.constraints['cons'], self.constraints['cl'], self.constraints['cu'], jac=self.constraints['jac'])
-        y = minimize(self.fun['obj'], x0, method=self.method, bounds=self.bounds, constraints=[nonlinear_constraint], options=self.solver_options)
-        success = y.success
-        if not success:
-          msg = y.message
-        xopt = y.x
-        yopt = y.fun
-      else:
-        ipopt_prob = IpoptProb(self.fun['obj'], self.fun['grad'], self.constraints, self.bounds, self.solver_options)
-        sol, info = ipopt_prob.solve(x0)
-    
-        status = info.get('status', -999)
-        msg = info.get('status_msg', b'unknown error')
-        if status == 0:
-          # ipopt returns 0 as success
-          success = True
-        else:
-          msg = f"Ipopt failed to solve the problem. Status msg: {msg}"
-          success = False
-    
-        yopt = info['obj_val']
-        xopt = sol
-      output.append([xopt, yopt, success, msg])
-    return output
