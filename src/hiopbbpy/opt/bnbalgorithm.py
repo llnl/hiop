@@ -131,7 +131,7 @@ class BnBAlgorithmBase:
     ntrain = sm.nt
     self.A_obj = 2.0 * (-1.0 * np.identity(ntrain) + par["Q"].dot(par["Q"].T))
     self.b_obj = -2.0 * par["Q"].dot(w)
-    self.c_obj = 1. + np.dot(w, w)
+    self.c_obj = 1. + np.inner(w[0], w[0])
     self.z = cp.Variable(ntrain)
     self.obj = 0.5 * cp.quad_form(self.z, self.A_obj) + self.b_obj.T @ self.z + self.c_obj
 
@@ -377,8 +377,8 @@ class BnBAlgorithm(BnBAlgorithmBase):
     queue = [(root.aq_L, next(self._ctr), root)]
     heapq.heapify(queue)
 
-    # Global best (minimization GUB)
-    self.best_val = aq_U_val
+    # Least upper bound (LUB)
+    self.LUB = aq_U_val
     self.best_l, self.best_u = l_init.copy(), u_init.copy()
 
     diameters = [float(np.max(u_init - l_init))]
@@ -401,19 +401,19 @@ class BnBAlgorithm(BnBAlgorithmBase):
         assert L_top <= min_rest + 1e-12, f"Heap not ordered by L (popped {L_top}, min_rest {min_rest})"
 
       # Update LUB and prune
-      if node.aq_U < self.best_val:
-        self.best_val = node.aq_U
+      if node.aq_U < self.LUB:
+        self.LUB = node.aq_U
         self.best_l, self.best_u = node.l, node.u
-        queue = self._prune_queue(queue, self.best_val, self.epsilon_gap)
+        queue = self._prune_queue(queue, self.LUB, self.epsilon_gap)
 
       print(f"\n--- BnB Iteration {bnb_iter} ---")
       print(f"Node bounds: l={node.l}, u={node.u}")
       print(f"Node acquisition bounds: L={node.aq_L}, U={node.aq_U}")
-      print(f"Current best feasible value (LUB): {self.best_val}")
+      print(f"Current best feasible value (LUB): {self.LUB}")
 
       # Stopping criterion: LUB - node_LB <= eps_gap (node_LB is least lower-bound)
-      if self.best_val - node.aq_L <= self.epsilon_gap:
-        print(f"STOP: LUB - Node.L = {self.best_val - node.aq_L} <= {self.epsilon_gap}")
+      if self.LUB - node.aq_L <= self.epsilon_gap:
+        print(f"STOP: LUB - Node.L = {self.LUB - node.aq_L} <= {self.epsilon_gap}")
         break
 
       # Diameter stop (node-local)
@@ -423,7 +423,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
         continue
 
       # Per-node prune (consistent with stop rule)
-      if node.aq_L >= self.best_val + self.epsilon_prune:
+      if node.aq_L >= self.LUB + self.epsilon_prune:
         print("Pruned: Node cannot improve best within tolerance.")
         continue
 
@@ -443,13 +443,13 @@ class BnBAlgorithm(BnBAlgorithmBase):
         diameters.append(float(np.max(u_child - l_child)))
 
         # Update LUB from child and prune if improved
-        if aq_U_r < self.best_val:
-          self.best_val = aq_U_r
+        if aq_U_r < self.LUB:
+          self.LUB = aq_U_r
           self.best_l, self.best_u = l_child, u_child
-          queue = self._prune_queue(queue, self.best_val, self.epsilon_prune)
+          queue = self._prune_queue(queue, self.LUB, self.epsilon_prune)
 
         # Child-level prune (same tolerance)
-        if aq_L_r >= self.best_val + self.epsilon_prune:
+        if aq_L_r >= self.LUB + self.epsilon_prune:
           print("  Child pruned: L ≥ LUB + eps.")
           continue
 
@@ -463,15 +463,15 @@ class BnBAlgorithm(BnBAlgorithmBase):
 
       # Optional visibility
       phi_LB = min(L for (L,_,_) in queue)
-      print(f"Queue size: {len(queue)} | LB={phi_LB} | LUB={self.best_val} | Gap<={self.best_val - phi_LB}")
+      print(f"Queue size: {len(queue)} | LB={phi_LB} | LUB={self.LUB} | Gap<={self.LUB - phi_LB}")
 
-    self.final_gap = self.best_val - min([L for (L,_,_) in queue], default=self.best_val)
+    self.final_gap = self.LUB - min([L for (L,_,_) in queue], default=self.LUB)
     self.final_diameter = min(diameters) if diameters else float('inf')
 
     print("\n=== Optimization Finished ===")
     print(f"Total nodes explored: {self.total_nodes}")
     print(f"Best bounds: l={self.best_l}, u={self.best_u}")
-    print(f"Best feasible acquisition value (GUB): {self.best_val}")
+    print(f"Best feasible acquisition value (GUB): {self.LUB}")
     print(f"Final gap: {self.final_gap}, final diameter: {self.final_diameter}")
 
-    return self.best_l, self.best_u, self.best_val
+    return self.best_l, self.best_u, self.LUB
