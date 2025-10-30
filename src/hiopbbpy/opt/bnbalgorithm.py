@@ -266,32 +266,23 @@ class BnBAlgorithmBase:
 
 
 
-
-
-
 class BnBAlgorithm(BnBAlgorithmBase):
   def __init__(self, acqf):
     self.acqf = acqf
     self.gpsurrogate = acqf.gpsurrogate
     super().__init__(x = self.gpsurrogate.training_x, y = self.gpsurrogate.training_y)
-    
-    #self.acqf_minimizer = acqf_minimizer
     if isinstance(self.acqf, LCBacquisition):
       self.acquisition_type = "LCB"
     elif isinstance(self.acqf, EIacquisition):
       self.acquisition_type = "EI"
     else:
       raise NotImplementedError("Unrecognized acquisition function type")
-    self.acqf_callback = {'obj': acqf.scalar_evaluate}
-    if acqf.has_gradient:
-      self.acqf_callback['grad'] = acqf.scalar_eval_g
-    self.evaluator = Evaluator() 
     self.sync_from_smt()
     
     # Stopping criteria
     self.epsilon_gap = 1e-3
     self.epsilon_diam = 1e-2
-
+    self.epsilon_prune = 1.e-14
     self.max_bnbiter = 2000
 
   def _branch(self, l, u):
@@ -337,10 +328,24 @@ class BnBAlgorithm(BnBAlgorithmBase):
     mu_L, mu_U = self.mu_bounds(kL, kU)
     var_L,var_U = self.sigma2_bounds(kL, kU, l=l, u=u)
     return self.acqf.evaluate_meansig2(np.atleast_1d(mu_L), np.atleast_1d(var_U))[0]
+  def compute_acqf_bounds(self, l, u):
+    # kernel bounds
+    kL, kU = self.ker_bounds(l, u)
+    # mean bounds
+    mu_L, mu_U = self.mu_bounds(kL, kU)
+    var_L, var_U = self.sigma2_bounds(kL, kU, l=l, u=u)
+    # evaluate acquisition at (mu_L, var_U) and (mu_U, var_L)
+    mu  = np.array([mu_L, mu_U])
+    var = np.array([var_U, var_L])
+    acqf_bounds = self.acqf.evaluate_meansig2(mu, var)
+    
+    x_midpoint = np.atleast_2d(( l + u) / 2.)
+    acqf_U = self.acqf.evaluate(x_midpoint).flatten()[0]
+    return acqf_bounds[0], acqf_U
   def _prune_queue(self, queue, gub, eps):
     """Keep only nodes that can beat current GUB within tolerance; then re-heapify."""
     # queue items are (L, counter, node)
-    pruned = [(L, c, n) for (L, c, n) in queue if L < gub - eps]
+    pruned = [(L, c, n) for (L, c, n) in queue if L <= gub + eps]
     heapq.heapify(pruned)
     return pruned
   def optimize(self):
@@ -360,8 +365,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
     print(f"Number of points: {self.x.shape[0]}, Dim = {self.x.shape[1]}")
 
     # Root bounds
-    aq_L_val = self.compute_acqf_lower_bound(l_init, u_init)
-    aq_U_val = self.compute_acqf_upper_bound(l_init, u_init)
+    aq_L_val, aq_U_val = self.compute_acqf_bounds(l_init, u_init) 
     print(f"\nInitial acquisition lower bound: {aq_L_val}")
     print(f"Initial acquisition upper bound: {aq_U_val}")
 
@@ -396,23 +400,20 @@ class BnBAlgorithm(BnBAlgorithmBase):
         min_rest = min(L for (L,_,_) in queue)
         assert L_top <= min_rest + 1e-12, f"Heap not ordered by L (popped {L_top}, min_rest {min_rest})"
 
-      # Update GUB
-      # smallest upper bound
-      # best_val = min( aq_U )
+      # Update LUB and prune
       if node.aq_U < self.best_val:
         self.best_val = node.aq_U
         self.best_l, self.best_u = node.l, node.u
-        # remove all entries that have a lower-bound > new best_val
         queue = self._prune_queue(queue, self.best_val, self.epsilon_gap)
 
       print(f"\n--- BnB Iteration {bnb_iter} ---")
       print(f"Node bounds: l={node.l}, u={node.u}")
       print(f"Node acquisition bounds: L={node.aq_L}, U={node.aq_U}")
-      print(f"Current best feasible value (GUB): {self.best_val}")
+      print(f"Current best feasible value (LUB): {self.best_val}")
 
-      # Global stop: GUB - GLB <= eps  (GLB == node.aq_L == L_top)
+      # Stopping criterion: LUB - node_LB <= eps_gap (node_LB is least lower-bound)
       if self.best_val - node.aq_L <= self.epsilon_gap:
-        print(f"STOP: GUB - Node.L = {self.best_val - node.aq_L} <= {self.epsilon_gap}")
+        print(f"STOP: LUB - Node.L = {self.best_val - node.aq_L} <= {self.epsilon_gap}")
         break
 
       # Diameter stop (node-local)
@@ -422,30 +423,34 @@ class BnBAlgorithm(BnBAlgorithmBase):
         continue
 
       # Per-node prune (consistent with stop rule)
-      if node.aq_L >= self.best_val - self.epsilon_gap:
+      if node.aq_L >= self.best_val + self.epsilon_prune:
         print("Pruned: Node cannot improve best within tolerance.")
         continue
 
       # --- Branch ---
+      # --- this is where parallelism could show up
+      # --- branch over all nodes (parallel over said nodes)?
+      # --- do we do a more refined branching
+      # --- rather than branching one node into 2 nodes we can
+      # --- branch one node into 2^k nodes
       for l_child, u_child in self._branch(node.l, node.u):
         print(f"  Branching to child: l={l_child}, u={u_child}")
 
-        aq_L_r = self.compute_acqf_lower_bound(l_child, u_child)
-        aq_U_r = self.compute_acqf_upper_bound(l_child, u_child)
+        aq_L_r, aq_U_r = self.compute_acqf_bounds(l_child, u_child)
         print(f"  Child acquisition bounds: L={aq_L_r}, U={aq_U_r}")
 
         self.total_nodes += 1
         diameters.append(float(np.max(u_child - l_child)))
 
-        # Update GUB from child and prune if improved
+        # Update LUB from child and prune if improved
         if aq_U_r < self.best_val:
           self.best_val = aq_U_r
           self.best_l, self.best_u = l_child, u_child
-          queue = self._prune_queue(queue, self.best_val, self.epsilon_gap)
+          queue = self._prune_queue(queue, self.best_val, self.epsilon_prune)
 
         # Child-level prune (same tolerance)
-        if aq_L_r >= self.best_val - self.epsilon_gap:
-          print("  Child pruned: L ≥ GUB - eps.")
+        if aq_L_r >= self.best_val + self.epsilon_prune:
+          print("  Child pruned: L ≥ LUB + eps.")
           continue
 
         # PUSH AS TUPLE
@@ -457,8 +462,8 @@ class BnBAlgorithm(BnBAlgorithmBase):
         break
 
       # Optional visibility
-      phi_GLB = min(L for (L,_,_) in queue)
-      print(f"Queue size: {len(queue)} | GLB={phi_GLB} | GUB={self.best_val} | Gap={self.best_val - phi_GLB}")
+      phi_LB = min(L for (L,_,_) in queue)
+      print(f"Queue size: {len(queue)} | LB={phi_LB} | LUB={self.best_val} | Gap<={self.best_val - phi_LB}")
 
     self.final_gap = self.best_val - min([L for (L,_,_) in queue], default=self.best_val)
     self.final_diameter = min(diameters) if diameters else float('inf')
