@@ -29,8 +29,6 @@ class BnBAlgorithmBase:
   def __init__(self, x = None, y = None):
     # Node class for priority queue
     self.BnBNode = BnBNode
-    self.BnB_LBmethod = "IPOPT"
-    #self.BnB_LBmethod = None  # Use CVXPY for lower bounds
 
     # Kernel info for bounds
     self.kernel_spec = None
@@ -39,7 +37,6 @@ class BnBAlgorithmBase:
 
     # Evaluation parameters
     self.theta = None
-    self.ell = None  # ARD scaling for distance
 
     # Test
     self.enable_debug_checks = False  
@@ -251,12 +248,11 @@ class BnBAlgorithmBase:
     assert kL.shape == kU.shape == (n,) and np.all(kL <= kU), "kL/kU corrupted"
 
     # lower-bound
-    #s2_L_n = 0.0
     if l is None or u is None:
       s2_L = 0.0
     else:
-      X = np.atleast_2d(np.linspace(l[0], u[0], num=10000))
-      S2 = self.gpsurrogate.variance(X.T)
+      x = np.atleast_2d( (l + u) / 2.)
+      S2 = self.gpsurrogate.variance(x)
       s2_L = min(S2.flatten())
 
     # variance upper-bound (in terms of kernel k) defined by convex QP
@@ -267,18 +263,6 @@ class BnBAlgorithmBase:
     # re-scale
     s2_U = s2_U_n * self.sigma2 
     return s2_L, s2_U
-
-  def rs_ei(self, mu, sigma):
-    y_min = np.min(self.y)
-    if sigma > 1e-12:
-      z = (y_min - mu) / sigma
-      ei = (y_min - mu) * norm.cdf(z) + sigma * norm.pdf(z)
-      return -ei
-    else:
-      # Deterministic case: EI = max(y_min - mu, 0)
-      return -max(y_min - mu, 0.0)
-  def rs_lcb(self, mu, sigma):
-    return mu - self.beta * sigma
 
 
 
@@ -336,85 +320,23 @@ class BnBAlgorithm(BnBAlgorithmBase):
 
 
   # For minimization, we find a feasible function value as the upper bound on the minimum value of the acquisition function.
-  def compute_acq_upper_bound(self, l, u):
-    if self.BnB_LBmethod == "IPOPT":
-      #if self.acquisition_type == "LCB":
-      #  acqf = LCBacquisition(self.gpsurrogate)
-      #elif self.acquisition_type == "EI":
-      #  acqf = EIacquisition(self.gpsurrogate)
-      #acqf_callback = {'obj': acqf.scalar_evaluate}
-      #if acqf.has_gradient:
-      #  acqf_callback['grad'] = acqf.scalar_eval_g
-      acqf_minimizer = minimizer_wrapper(self.acqf_callback, "IPOPT", self.gpsurrogate.xlimits, [], {})
-      x0 = np.array([[uniform(l[i], u[i]) for i in range(len(l))] for _ in range(1)])
-      opt_output = self.evaluator.run(acqf_minimizer.minimizer_callback, x0)
-      xopt, yout, success, _ = opt_output[0] 
-      if not success:
-        raise RuntimeError("acquisition maximization failed")
-      return float(yout)
-    else:
-      # We compute the upper bound of the acquisition function based on bounds of the kernel, mu and sigma.
-      # Compute the kernel bounds with given x
-      kL, kU = self.ker_bounds(l, u)
-      # Compute the mean bounds
-      mu_L, mu_U = self.mu_bounds(kL, kU)
-      var_L, var_U = self.sigma2_bounds(kL, kU, l=l, u=u)
-      #TODO: replace rs_lcb with actual acqf evaluations
-      if self.acquisition_type == "LCB":
-        lcb_U = self.rs_lcb(mu_U, np.sqrt(var_L))
-        return lcb_U
-      elif self.acquisition_type == "EI":
-        ei_U = self.rs_ei(mu_U, np.sqrt(var_L))
-        return ei_U
-      else:
-        raise NotImplementedError(self.acquisition_type + " acquisition_type not supported")
+  def compute_acqf_upper_bound(self, l, u):
+    # We compute the upper bound of the acquisition function based on bounds of the kernel, mu and sigma.
+    # Compute the kernel bounds with given x
+    kL, kU = self.ker_bounds(l, u)
+    # Compute the mean bounds
+    mu_L, mu_U = self.mu_bounds(kL, kU)
+    var_L, var_U = self.sigma2_bounds(kL, kU, l=l, u=u)
+    return self.acqf.evaluate_meansig2(np.atleast_1d(mu_U), np.atleast_1d(var_L))[0]
   # For minimization, we compute the lower bound explicitly using the acquisition function over mu, sigma.
-  def compute_acq_lower_bound(self, l, u):
+  def compute_acqf_lower_bound(self, l, u):
     # We compute the upper bound of the acquisition function based on bounds of the kernel, mu and sigma.
     # Compute the kernel bounds with given x
     kL, kU = self.ker_bounds(l, u)
     # Compute the mean bounds
     mu_L, mu_U = self.mu_bounds(kL, kU)
     var_L,var_U = self.sigma2_bounds(kL, kU, l=l, u=u)
-    
-    if self.enable_debug_checks:
-      l_check = np.asarray(l).reshape(-1)
-      u_check = np.asarray(u).reshape(-1)
-      c_check = 0.5*(l+u)
-
-      # center + for each axis i: set x_i to l_i and u_i, others at center
-      Xchk = [c_check]
-      for i in range(l.size):
-        x_lo = c_check.copy(); x_lo[i] = l_check[i]; Xchk.append(x_lo)
-        x_hi = c_check.copy(); x_hi[i] = u_check[i]; Xchk.append(x_hi)
-      Xchk = np.vstack(Xchk)  # shape (1+2d, d)
-
-      # GP mean at those points (vector length 1+2d)
-      mu_vec = np.asarray(self.gpsurrogate.mean(Xchk)).reshape(-1)
-      var_vec = np.asarray(self.gpsurrogate.variance(Xchk)).reshape(-1)
-
-      # check
-      tol = 1e-8
-      ok_mu = (mu_vec >= mu_L - tol) & (mu_vec <= mu_U + tol)
-      if not np.all(ok_mu):
-        bad = np.where(~ok_mu)[0].tolist()
-        print(f"[μ] bounds violated at indices {bad}: "
-          f"min={mu_vec.min():.6g}, max={mu_vec.max():.6g}, "
-          f"bounds=({mu_L:.6g},{mu_U:.6g})")
-      ok_var = (var_vec <= var_U + tol)
-      if not np.all(ok_var):
-        bad = np.where(~ok_var)[0].tolist()
-        print(f"[σ] bounds violated at indices {bad}: "
-          f"min={var_vec.min():.6g}, max={var_vec.max():.6g}, "
-          f"bounds=(0,{var_U:.6g})")
-    if self.acquisition_type == "LCB":
-      lcb_U = self.rs_lcb(mu_L, np.sqrt(var_U))
-      return lcb_U
-    elif self.acquisition_type == "EI":
-      ei_U = self.rs_ei(mu_L, np.sqrt(var_U))
-      return ei_U
-    else:
-      raise NotImplementedError("No implemented acquisition_type associated to" + self.acquisition_type)
+    return self.acqf.evaluate_meansig2(np.atleast_1d(mu_L), np.atleast_1d(var_U))[0]
   def _prune_queue(self, queue, gub, eps):
     """Keep only nodes that can beat current GUB within tolerance; then re-heapify."""
     # queue items are (L, counter, node)
@@ -438,8 +360,8 @@ class BnBAlgorithm(BnBAlgorithmBase):
     print(f"Number of points: {self.x.shape[0]}, Dim = {self.x.shape[1]}")
 
     # Root bounds
-    aq_L_val = self.compute_acq_lower_bound(l_init, u_init)
-    aq_U_val = self.compute_acq_upper_bound(l_init, u_init)
+    aq_L_val = self.compute_acqf_lower_bound(l_init, u_init)
+    aq_U_val = self.compute_acqf_upper_bound(l_init, u_init)
     print(f"\nInitial acquisition lower bound: {aq_L_val}")
     print(f"Initial acquisition upper bound: {aq_U_val}")
 
@@ -508,8 +430,8 @@ class BnBAlgorithm(BnBAlgorithmBase):
       for l_child, u_child in self._branch(node.l, node.u):
         print(f"  Branching to child: l={l_child}, u={u_child}")
 
-        aq_L_r = self.compute_acq_lower_bound(l_child, u_child)
-        aq_U_r = self.compute_acq_upper_bound(l_child, u_child)
+        aq_L_r = self.compute_acqf_lower_bound(l_child, u_child)
+        aq_U_r = self.compute_acqf_upper_bound(l_child, u_child)
         print(f"  Child acquisition bounds: L={aq_L_r}, U={aq_U_r}")
 
         self.total_nodes += 1
@@ -519,7 +441,6 @@ class BnBAlgorithm(BnBAlgorithmBase):
         if aq_U_r < self.best_val:
           self.best_val = aq_U_r
           self.best_l, self.best_u = l_child, u_child
-          #queue = self._prune_queue(queue, self.best_val, 0.0)
           queue = self._prune_queue(queue, self.best_val, self.epsilon_gap)
 
         # Child-level prune (same tolerance)
