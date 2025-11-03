@@ -121,15 +121,22 @@ class BOAlgorithm(BOAlgorithmBase):
     elif isinstance(prob.constraints, list):
       assert opt_solver in ["SLSQP", "IPOPT"], f"Invalid opt_solver: {opt_solver} while constraints are defined as a list of dict"
 
-    if opt_solver == "SLSQP" or opt_solver == "trust-constr":
-      self.solver_options = {"maxiter": 200}  #for scipy solvers
+    if self.acqf_method == "multi_start":
+      if opt_solver == "SLSQP" or opt_solver == "trust-constr":
+        self.solver_options = {"maxiter": 200}  #for scipy solvers
+        self.solver_options = options.get('solver_options', self.solver_options)
+      elif opt_solver == "IPOPT":
+        self.solver_options = {"max_iter": 200, "print_level": 1}
+        self.solver_options = options.get('solver_options', self.solver_options)
+        self.solver_options['sb'] = 'yes'
+    else:
+      self.solver_options = {}
       self.solver_options = options.get('solver_options', self.solver_options)
-    elif opt_solver == "IPOPT":
-      self.solver_options = {"max_iter": 200, "print_level": 1}
-      self.solver_options = options.get('solver_options', self.solver_options)
-      self.solver_options['sb'] = 'yes'
+        
 
+    
     self.set_method(opt_solver)
+
 
     if user_grad:
       self.fun_grad = user_grad
@@ -164,21 +171,21 @@ class BOAlgorithm(BOAlgorithmBase):
     else:
       raise NotImplementedError("No implemented acquisition_type associated to"+self.acquisition_type)
 
-    acqf_callback = {'obj' : acqf.scalar_evaluate}
-    if acqf.has_gradient:
-      self.logger.debug(f"  Using gradient information of the acquisition function.")
-      acqf_callback['grad'] = acqf.scalar_eval_g
-
-    acqf_minimizer = minimizer_wrapper(acqf_callback, self.opt_solver, self.bounds, self.prob.constraints, self.solver_options)
-
-    if self.prob is not None:
-      x0_pts = np.array([self.prob.sample(1)[0] for _ in range(self.n_start)])
-    else:
-      x0_pts = np.array([[uniform(b[0], b[1]) for b in self.bounds] for _ in range(self.n_start)])
-
-    opt_output = self.opt_evaluator.run(acqf_minimizer.minimizer_callback, x0_pts)
 
     if self.acqf_method == "multi_start":
+      acqf_callback = {'obj' : acqf.scalar_evaluate}
+      if acqf.has_gradient:
+        self.logger.debug(f"  Using gradient information of the acquisition function.")
+        acqf_callback['grad'] = acqf.scalar_eval_g
+
+      acqf_minimizer = minimizer_wrapper(acqf_callback, self.opt_solver, self.bounds, self.prob.constraints, self.solver_options)
+
+      if self.prob is not None:
+        x0_pts = np.array([self.prob.sample(1)[0] for _ in range(self.n_start)])
+      else:
+        x0_pts = np.array([[uniform(b[0], b[1]) for b in self.bounds] for _ in range(self.n_start)])
+
+      opt_output = self.opt_evaluator.run(acqf_minimizer.minimizer_callback, x0_pts)
       x_all = []
       y_all = []
       n_failures = 0
@@ -209,7 +216,7 @@ class BOAlgorithm(BOAlgorithmBase):
       )
     elif self.acqf_method == "bnb":
       # Instantiate BnB with GP surrogate and BO callback
-      bnb = BnBAlgorithm(acqf)
+      bnb = BnBAlgorithm(acqf, options=self.solver_options)
       
       # Run BnB optimization
       best_xopt = bnb.optimize()

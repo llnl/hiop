@@ -267,7 +267,7 @@ class BnBAlgorithmBase:
 
 
 class BnBAlgorithm(BnBAlgorithmBase):
-  def __init__(self, acqf):
+  def __init__(self, acqf, options = {}):
     self.acqf = acqf
     self.gpsurrogate = acqf.gpsurrogate
     super().__init__(x = self.gpsurrogate.training_x, y = self.gpsurrogate.training_y)
@@ -279,11 +279,17 @@ class BnBAlgorithm(BnBAlgorithmBase):
       raise NotImplementedError("Unrecognized acquisition function type")
     self.sync_from_smt()
     
-    # Stopping criteria
+    # Stopping criteria parameters (default)    
     self.epsilon_gap = 1e-3
     self.epsilon_diam = 1e-2
     self.epsilon_prune = 1.e-14
     self.max_bnbiter = 2000
+
+    # Set options form command 
+    self.epsilon_gap = options.get('epsilon_gap', self.epsilon_gap)
+    self.epsilon_diam = options.get('epsilon_diam', self.epsilon_diam)
+    self.epsilon_prune = options.get('epsilon_prune', self.epsilon_prune)
+    self.max_bnbiter = options.get('max_iter', self.max_bnbiter)
 
   def _branch(self, l, u):
     # Force to float to avoid truncation issues
