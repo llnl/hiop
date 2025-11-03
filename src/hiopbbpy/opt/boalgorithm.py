@@ -94,10 +94,6 @@ class BOAlgorithm(BOAlgorithmBase):
     acquisition_type = options.get('acquisition_type', "LCB")
     assert acquisition_type in ["LCB", "EI"], f"Invalid acquisition_type: {acquisition_type}"
 
-    acqf_method = options.get('acquisition_method', "multi_start") 
-    assert acqf_method in ["multi_start", "bnb"], f"Invalid acqf_method: {acqf_method}"
-    self.acqf_method = acqf_method
-    
     batch_size = options.get('batch_size', 1)
     assert isinstance(batch_size, int), f"batch_size {batch_size} not an integer"
     assert batch_size > 0, f"batch_size {batch_size} is not strictly positive"
@@ -112,31 +108,26 @@ class BOAlgorithm(BOAlgorithmBase):
 
     if options and 'opt_solver' in options:
       opt_solver = options['opt_solver']
-      assert opt_solver in ["SLSQP", "trust-constr", "IPOPT"], f"Invalid opt_solver: {opt_solver}"
+      assert opt_solver in ["SLSQP", "trust-constr", "IPOPT", "BnB"], f"Invalid opt_solver: {opt_solver}"
     else:
       opt_solver = "SLSQP"
 
     if isinstance(prob.constraints, dict):
-      assert opt_solver in ["trust-constr", "IPOPT"], f"Invalid opt_solver: {opt_solver} while constraints are defined as a dict"
+      assert opt_solver in ["trust-constr", "IPOPT", "BnB"], f"Invalid opt_solver: {opt_solver} while constraints are defined as a dict"
     elif isinstance(prob.constraints, list):
-      assert opt_solver in ["SLSQP", "IPOPT"], f"Invalid opt_solver: {opt_solver} while constraints are defined as a list of dict"
+      assert opt_solver in ["SLSQP", "IPOPT", "BnB"], f"Invalid opt_solver: {opt_solver} while constraints are defined as a list of dict"
 
-    if self.acqf_method == "multi_start":
-      if opt_solver == "SLSQP" or opt_solver == "trust-constr":
-        self.solver_options = {"maxiter": 200}  #for scipy solvers
-        self.solver_options = options.get('solver_options', self.solver_options)
-      elif opt_solver == "IPOPT":
-        self.solver_options = {"max_iter": 200, "print_level": 1}
-        self.solver_options = options.get('solver_options', self.solver_options)
-        self.solver_options['sb'] = 'yes'
-    else:
+    if opt_solver == "SLSQP" or opt_solver == "trust-constr":
+      self.solver_options = {"maxiter": 200}  #for scipy solvers
+      self.solver_options = options.get('solver_options', self.solver_options)
+    elif opt_solver == "IPOPT":
+      self.solver_options = {"max_iter": 200, "print_level": 1}
+      self.solver_options = options.get('solver_options', self.solver_options)
+      self.solver_options['sb'] = 'yes'
+    elif opt_solver == "BnB":
       self.solver_options = {}
       self.solver_options = options.get('solver_options', self.solver_options)
-        
-
-    
-    self.set_method(opt_solver)
-
+    self.opt_solver = opt_solver    
 
     if user_grad:
       self.fun_grad = user_grad
@@ -172,7 +163,7 @@ class BOAlgorithm(BOAlgorithmBase):
       raise NotImplementedError("No implemented acquisition_type associated to"+self.acquisition_type)
 
 
-    if self.acqf_method == "multi_start":
+    if self.opt_solver != "BnB":
       acqf_callback = {'obj' : acqf.scalar_evaluate}
       if acqf.has_gradient:
         self.logger.debug(f"  Using gradient information of the acquisition function.")
@@ -214,7 +205,7 @@ class BOAlgorithm(BOAlgorithmBase):
       self.logger.scalars(
           f"  Acquisition values: min = {y_min:.4e}, mean = {y_mean:.4e}, max = {y_max:.4e}"
       )
-    elif self.acqf_method == "bnb":
+    else:
       # Instantiate BnB with GP surrogate and BO callback
       bnb = BnBAlgorithm(acqf, options=self.solver_options)
       
@@ -239,10 +230,6 @@ class BOAlgorithm(BOAlgorithmBase):
     elif self.batch_type == "KBRand":
       beta = np.random.randn()
     return self.gpsurrogate.mean(x) + beta * np.sqrt(self.gpsurrogate.variance(x))
-
-  # Set the optimization method
-  def set_method(self, method):
-    self.opt_solver = method
 
   # Set the options for the internal optimization solver
   def set_options(self, solver_options):
