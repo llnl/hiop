@@ -363,7 +363,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
   def bnboptimize(self, l_init, u_init):
     """
     Branch & Bound minimization with tolerance stopping.
-    Core logic only: correct heap order, pruning on GUB tightening,
+    Core logic only: correct heap order, pruning on LUB tightening,
     single global stop, diameter continue, consistent per-node prune.
     """
     print("=== Starting Branch & Bound Optimization (Minimization) ===")
@@ -395,8 +395,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
       bnb_iter += 1
       if bnb_iter > self.max_bnbiter:
         print(f"max bnb iterations ({self.max_bnbiter}) reached")
-        return queue
-        #break
+        break
       # pop the node with smallest L
       L_top, _, node = heapq.heappop(queue)
 
