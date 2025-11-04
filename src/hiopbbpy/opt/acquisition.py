@@ -82,9 +82,22 @@ class EIacquisition(acquisition):
 
     ## instead of maximize EI, we minimize -EI
     retval *= -1.
-
     return retval
+  
+  def evaluate_meansig2(self, mean : np.ndarray, sig2 : np.ndarray) -> np.ndarray:
+    y_data = self.gpsurrogate.training_y
+    y_min = y_data[np.argmin(y_data[:, 0])][0]
+    sig = np.sqrt(sig2)
+    retval = []
+    #if abs(sig) > 1e-24:
+    z = (y_min - mean) / sig
+    retval = (y_min - mean) * norm.cdf(z) + sig * norm.pdf(z)
+    #else:
+    #  retval = 0.0
 
+    ## instead of maximize EI, we minimize -EI
+    retval *= -1.
+    return retval
   def eval_g(self, x: np.ndarray) -> np.ndarray:
     y_data = self.gpsurrogate.training_y
     y_min = y_data[np.argmin(y_data[:, 0])]
