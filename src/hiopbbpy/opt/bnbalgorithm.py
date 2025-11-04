@@ -364,21 +364,13 @@ class BnBAlgorithm(BnBAlgorithmBase):
 
     while queue:
       bnb_iter += 1
-      print(f"count = {len(queue)}") 
       if bnb_iter > self.max_bnbiter:
         print(f"max bnb iterations ({self.max_bnbiter}) reached")
         break
       
-
-      # pop the node with smallest L
-      L_top, _, node = heapq.heappop(queue)
-
-      # Update LUB and prune
-      if node.aq_U < self.LUB:
-        self.LUB = node.aq_U
-        self.best_l, self.best_u = node.l, node.u
-        queue = self._prune_queue(queue, self.LUB, self.epsilon_gap)
-
+      # pop the node with smallest lower-bound
+      _, _, node = heapq.heappop(queue)
+      self.total_nodes += 2 # will explore both of its children
       print(f"\n--- BnB Iteration {bnb_iter} ---")
       print(f"Node bounds: l={node.l}, u={node.u}")
       print(f"Node acquisition bounds: L={node.aq_L}, U={node.aq_U}")
@@ -406,34 +398,9 @@ class BnBAlgorithm(BnBAlgorithmBase):
       # --- do we do a more refined branching
       # --- rather than branching one node into 2 nodes we can
       # --- branch one node into 2^k nodes
-      #for l_child, u_child in branch(node.l, node.u):
-      #  print(f"  Branching to child: l={l_child}, u={u_child}")
-
-      #  aq_L_r, aq_U_r = self.compute_acqf_bounds(l_child, u_child)
-      #  print(f"  Child acquisition bounds: L={aq_L_r}, U={aq_U_r}")
-
-      #  self.total_nodes += 1
-      #  diameters.append(float(np.max(u_child - l_child)))
-
-      #  # Update LUB from child and prune if improved
-      #  if aq_U_r < self.LUB:
-      #    self.LUB = aq_U_r
-      #    self.best_l, self.best_u = l_child, u_child
-      #    queue = self._prune_queue(queue, self.LUB, self.epsilon_prune)
-
-      #  # Child-level prune (same tolerance)
-      #  if aq_L_r >= self.LUB + self.epsilon_prune:
-      #    print("Child pruned: L ≥ LUB + eps_prune.")
-      #    continue
-
-      #  # PUSH AS TUPLE
-      #  child = BnBNode(l_child, u_child, aq_L_r, aq_U_r)
-      #  heapq.heappush(queue, (child.aq_L, next(self._ctr), child))
       brancher = branching_wrapper(self.acqf, LUB = self.LUB, epsilon_prune=self.epsilon_prune)
       evaluator = Evaluator()  
       children = evaluator.run(brancher.callback, [node])
-      print(children)
-      #exit()
       for child in children:
         if child.aq_U < self.LUB:
           self.LUB = child.aq_U
