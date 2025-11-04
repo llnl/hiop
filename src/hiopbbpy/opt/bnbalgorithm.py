@@ -277,13 +277,16 @@ class BnBAlgorithm(BnBAlgorithmBase):
     self.epsilon_diam = 1e-2
     self.epsilon_prune = 1.e-14
     self.max_bnbiter = 2000
+    self.nodes_per_batch = 1
+    self.evaluator = Evaluator()  
 
     # Set options form command 
     self.epsilon_gap = options.get('epsilon_gap', self.epsilon_gap)
     self.epsilon_diam = options.get('epsilon_diam', self.epsilon_diam)
     self.epsilon_prune = options.get('epsilon_prune', self.epsilon_prune)
     self.max_bnbiter = options.get('max_iter', self.max_bnbiter)
-
+    self.evaluator = options.get('evaluator', self.evaluator)
+    self.nodes_per_batch = options.get('nodes_per_batch', self.nodes_per_batch)
 
 
   # For minimization, we find a feasible function value as the upper bound on the minimum value of the acquisition function.
@@ -370,37 +373,37 @@ class BnBAlgorithm(BnBAlgorithmBase):
       
       # pop the node with smallest lower-bound
       _, _, node = heapq.heappop(queue)
-      self.total_nodes += 2 # will explore both of its children
-      print(f"\n--- BnB Iteration {bnb_iter} ---")
-      print(f"Node bounds: l={node.l}, u={node.u}")
-      print(f"Node acquisition bounds: L={node.aq_L}, U={node.aq_U}")
-      print(f"Current best feasible value (LUB): {self.LUB}")
-
       # Stopping criterion: LUB - node_LB <= eps_gap (node_LB is least lower-bound)
       if self.LUB - node.aq_L <= self.epsilon_gap:
         print(f"STOP: LUB - Node.L = {self.LUB - node.aq_L} <= {self.epsilon_gap}")
         break
-
-      # Diameter stop (node-local)
-      node_diam = float(np.max(node.u - node.l))
-      if node_diam <= self.epsilon_diam:
-        print(f"Skip: Node diameter {node_diam} <= {self.epsilon_diam}")
+      nodes = []
+      if float(np.max(node.u - node.l)) < self.epsilon_diam:
         continue
+      nodes.append(node)
+      self.total_nodes += 2
+      for i in range(self.nodes_per_batch - 1):
+        if not queue:
+          break
+        _, _, node = heapq.heappop(queue)
+        print(f"\n--- BnB Iteration {bnb_iter} ---")
+        print(f"Node bounds: l={node.l}, u={node.u}")
+        print(f"Node acquisition bounds: L={node.aq_L}, U={node.aq_U}")
+        print(f"Current best feasible value (LUB): {self.LUB}")
 
-      # Per-node prune (consistent with stop rule)
-      if node.aq_L >= self.LUB + self.epsilon_prune:
-        print("Pruned: Node cannot improve best within tolerance.")
-        continue
 
-      # --- Branch ---
-      # --- this is where parallelism could show up
-      # --- branch over all nodes (parallel over said nodes)?
-      # --- do we do a more refined branching
-      # --- rather than branching one node into 2 nodes we can
-      # --- branch one node into 2^k nodes
+        # Diameter stop (node-local)
+        # TODO: rethink this stopping criteria
+        node_diam = float(np.max(node.u - node.l))
+        if node_diam <= self.epsilon_diam:
+          print(f"Skip: Node diameter {node_diam} <= {self.epsilon_diam}")
+          continue
+        nodes.append(node)
+        self.total_nodes += 2 # we will explore both of its children
       brancher = branching_wrapper(self.acqf, LUB = self.LUB, epsilon_prune=self.epsilon_prune)
-      evaluator = Evaluator()  
-      children = evaluator.run(brancher.callback, [node])
+      nodes = np.array(nodes)
+      children = self.evaluator.run(brancher.callback, nodes)
+      children = [item for sublist in children for item in sublist]
       for child in children:
         if child.aq_U < self.LUB:
           self.LUB = child.aq_U
@@ -417,7 +420,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
       phi_LB = min(L for (L,_,_) in queue)
       print(f"Queue size: {len(queue)} | LB={phi_LB} | LUB={self.LUB} | Gap<={self.LUB - phi_LB}")
 
-    self.final_gap = self.LUB - min([L for (L,_,_) in queue], default=self.LUB)
+    self.final_gap = self.LUB - phi_LB
     self.final_diameter = min(diameters) if diameters else float('inf')
 
     print("\n=== Optimization Finished ===")
@@ -478,7 +481,6 @@ class branching_wrapper:
     
     self.X_offset, self.X_scale = sm.X_offset, sm.X_scale
     self.Xc = (self.x - self.X_offset) / self.X_scale
-    self._normalize = lambda x: (np.asarray(x, float) - self.X_offset) / self.X_scale
 
     y_mean = getattr(sm, "y_mean", None)
     y_std  = getattr(sm, "y_std",  None)
@@ -518,6 +520,9 @@ class branching_wrapper:
     self.c_obj = 1. + np.inner(w[0], w[0])
     self.z = cp.Variable(ntrain)
     self.obj = 0.5 * cp.quad_form(self.z, self.A_obj) + self.b_obj.T @ self.z + self.c_obj
+  
+  def _normalize(self, x):
+    return (np.asarray(x, float) - self.X_offset) / self.X_scale
   
   def ker_bounds(self, l, u):
    
@@ -594,8 +599,6 @@ class branching_wrapper:
     kL = np.asarray(kL, float).ravel()
     kU = np.asarray(kU, float).ravel()
     n  = kL.size
-    assert hasattr(self, "C") and hasattr(self, "sigma2"), "Call sync_from_smt() first"
-    assert kL.shape == kU.shape == (n,) and np.all(kL <= kU), "kL/kU corrupted"
 
     # lower-bound
     if l is None or u is None:
@@ -630,7 +633,7 @@ class branching_wrapper:
     return acqf_bounds[0], acqf_U
   def callback(self, nodes):
     output = []
-    for node in nodes:
+    for node in nodes.flatten():
       for child_l, child_u in branch(node.l, node.u):
         acqf_L, acqf_U = self.compute_acqf_bounds(child_l, child_u)
         # Child-level prune (same tolerance)
@@ -639,4 +642,4 @@ class branching_wrapper:
           continue
         child = BnBNode(child_l, child_u, acqf_L, acqf_U)
         output.append(child)
-    return output
+    return [output]

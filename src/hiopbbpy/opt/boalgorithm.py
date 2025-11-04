@@ -7,12 +7,10 @@ Authors:    Tucker Hartland <hartland1@llnl.gov>
 
 import numpy as np
 from numpy.random import uniform
-#from scipy.optimize import minimize, NonlinearConstraint
 from scipy.stats import qmc
 from ..surrogate_modeling.gp import GaussianProcess
 from .acquisition import LCBacquisition, EIacquisition
 from ..problems.problem import Problem
-#from .optproblem import IpoptProb
 from ..utils.util import Evaluator, Logger
 from .bnbalgorithm import BnBAlgorithm
 from .opt_utils import minimizer_wrapper
