@@ -2,12 +2,8 @@ import numpy as np
 import cvxpy as cp
 import heapq
 from scipy import linalg
-from scipy.stats import norm
-from scipy.optimize import minimize
 from .acquisition import EIacquisition, LCBacquisition
-from .opt_utils import minimizer_wrapper
 from ..utils.util import Evaluator
-from numpy.random import uniform
 from itertools import count
 
 # BnBNode
@@ -373,10 +369,18 @@ class BnBAlgorithm(BnBAlgorithmBase):
       
       # pop the node with smallest lower-bound
       _, _, node = heapq.heappop(queue)
+      LLB = node.aq_L
+      gap = self.LUB - LLB
+      print(f"Queue size: {len(queue)} | LLB={LLB} | LUB={self.LUB} | Optimality gap<={gap}")
+      
       # Stopping criterion: LUB - node_LB <= eps_gap (node_LB is least lower-bound)
-      if self.LUB - node.aq_L <= self.epsilon_gap:
-        print(f"STOP: LUB - Node.L = {self.LUB - node.aq_L} <= {self.epsilon_gap}")
+      if gap <= self.epsilon_gap:
+        print(f"STOP: LUB - Node.L = {gap} <= {self.epsilon_gap}")
         break
+      
+      # collection of parent nodes for (parallel)
+      # evaluation of upper and lower bounds on
+      # their branched child nodes
       nodes = []
       if float(np.max(node.u - node.l)) < self.epsilon_diam:
         continue
@@ -400,34 +404,40 @@ class BnBAlgorithm(BnBAlgorithmBase):
           continue
         nodes.append(node)
         self.total_nodes += 2 # we will explore both of its children
+      
+      # parallel branching and upper/lower bound node compuatations
       brancher = branching_wrapper(self.acqf, LUB = self.LUB, epsilon_prune=self.epsilon_prune)
       nodes = np.array(nodes)
       children = self.evaluator.run(brancher.callback, nodes)
+      
+      # not all children are return, hence children is a ragged array
+      # need to flatten this ragged list
       children = [item for sublist in children for item in sublist]
+      
+      # update least upper bound and add children to queue
       for child in children:
         if child.aq_U < self.LUB:
           self.LUB = child.aq_U
           self.best_l, self.best_u = child.l, child.u
-        heapq.heappush(queue, (child.aq_L, next(self._ctr), child))
+        if child.aq_L < self.LUB + self.epsilon_prune:
+          heapq.heappush(queue, (child.aq_L, next(self._ctr), child))
+      # prune queue based on potentially updated least upper bound
       queue = self._prune_queue(queue, self.LUB, self.epsilon_prune)
           
-
+      # why is this step needed?
       if not queue:
         print("\nSTOP: Queue empty, no better nodes remain.")
         break
 
-      # Optional visibility
-      phi_LB = min(L for (L,_,_) in queue)
-      print(f"Queue size: {len(queue)} | LB={phi_LB} | LUB={self.LUB} | Gap<={self.LUB - phi_LB}")
-
-    self.final_gap = self.LUB - phi_LB
-    self.final_diameter = min(diameters) if diameters else float('inf')
+    final_gap = gap #self.LUB - self.best_l
+    #final_diameter = min(diameters) if diameters else float('inf')
 
     print("\n=== Optimization Finished ===")
     print(f"Total nodes explored: {self.total_nodes}")
     print(f"Best bounds: l={self.best_l}, u={self.best_u}")
-    print(f"Best feasible acquisition value (GUB): {self.LUB}")
-    print(f"Final gap: {self.final_gap}, final diameter: {self.final_diameter}")
+    print(f"Best feasible acquisition value (LUB): {self.LUB}")
+    print(f"Final gap: {final_gap}")
+    #print(f"Final gap: {final_gap}, final diameter: {final_diameter}")
 
     return self.best_l, self.best_u, self.LUB
 
@@ -627,7 +637,6 @@ class branching_wrapper:
     mu  = np.array([mu_L, mu_U])
     var = np.array([var_U, var_L])
     acqf_bounds = self.acqf.evaluate_meansig2(mu, var)
-    
     x_midpoint = np.atleast_2d(( l + u) / 2.)
     acqf_U = self.acqf.evaluate(x_midpoint).flatten()[0]
     return acqf_bounds[0], acqf_U
@@ -636,9 +645,8 @@ class branching_wrapper:
     for node in nodes.flatten():
       for child_l, child_u in branch(node.l, node.u):
         acqf_L, acqf_U = self.compute_acqf_bounds(child_l, child_u)
-        # Child-level prune (same tolerance)
+        # Child-level prune
         if acqf_L >= self.LUB + self.epsilon_prune:
-          print("Child pruned: L ≥ LUB + eps_prune.")
           continue
         child = BnBNode(child_l, child_u, acqf_L, acqf_U)
         output.append(child)
