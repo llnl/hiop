@@ -69,7 +69,8 @@ class EvaluationManager:
   def __init__(
     self,
     cpu_executor=None,
-    mpi_executor=None) -> None:
+    mpi_executor=None,
+    max_workers=None) -> None:
     self._queue = deque([])
     self.logger = logging.getLogger(self.__class__.__name__)
 
@@ -78,7 +79,7 @@ class EvaluationManager:
     }
     if _EVALUATION_MANAGER_USES_MPI4PY:
       self.executors["mpi"] = (
-          MPIPoolExecutor() if mpi_executor is None else mpi_executor
+          MPIPoolExecutor(max_workers=max_workers) if mpi_executor is None else mpi_executor
       )
     elif mpi_executor is not None:
       self.executors["mpi"] = mpi_executor

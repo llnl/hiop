@@ -64,8 +64,9 @@ class Evaluator(object):
 class MPIEvaluator(Evaluator):
   """
   A wrapper of the evaluation_manager code.
-  Note that application codes application.py that use this Evaluator should be run as
+  Note that an application code e.g., application.py that use this Evaluator should be run as
   env MPI4PY_FUTURES_MAX_WORKERS=8 mpiexec -n 1 python application.py
+  or mpiexec -n 8 python -m mpi4py.futures application.py
   Also, the application code should have a "main" section wrapped in
   if __name__ == "__main__":
   Expecting the function evaluations to return an array.
@@ -74,25 +75,36 @@ class MPIEvaluator(Evaluator):
   We reformat to 
   [eval0, eval1, eval2,...]
   """
-  def __init__(self, function_mode=True,cpu_executor=None, mpi_executor=None):
-    self.manager = EvaluationManager(cpu_executor,mpi_executor)
-    self.function_mode = function_mode
+  def __init__(self, function_mode=True,cpu_executor=None, mpi_executor=None, max_workers=None):
+    self.executor_type = "cpu"
     if is_running_with_mpi():
       self.executor_type = "mpi"
-    else:
-      self.executor_type = "cpu"
+    self.manager = EvaluationManager(cpu_executor,mpi_executor,max_workers=max_workers)
+    self.function_mode = function_mode
+    
   def __del__(self):
     del self.manager
-  def run(self, fun, Xin):
-    nevals = Xin.shape[0]
-    self.manager.submit_tasks(fun, [np.atleast_2d(Xin[i]) for i in range(nevals)], execute_at=self.executor_type)
+  def submit_tasks(self, fun, X):
+    self.manager.submit_tasks(fun, [np.atleast_2d(x) for x in X], execute_at=self.executor_type)
+  def sync(self):
     self.manager.sync()
-    Xout, Fout = self.manager.retrieve_results()
-    if self.function_mode:
-      Y = np.ndarray((nevals, 1))
-      Y[:,0] = np.array(Fout)[:,0,0]
+  def retrieve_results(self):
+    X, FX = self.manager.retrieve_results()
+    if len(FX) > 0:
+      if self.function_mode:
+        ncomplete_evals = np.array(FX).shape[0]
+        Y = np.ndarray((ncomplete_evals, 1))
+        Y[:,0] = np.array(FX)[:,0,0]
+      else:
+        Y = [Fi[0] for Fi in FX]
+      return Y
     else:
-      Y = [Fi[0] for Fi in Fout]
+      Y = np.array([])
+      return Y 
+  def run(self, fun, Xin):
+    self.submit_tasks(fun, Xin)
+    self.sync()
+    Y = self.retrieve_results()
     return Y
 
 class Logger:
