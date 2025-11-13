@@ -328,7 +328,46 @@ class BnBAlgorithm(BnBAlgorithmBase):
     lopt = opt[0]
     uopt = opt[1]
     midpoint_opt = np.mean(np.array([lopt, uopt]), axis=0)
-    return midpoint_opt   
+    return midpoint_opt
+  def initialize(self, l0 = None, u0 = None, queue = None):
+    """
+    Initialization, perhaps use an old tree structure given by optional queue
+    argument
+    """ 
+    if l0 is None or u0 is None:
+      l_init = self.gpsurrogate.xlimits[:,0]
+      u_init = self.gpsurrogate.xlimits[:,1]
+    else:
+      # to do check that l0 and u0 is right shape
+      l_init = l0
+      u_init = u0
+    # Root bounds
+    aq_L_val, aq_U_val = self.compute_acqf_bounds(l_init, u_init) 
+    print(f"\nInitial acquisition lower bound: {aq_L_val}")
+    print(f"Initial acquisition upper bound: {aq_U_val}")
+
+    # Init root + heap ordered by aq_L
+    root = BnBNode(l_init, u_init, aq_L_val, aq_U_val)
+    
+    # --- HEAP STORES TUPLES: (L, counter, node) ---
+    self._ctr = getattr(self, "_ctr", count())
+    self.queue = [(root.aq_L, next(self._ctr), root)]
+    """
+    either use old queue to determine LUB or the previous queue provided
+    as an argument
+    """
+    if queue is None:
+      # Least upper bound (LUB)
+      self.best_node = root
+      self.LUB = self.best_node.aq_U
+    else:
+      # TODO: determine LUB from all nodes in queue
+      self.LUB = np.inf
+      for _, _, node in queue:
+        acqf_L, acqf_U = self.compute_acqf_bounds(node.l, node.u)
+        if acqf_U < self.LUB:
+          self.LUB = acqf_U
+        
   def bnboptimize(self, l_init, u_init):
     """
     Branch & Bound minimization with tolerance stopping.
@@ -336,46 +375,43 @@ class BnBAlgorithm(BnBAlgorithmBase):
     single global stop, diameter continue, consistent per-node prune.
     """
     print("=== Starting Branch & Bound Optimization (Minimization) ===")
-    print(f"Initial bounds: l = {l_init}, u = {u_init}")
-    print(f"Number of points: {self.x.shape[0]}, Dim = {self.x.shape[1]}")
+    print(f"=== Lower/upper bounds: l = {l_init}, u = {u_init}")
 
     # Root bounds
-    aq_L_val, aq_U_val = self.compute_acqf_bounds(l_init, u_init) 
-    print(f"\nInitial acquisition lower bound: {aq_L_val}")
-    print(f"Initial acquisition upper bound: {aq_U_val}")
+    #aq_L_val, aq_U_val = self.compute_acqf_bounds(l_init, u_init) 
+    #print(f"\nInitial acquisition lower bound: {aq_L_val}")
+    #print(f"Initial acquisition upper bound: {aq_U_val}")
 
-    # Init root + heap ordered by aq_L
-    root = BnBNode(l_init.astype(float), u_init.astype(float), aq_L_val, aq_U_val)
-    
-    # --- HEAP STORES TUPLES: (L, counter, node) ---
-    self._ctr = getattr(self, "_ctr", count())
-    queue = [(root.aq_L, next(self._ctr), root)]
-    heapq.heapify(queue)
+    ## Init root + heap ordered by aq_L
+    #root = BnBNode(l_init.astype(float), u_init.astype(float), aq_L_val, aq_U_val)
+    #
+    ## --- HEAP STORES TUPLES: (L, counter, node) ---
+    #self._ctr = getattr(self, "_ctr", count())
+    #self.queue = [(root.aq_L, next(self._ctr), root)]
+    heapq.heapify(self.queue)
     
 
     # Least upper bound (LUB)
-    self.LUB = aq_U_val
-    self.best_l, self.best_u = l_init.copy(), u_init.copy()
+    #self.LUB = aq_U_val
+    #self.best_l, self.best_u = l_init.copy(), u_init.copy()
 
-    diameters = [float(np.max(u_init - l_init))]
     self.total_nodes = 1
     bnb_iter = 0
-
-    while queue:
+    while self.queue:
       bnb_iter += 1
       if bnb_iter > self.max_bnbiter:
         print(f"max bnb iterations ({self.max_bnbiter}) reached")
         break
       
       # pop the node with smallest lower-bound
-      _, _, node = heapq.heappop(queue)
+      _, _, node = heapq.heappop(self.queue)
       LLB = node.aq_L
       gap = self.LUB - LLB
-      print(f"Queue size: {len(queue)} | LLB={LLB} | LUB={self.LUB} | Optimality gap<={gap}")
+      print(f"Queue size: {len(self.queue)} | LLB={LLB} | LUB={self.LUB} | Optimality gap<={gap}")
       
-      # Stopping criterion: LUB - node_LB <= eps_gap (node_LB is least lower-bound)
-      if gap <= self.epsilon_gap:
-        print(f"STOP: LUB - Node.L = {gap} <= {self.epsilon_gap}")
+      # Stopping criterion: LUB - node_LB < eps_gap (node_LB is least lower-bound)
+      if gap < self.epsilon_gap:
+        print(f"STOP: LUB - Node.L = {gap} < {self.epsilon_gap}")
         break
       
       # collection of parent nodes for (parallel)
@@ -387,14 +423,13 @@ class BnBAlgorithm(BnBAlgorithmBase):
       nodes.append(node)
       self.total_nodes += 2
       for i in range(self.nodes_per_batch - 1):
-        if not queue:
+        if not self.queue:
           break
-        _, _, node = heapq.heappop(queue)
+        _, _, node = heapq.heappop(self.queue)
         print(f"\n--- BnB Iteration {bnb_iter} ---")
         print(f"Node bounds: l={node.l}, u={node.u}")
         print(f"Node acquisition bounds: L={node.aq_L}, U={node.aq_U}")
         print(f"Current best feasible value (LUB): {self.LUB}")
-
 
         # Diameter stop (node-local)
         # TODO: rethink this stopping criteria
@@ -417,29 +452,27 @@ class BnBAlgorithm(BnBAlgorithmBase):
       # update least upper bound and add children to queue
       for child in children:
         if child.aq_U < self.LUB:
-          self.LUB = child.aq_U
-          self.best_l, self.best_u = child.l, child.u
+          self.best_node = child
+          self.LUB = self.best_node.aq_U
         if child.aq_L < self.LUB + self.epsilon_prune:
-          heapq.heappush(queue, (child.aq_L, next(self._ctr), child))
+          heapq.heappush(self.queue, (child.aq_L, next(self._ctr), child))
       # prune queue based on potentially updated least upper bound
-      queue = self._prune_queue(queue, self.LUB, self.epsilon_prune)
+      self.queue = self._prune_queue(self.queue, self.LUB, self.epsilon_prune)
           
       # why is this step needed?
-      if not queue:
+      if not self.queue:
         print("\nSTOP: Queue empty, no better nodes remain.")
         break
 
-    final_gap = gap #self.LUB - self.best_l
-    #final_diameter = min(diameters) if diameters else float('inf')
+    final_gap = gap
 
     print("\n=== Optimization Finished ===")
     print(f"Total nodes explored: {self.total_nodes}")
-    print(f"Best bounds: l={self.best_l}, u={self.best_u}")
+    print(f"Best bounds: l={self.best_node.l}, u={self.best_node.u}")
     print(f"Best feasible acquisition value (LUB): {self.LUB}")
     print(f"Final gap: {final_gap}")
-    #print(f"Final gap: {final_gap}, final diameter: {final_diameter}")
 
-    return self.best_l, self.best_u, self.LUB
+    return self.best_node.l, self.best_node.u, self.LUB
 
 
 class branching_wrapper:
@@ -614,7 +647,7 @@ class branching_wrapper:
     if l is None or u is None:
       s2_L = 0.0
     else:
-      x = np.atleast_2d( (l + u) / 2.)
+      x = np.atleast_2d( (l + u) / 2. )
       S2 = self.gpsurrogate.variance(x)
       s2_L = min(S2.flatten())
 
