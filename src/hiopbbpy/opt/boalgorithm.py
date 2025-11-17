@@ -126,7 +126,7 @@ class BOAlgorithm(BOAlgorithmBase):
       self.solver_options = {}
       self.solver_options = options.get('solver_options', self.solver_options)
     self.opt_solver = opt_solver    
-
+    self.bnb_queue = None
     if user_grad:
       self.fun_grad = user_grad
 
@@ -208,10 +208,11 @@ class BOAlgorithm(BOAlgorithmBase):
       bnb = BnBAlgorithm(acqf, options=self.solver_options)
      
       # Initialize BnB (perhaps use old set of boxes here)
-      bnb.initialize()
- 
+      bnb.initialize(queue=self.bnb_queue)
+      
       # Run BnB optimization
       best_xopt = bnb.optimize()
+      self.bnb_queue = bnb.queue
     self.logger.debug(f"Estimated optimal point x: {best_xopt}")
 
     return best_xopt

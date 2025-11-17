@@ -356,13 +356,10 @@ class BnBAlgorithm(BnBAlgorithmBase):
     either use old queue to determine LUB or the previous queue provided
     as an argument
     """
-    if queue is None:
-      # Least upper bound (LUB)
-      self.best_node = root
-      self.LUB = self.best_node.aq_U
-    else:
-      # TODO: determine LUB from all nodes in queue
-      self.LUB = np.inf
+    # Least upper bound (LUB)
+    self.best_node = root
+    self.LUB = self.best_node.aq_U
+    if queue is not None:
       for _, _, node in queue:
         acqf_L, acqf_U = self.compute_acqf_bounds(node.l, node.u)
         if acqf_U < self.LUB:
