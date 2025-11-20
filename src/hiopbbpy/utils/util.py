@@ -25,7 +25,8 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 import numpy as np
-from .evaluation_manager import EvaluationManager, is_running_with_mpi
+#from .evaluation_manager import EvaluationManager, is_running_with_mpi
+from .new_eval_manager import EvaluationManager, is_running_with_mpi
 import logging
 
 
@@ -82,8 +83,8 @@ class MPIEvaluator(Evaluator):
     self.manager = EvaluationManager(cpu_executor,mpi_executor,max_workers=max_workers)
     self.function_mode = function_mode
     
-  def __del__(self):
-    del self.manager
+  #def __del__(self):
+  #  #del self.manager
   def submit_tasks(self, fun, X):
     self.manager.submit_tasks(fun, [np.atleast_2d(x) for x in X], execute_at=self.executor_type)
   def sync(self):

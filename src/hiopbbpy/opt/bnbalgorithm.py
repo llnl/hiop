@@ -363,6 +363,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
       for _, _, node in queue:
         acqf_L, acqf_U = self.compute_acqf_bounds(node.l, node.u)
         if acqf_U < self.LUB:
+          print(f"LUB reduced from {self.LUB} to {acqf_U}")
           self.LUB = acqf_U
         
   def bnboptimize(self, l_init, u_init):
@@ -394,7 +395,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
 
     self.total_nodes = 1
     bnb_iter = 0
-    while self.queue:
+    while self.queue or not self.evaluator.completed_tasks():
       bnb_iter += 1
       if bnb_iter > self.max_bnbiter:
         print(f"max bnb iterations ({self.max_bnbiter}) reached")
@@ -440,7 +441,10 @@ class BnBAlgorithm(BnBAlgorithmBase):
       # parallel branching and upper/lower bound node compuatations
       brancher = branching_wrapper(self.acqf, LUB = self.LUB, epsilon_prune=self.epsilon_prune)
       nodes = np.array(nodes)
-      children = self.evaluator.run(brancher.callback, nodes)
+      self.evaluator.submit_tasks(brancher.callback, nodes)
+      self.evaluator.sync()
+      children = self.evaluator.retrieve_results()
+      #children = self.evaluator.run(brancher.callback, nodes)
       
       # not all children are return, hence children is a ragged array
       # need to flatten this ragged list
