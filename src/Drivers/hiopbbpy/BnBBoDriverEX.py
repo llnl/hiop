@@ -44,7 +44,7 @@ if __name__ == "__main__":
   nx = 1         # dimension of the problem
   acquisition_type = 'LCB'  
   ### parameters
-  n_samples = 10  # number of the initial samples to train GP
+  n_samples = 50  # number of the initial samples to train GP
   theta = 1.e-2  # hyperparameter for GP kernel
   c2D=np.array([1.25, 2.5])
   c1D=np.array([1.25])
@@ -75,20 +75,37 @@ if __name__ == "__main__":
   else:
     acqf = EIacquisition(gp_model)
   
-  evaluator = MPIEvaluator(function_mode=False)
+  #evaluator = MPIEvaluator(function_mode=False)
   
   solver_options = {
       'epsilon_diam' : 1.e-14,
       'epsilon_gap' : 1.e-2,    
-      'max_iter': 300,
-      'nodes_per_batch' : 4,
-      'evaluator': evaluator
+      'max_iter': 1000,
+      'nodes_per_batch' : 100#,
+      #'evaluator': evaluator
   }
   bnb = BnBAlgorithm(acqf, options=solver_options)
+  bnb.initialize()
   xstar = bnb.optimize()
   ystar = acqf.evaluate(xstar)
   
-  
+  queue = bnb.queue
+  #print(queue)  
+  #print(queue[2][2].l, queue[2][2].u)
+  Xqueue = np.atleast_2d([(queue[i][2].l + queue[i][2].u) / 2. for i in range(len(queue))])
+  Yqueue = acqf.evaluate(Xqueue)
+  #print(Xqueue)
+  #from scipy.cluster.hierarchy import linkage, dendrogram
+  #
+  #linked = linkage(Xqueue, method='ward')
+  #for item in dir(linked):
+  #  print(item)
+  from sklearn.cluster import DBSCAN
+  clustering = DBSCAN(eps=0.05).fit(Xqueue)
+  labels = np.unique(clustering.labels_)
+  print("{0:d} unique clustering groups".format(len(labels)))
+  Xqueue = Xqueue.flatten()
+  Yqueue = Yqueue.flatten()
   l = problem.xlimits[:, 0].astype(float)
   u = problem.xlimits[:, 1].astype(float)
   n_plot_pts = 1000
@@ -97,8 +114,13 @@ if __name__ == "__main__":
   
   plt.plot(X, Yacqf, 'k--', label=r'' + acquisition_type + '$(x)$')
   plt.plot(xstar, ystar, "r*", markersize=14, label=r'bnb minimizer')
+  for label in labels:
+    args = np.argwhere(label == clustering.labels_)
+    plt.plot(Xqueue[args], Yqueue[args], "*", markersize=12)
   plt.legend()
   plt.show()
+  #exit()
+
   
   
   bo_maxiter = 3
