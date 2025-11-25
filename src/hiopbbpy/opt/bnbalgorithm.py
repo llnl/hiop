@@ -3,7 +3,7 @@ import cvxpy as cp
 import heapq
 from scipy import linalg
 from .acquisition import EIacquisition, LCBacquisition
-from ..utils.util import Evaluator
+from ..utils.util import Evaluator, MPIEvaluator
 from itertools import count
 
 # BnBNode
@@ -274,7 +274,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
     self.epsilon_prune = 1.e-14
     self.max_bnbiter = 2000
     self.nodes_per_batch = 1
-    self.evaluator = Evaluator()  
+    self.evaluator = MPIEvaluator(function_mode=False)  
 
     # Set options form command 
     self.epsilon_gap = options.get('epsilon_gap', self.epsilon_gap)
@@ -372,106 +372,77 @@ class BnBAlgorithm(BnBAlgorithmBase):
     Core logic only: correct heap order, pruning on LUB tightening,
     single global stop, diameter continue, consistent per-node prune.
     """
-    print("=== Starting Branch & Bound Optimization (Minimization) ===")
-    print(f"=== Lower/upper bounds: l = {l_init}, u = {u_init}")
+    print("=== Starting Branch & Bound Acquisition Function Optimization ===")
+    print(f"=== Over lower/upper bounds: l = {l_init}, u = {u_init} ===")
 
-    # Root bounds
-    #aq_L_val, aq_U_val = self.compute_acqf_bounds(l_init, u_init) 
-    #print(f"\nInitial acquisition lower bound: {aq_L_val}")
-    #print(f"Initial acquisition upper bound: {aq_U_val}")
+    heapq.heapify(self.queue)    
 
-    ## Init root + heap ordered by aq_L
-    #root = BnBNode(l_init.astype(float), u_init.astype(float), aq_L_val, aq_U_val)
-    #
-    ## --- HEAP STORES TUPLES: (L, counter, node) ---
-    #self._ctr = getattr(self, "_ctr", count())
-    #self.queue = [(root.aq_L, next(self._ctr), root)]
-    heapq.heapify(self.queue)
+
     
-
-    # Least upper bound (LUB)
-    #self.LUB = aq_U_val
-    #self.best_l, self.best_u = l_init.copy(), u_init.copy()
-
-    self.total_nodes = 1
-    bnb_iter = 0
-    while self.queue or not self.evaluator.completed_tasks():
-      bnb_iter += 1
-      if bnb_iter > self.max_bnbiter:
-        print(f"max bnb iterations ({self.max_bnbiter}) reached")
-        break
+    # stopping criterion should be on the total maximum number of branched nodes
+    num_branches = 0
+    while num_branches < self.max_bnbiter:  
       
-      # pop the node with smallest lower-bound
-      _, _, node = heapq.heappop(self.queue)
-      LLB = node.aq_L
-      gap = self.LUB - LLB
-      print(f"Queue size: {len(self.queue)} | LLB={LLB} | LUB={self.LUB} | Optimality gap<={gap}")
-      
-      # Stopping criterion: LUB - node_LB < eps_gap (node_LB is least lower-bound)
-      if gap < self.epsilon_gap:
-        print(f"STOP: LUB - Node.L = {gap} < {self.epsilon_gap}")
-        break
-      
-      # collection of parent nodes for (parallel)
-      # evaluation of upper and lower bounds on
-      # their branched child nodes
+      # collect nodes to be branched on in list structure
       nodes = []
-      if float(np.max(node.u - node.l)) < self.epsilon_diam:
-        continue
-      nodes.append(node)
-      self.total_nodes += 2
+      
       for i in range(self.nodes_per_batch - 1):
-        if not self.queue:
+        if not self.queue:# or not nodes_to_be_evaluated < max_nodes_to_be_evaluated:
           break
         _, _, node = heapq.heappop(self.queue)
-        print(f"\n--- BnB Iteration {bnb_iter} ---")
-        print(f"Node bounds: l={node.l}, u={node.u}")
-        print(f"Node acquisition bounds: L={node.aq_L}, U={node.aq_U}")
-        print(f"Current best feasible value (LUB): {self.LUB}")
-
-        # Diameter stop (node-local)
-        # TODO: rethink this stopping criteria
-        node_diam = float(np.max(node.u - node.l))
-        if node_diam <= self.epsilon_diam:
-          print(f"Skip: Node diameter {node_diam} <= {self.epsilon_diam}")
-          continue
         nodes.append(node)
-        self.total_nodes += 2 # we will explore both of its children
-      
+        #self.total_nodes += 2
+        #nodes_to_be_evaluated += 2 # will evaluate each child
+
       # parallel branching and upper/lower bound node compuatations
       brancher = branching_wrapper(self.acqf, LUB = self.LUB, epsilon_prune=self.epsilon_prune)
       nodes = np.array(nodes)
       self.evaluator.submit_tasks(brancher.callback, nodes)
-      self.evaluator.sync()
+
+      # asynchronously retrieve results from Evaluator that have been processed
+      # self.evaluator.sync()
       children = self.evaluator.retrieve_results()
-      #children = self.evaluator.run(brancher.callback, nodes)
       
       # not all children are return, hence children is a ragged array
       # need to flatten this ragged list
       children = [item for sublist in children for item in sublist]
+      num_branches += len(children)
       
-      # update least upper bound and add children to queue
+      # update best_node and queue via children
+      updated_best_node = False
       for child in children:
         if child.aq_U < self.LUB:
           self.best_node = child
           self.LUB = self.best_node.aq_U
+          updated_best_node=True
+        # if gap of child with LUB is small enough exit here
         if child.aq_L < self.LUB + self.epsilon_prune:
           heapq.heappush(self.queue, (child.aq_L, next(self._ctr), child))
-      # prune queue based on potentially updated least upper bound
-      self.queue = self._prune_queue(self.queue, self.LUB, self.epsilon_prune)
-          
-      # why is this step needed?
-      if not self.queue:
-        print("\nSTOP: Queue empty, no better nodes remain.")
-        break
+      
+      # BnB opt progress report
+      # only report if a child was returned in most recent
+      # retrieve_results() Evluator call
+      # only check optimality gap and reprune if one or more children were returned
+      if len(children) > 0:
+        gap = self.best_node.aq_U - self.best_node.aq_L
+        print(f"\n--- Number branches  {num_branches} ---")
+        print(f"Best node bounds: l={self.best_node.l}, u={self.best_node.u}")
+        print(f"Node acquisition bounds: L={self.best_node.aq_L}, U={self.best_node.aq_U}")
+        print(f"Current best feasible value (LUB): {self.LUB}")
+        print(f"gap = {gap}")
+        # prune queue based on potentially updated least upper bound
+        self.queue = self._prune_queue(self.queue, self.LUB, self.epsilon_prune)
 
-    final_gap = gap
+      if updated_best_node:
+        if gap < self.epsilon_gap:
+          print(f"STOP: optimality gap = {gap} < {self.epsilon_gap}")
+          break
 
     print("\n=== Optimization Finished ===")
     print(f"Total nodes explored: {self.total_nodes}")
     print(f"Best bounds: l={self.best_node.l}, u={self.best_node.u}")
     print(f"Best feasible acquisition value (LUB): {self.LUB}")
-    print(f"Final gap: {final_gap}")
+    print(f"Final gap: {gap}")
 
     return self.best_node.l, self.best_node.u, self.LUB
 
@@ -679,9 +650,13 @@ class branching_wrapper:
     for node in nodes.flatten():
       for child_l, child_u in branch(node.l, node.u):
         acqf_L, acqf_U = self.compute_acqf_bounds(child_l, child_u)
-        # Child-level prune
-        if acqf_L >= self.LUB + self.epsilon_prune:
-          continue
+        # Child-level pre-prune
+        #TODO: revisit this!
+        # currently will be easier to track how many function
+        # evaluations are in the queue for the MPIEvaluator
+        # by removing this pre-pruning stage
+        #if acqf_L >= self.LUB + self.epsilon_prune:
+        #  continue
         child = BnBNode(child_l, child_u, acqf_L, acqf_U)
         output.append(child)
     return [output]
