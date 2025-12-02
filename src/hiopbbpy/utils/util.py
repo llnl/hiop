@@ -107,6 +107,8 @@ class MPIEvaluator(Evaluator):
     self.sync()
     Y = self.retrieve_results()
     return Y
+  def num_submitted_tasks(self):
+    return self.manager.num_submitted_tasks()
 
 class Logger:
   """

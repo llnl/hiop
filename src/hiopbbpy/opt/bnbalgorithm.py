@@ -1,10 +1,12 @@
 import numpy as np
+from numpy.random import uniform
 import cvxpy as cp
 import heapq
 from scipy import linalg
 from .acquisition import EIacquisition, LCBacquisition
 from ..utils.util import Evaluator, MPIEvaluator
 from ..utils.new_eval_manager import is_running_with_mpi
+from .opt_utils import minimizer_wrapper
 from itertools import count
 try:
   from mpi4py import MPI
@@ -144,8 +146,10 @@ class BnBAlgorithmBase:
     self.sigma2 = np.asarray(par.get("sigma2", 1.0), float).reshape(()).item()
     self.sigma2_ri = float(par["sigma2_ri"] if "sigma2_ri" in par else self.sigma2)
 
-    x_regression = [np.mean(self.gpsurrogate.xlimits[i]) for i in range(self.gpsurrogate.ndim)]
-    w = linalg.solve_triangular(par["G"].T, sm._regression_types['constant'](x_regression).T)
+    x_regression = np.array([np.mean(self.gpsurrogate.xlimits[i]) for i in range(self.gpsurrogate.ndim)])
+    regression = (sm._regression_types['constant'](x_regression).T)
+    regression = np.atleast_2d([regression[0][0]])
+    w = linalg.solve_triangular(par["G"].T, regression)
     
     ntrain = sm.nt
     self.A_obj = 2.0 * (-1.0 * np.identity(ntrain) + par["Q"].dot(par["Q"].T))
@@ -292,8 +296,10 @@ class BnBAlgorithm(BnBAlgorithmBase):
       num_available_workers = MPI.COMM_WORLD.Get_size() - 1
       if num_available_workers > 1:
         # roughly evenly split workers for use in bbs and bfs evaluators
+        #num_bbs_workers = num_available_workers
+        #num_bfs_workers = 1
         num_bbs_workers = np.ceil(num_available_workers / 2).astype(int)
-        num_bfs_workers = num_available_workers - num_bbs_workers
+        num_bfs_workers = max(1, num_available_workers - num_bbs_workers)
       else:
         # num_available_workers == 1 or num_available_workers == 0
         # can occur when running on one process in which root is both master and the
@@ -309,7 +315,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
     self.bfsevaluator = MPIEvaluator(function_mode=False, max_workers = num_bfs_workers)  
     self.num_bbs_workers = num_bbs_workers
     self.num_bfs_workers = num_bfs_workers
-    self.max_queue_size = 4 * self.num_bbs_workers
+    self.max_queue_size = 40 * self.num_bbs_workers
 
   # For minimization, we find a feasible function value as the upper bound on the minimum value of the acquisition function.
   def compute_acqf_upper_bound(self, l, u):
@@ -340,8 +346,33 @@ class BnBAlgorithm(BnBAlgorithmBase):
     var = np.array([var_U, var_L])
     acqf_bounds = self.acqf.evaluate_meansig2(mu, var)
     
-    x_midpoint = np.atleast_2d(( l + u) / 2.)
-    acqf_U = self.acqf.evaluate(x_midpoint).flatten()[0]
+    #x_midpoint = np.atleast_2d(( l + u) / 2.)
+    #acqf_U = self.acqf.evaluate(x_midpoint).flatten()[0]
+    n_points = 3 ** self.gpsurrogate.ndim
+    x_points = np.zeros((n_points, self.gpsurrogate.ndim))
+    for i in range(n_points):
+      for j in range(self.gpsurrogate.ndim):
+        x_points[i, j] = l[j] + ((u[j] - l[j])/2.) * np.floor(i / (3**j)).astype(int) % 3
+    acqf_eval = self.acqf.evaluate(x_points)
+    acqf_U = min(acqf_eval.flatten())
+    
+    #acqf_callback = {'obj' : self.acqf.scalar_evaluate}
+    #if self.acqf.has_gradient:
+    #  acqf_callback['grad'] = self.acqf.scalar_eval_g
+    #minimizer_method = "SLSQP"
+    #minimizer_options = {"maxiter" : 100}
+    #minimizer_constraints = ()
+    #acqf_minimizer = minimizer_wrapper(acqf_callback, minimizer_method, self.gpsurrogate.xlimits, minimizer_constraints, minimizer_options)
+    #x0_pts = np.array([[uniform(b[0], b[1]) for b in self.gpsurrogate.xlimits] for _ in range(1)])
+
+    #opt_evaluator = Evaluator()    
+    #opt_output = opt_evaluator.run(acqf_minimizer.minimizer_callback, x0_pts)[0]
+    #assert opt_output[2], f"local optimizer failed"
+
+
+    #return acqf_bounds[0], opt_output[1]#acqf_U
+
+
     return acqf_bounds[0], acqf_U
   def _prune_queue(self, queue, lub, eps):
     """Keep only nodes whose lower-bound is not greater or equal least upper-bound + eps; then re-heapify."""
@@ -414,32 +445,40 @@ class BnBAlgorithm(BnBAlgorithmBase):
     # stopping criterion should be on the total maximum number of branched nodes
     num_branches = 0
 
+    initial_gap = self.best_node.aq_U - self.best_node.aq_L
+
     i_loop = 0
     while num_branches < self.max_bnbiter:  
       i_loop += 1
       # collect nodes to be branched on in list structure
       bbsnodes = []
       num_submitted_nodes = 0
-      for i in range(self.nodes_per_batch - 1):
-        if (not self.queue) or self.bbsevaluator.num_submitted_tasks() > 10:
-          break # no more nodes available to send to evaluator for branching/bound computations
-        _, _, node = heapq.heappop(self.queue)
-        bbsnodes.append(node)
-        num_submitted_nodes += 1
 
-      # parallel branching and upper/lower bound node compuatations
-      brancher = branching_wrapper(self.acqf, LUB = self.LUB, epsilon_prune=self.epsilon_prune)
-      bbsnodes = np.array(bbsnodes)
-      self.bbsevaluator.submit_tasks(brancher.callback, bbsnodes)
+      #if self.bbsevaluator.num_submitted_tasks() + self.bfsevaluator.num_submitted_tasks() > 200:
+      #  continue
+
+      if self.bbsevaluator.num_submitted_tasks() < 10:
+        for i in range(self.nodes_per_batch - 1):
+          if (not self.queue):
+            break # no more nodes available to send to evaluator for branching/bound computations
+          _, _, node = heapq.heappop(self.queue)
+          bbsnodes.append(node)
+          num_submitted_nodes += 1
+
+        # parallel branching and upper/lower bound node compuatations
+        brancher = branching_wrapper(self.acqf, LUB = self.LUB, epsilon_prune=self.epsilon_prune)
+        bbsnodes = np.array(bbsnodes)
+        self.bbsevaluator.submit_tasks(brancher.callback, bbsnodes)
       
       bfsnodes  = []
-      for i in range(self.nodes_per_batch - 1):
-        if len(all_bfsnodes) == 0 or self.bfsevaluator.num_submitted_tasks() > 10: 
-          break # no more nodes available to send to evaluator for branching/bound computations
-        node = all_bfsnodes.pop(0)
-        bfsnodes.append(node)
-      bfsnodes = np.array(bfsnodes)
-      self.bfsevaluator.submit_tasks(brancher.callback, bfsnodes)
+      if self.bfsevaluator.num_submitted_tasks() < 10:
+        for i in range(self.nodes_per_batch - 1):
+          if len(all_bfsnodes) == 0: 
+            break # no more nodes available to send to evaluator for branching/bound computations
+          node = all_bfsnodes.pop(0)
+          bfsnodes.append(node)
+        bfsnodes = np.array(bfsnodes)
+        self.bfsevaluator.submit_tasks(brancher.callback, bfsnodes)
 
       # asynchronously retrieve results from Evaluator that have been processed
       bbschildren = self.bbsevaluator.retrieve_results()
@@ -463,7 +502,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
       # update best_node via children
       updated_best_node = False
       for child in children:
-        if child.aq_U < self.LUB:
+        if child.aq_U <= self.LUB:
           self.best_node = child
           self.LUB = self.best_node.aq_U
           updated_best_node=True
@@ -500,14 +539,15 @@ class BnBAlgorithm(BnBAlgorithmBase):
       all_bfsnodes = self._prune_node_list(all_bfsnodes, self.LUB, self.epsilon_prune)
 
       if updated_best_node:
-        if gap < self.epsilon_gap:
-          print(f"STOP: optimality gap = {gap} < {self.epsilon_gap}")
+        if gap / initial_gap  < self.epsilon_gap:
+          print(f"STOP: optimality gap = {gap/initial_gap} < {self.epsilon_gap}")
           break
 
     print("\n=== Optimization Finished ===")
     print(f"Total number of branches: {num_branches}")
     print(f"Best bounds: l={self.best_node.l}, u={self.best_node.u}")
     print(f"Best feasible acquisition value (LUB): {self.LUB}")
+    print(f"Initial gap: {initial_gap}")
     print(f"Final gap: {gap}")
 
     return self.best_node.l, self.best_node.u, self.LUB
@@ -592,9 +632,11 @@ class branching_wrapper:
     self.sigma2 = np.asarray(par.get("sigma2", 1.0), float).reshape(()).item()
     self.sigma2_ri = float(par["sigma2_ri"] if "sigma2_ri" in par else self.sigma2)
 
-    x_regression = [np.mean(self.gpsurrogate.xlimits[i]) for i in range(self.gpsurrogate.ndim)]
-    w = linalg.solve_triangular(par["G"].T, sm._regression_types['constant'](x_regression).T)
-    
+    x_regression = np.array([np.mean(self.gpsurrogate.xlimits[i]) for i in range(self.gpsurrogate.ndim)])
+    regression = (sm._regression_types['constant'](x_regression).T)
+    regression = np.atleast_2d([regression[0][0]])
+    w = linalg.solve_triangular(par["G"].T, regression)
+
     ntrain = sm.nt
     self.A_obj = 2.0 * (-1.0 * np.identity(ntrain) + par["Q"].dot(par["Q"].T))
     self.b_obj = -2.0 * par["Q"].dot(w)
@@ -708,8 +750,32 @@ class branching_wrapper:
     mu  = np.array([mu_L, mu_U])
     var = np.array([var_U, var_L])
     acqf_bounds = self.acqf.evaluate_meansig2(mu, var)
-    x_midpoint = np.atleast_2d(( l + u) / 2.)
-    acqf_U = self.acqf.evaluate(x_midpoint).flatten()[0]
+    n_points = 3 ** self.gpsurrogate.ndim
+    x_points = np.zeros((n_points, self.gpsurrogate.ndim))
+    for i in range(n_points):
+      for j in range(self.gpsurrogate.ndim):
+        x_points[i, j] = l[j] + ((u[j] - l[j])/2.) * np.floor(i / (3**j)).astype(int) % 3
+    acqf_eval = self.acqf.evaluate(x_points)
+    acqf_U = min(acqf_eval.flatten())
+
+
+    #x_midpoint = np.atleast_2d(( l + u) / 2.)
+    #acqf_U = self.acqf.evaluate(x_midpoint).flatten()[0]
+
+    #acqf_callback = {'obj' : self.acqf.scalar_evaluate}
+    #if self.acqf.has_gradient:
+    #  acqf_callback['grad'] = self.acqf.scalar_eval_g
+    #minimizer_method = "SLSQP"
+    #minimizer_options = {"maxiter" : 100}
+    #minimizer_constraints = ()
+    #acqf_minimizer = minimizer_wrapper(acqf_callback, minimizer_method, self.gpsurrogate.xlimits, minimizer_constraints, minimizer_options)
+    #x0_pts = np.array([[uniform(b[0], b[1]) for b in self.gpsurrogate.xlimits] for _ in range(1)])
+
+    #opt_evaluator = Evaluator()    
+    #opt_output = opt_evaluator.run(acqf_minimizer.minimizer_callback, x0_pts)[0]
+    #assert opt_output[2], f"local optimizer failed"
+
+
     return acqf_bounds[0], acqf_U
   def callback(self, nodes):
     output = []

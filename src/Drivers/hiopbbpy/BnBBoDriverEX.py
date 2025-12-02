@@ -7,7 +7,7 @@ from hiopbbpy.problems import Problem
 from hiopbbpy.surrogate_modeling import smtKRG 
 from hiopbbpy.opt import BnBAlgorithm, BOAlgorithm, LCBacquisition, EIacquisition
 from hiopbbpy.utils import MPIEvaluator
-
+import argparse
 
 class QuadraticShift(Problem):
   """
@@ -41,26 +41,36 @@ class QuadraticShift(Problem):
 
 
 if __name__ == "__main__":
-  nx = 1         # dimension of the problem
+  nx = 2        # dimension of the problem
+  parser = argparse.ArgumentParser(prog='myprogram')
+  parser.add_argument("--nx", type=int, default=2, help="dimension of problem")
+  args = parser.parse_args()
+  nx = args.nx
+
   acquisition_type = 'LCB'  
   ### parameters
-  n_samples = 50  # number of the initial samples to train GP
+  #n_samples = 50  # number of the initial samples to train GP
+  n_samples = 10
   theta = 1.e-2  # hyperparameter for GP kernel
-  c2D=np.array([1.25, 2.5])
-  c1D=np.array([1.25])
-  if nx == 1:
-    delta = 10.0
-    xlimits = np.array([[0.75 - delta/2.,0.75 + delta/2.]])
-    c1D = np.array([0.75])
-    c = c1D
-  elif nx == 2:
-    c = c2D
+  c = np.linspace(1.25, 2.5, num=nx)
+  #c2D=np.array([1.25, 2.5])
+  #c1D=np.array([1.25])
+  #if nx == 1:
+  #  #delta = 10.0
+  #  #xlimits = np.array([[0.75 - delta/2.,0.75 + delta/2.]])
+  #  #c1D = np.array([0.75])
+  #  #c = c1D
+  #  c = np.array([0.75])
+  #elif nx == 2:
+  #  c = np.array([1.25, 2.5])
+  #elif nx == 4:
+  #  c = np.array([0.25, 0.75, 1.25, 1.75])
+  #elif nx == 8:
+  #  c = np.array([-3.5 + i for i in range(8)])
+  #  #c = c2D
   
   
-  if nx == 1:
-    problem = QuadraticShift(ndim=nx, xlimits=xlimits, c=c)
-  else:
-    problem = QuadraticShift(ndim=nx, c=c)
+  problem = QuadraticShift(ndim=nx, c=c)
   problem.set_constraints([])  
       
   x_train = problem.sample(n_samples)
@@ -80,32 +90,35 @@ if __name__ == "__main__":
   solver_options = {
       'epsilon_diam' : 1.e-14,
       'epsilon_gap' : 1.e-2,    
-      'max_iter': 1000,
-      'nodes_per_batch' : 100#,
+      'max_iter': 100,
+      'nodes_per_batch' : 5#,
       #'evaluator': evaluator
   }
   bnb = BnBAlgorithm(acqf, options=solver_options)
   bnb.initialize()
-  xstar = bnb.optimize()
+  xstar = np.atleast_2d(bnb.optimize())
+  print(xstar)
+  print(xstar.shape)
   ystar = acqf.evaluate(xstar)
+  print(ystar)
   
-  queue = bnb.queue
-  #print(queue)  
-  #print(queue[2][2].l, queue[2][2].u)
-  Xqueue = np.atleast_2d([(queue[i][2].l + queue[i][2].u) / 2. for i in range(len(queue))])
-  Yqueue = acqf.evaluate(Xqueue)
-  #print(Xqueue)
-  #from scipy.cluster.hierarchy import linkage, dendrogram
-  #
-  #linked = linkage(Xqueue, method='ward')
-  #for item in dir(linked):
-  #  print(item)
-  from sklearn.cluster import DBSCAN
-  clustering = DBSCAN(eps=0.05).fit(Xqueue)
-  labels = np.unique(clustering.labels_)
-  print("{0:d} unique clustering groups".format(len(labels)))
-  Xqueue = Xqueue.flatten()
-  Yqueue = Yqueue.flatten()
+  #queue = bnb.queue
+  ##print(queue)  
+  ##print(queue[2][2].l, queue[2][2].u)
+  #Xqueue = np.atleast_2d([(queue[i][2].l + queue[i][2].u) / 2. for i in range(len(queue))])
+  #Yqueue = acqf.evaluate(Xqueue)
+  ##print(Xqueue)
+  ##from scipy.cluster.hierarchy import linkage, dendrogram
+  ##
+  ##linked = linkage(Xqueue, method='ward')
+  ##for item in dir(linked):
+  ##  print(item)
+  ##from sklearn.cluster import DBSCAN
+  ##clustering = DBSCAN(eps=0.05).fit(Xqueue)
+  ##labels = np.unique(clustering.labels_)
+  ##print("{0:d} unique clustering groups".format(len(labels)))
+  #Xqueue = Xqueue.flatten()
+  #Yqueue = Yqueue.flatten()
   l = problem.xlimits[:, 0].astype(float)
   u = problem.xlimits[:, 1].astype(float)
   n_plot_pts = 1000
@@ -114,43 +127,43 @@ if __name__ == "__main__":
   
   plt.plot(X, Yacqf, 'k--', label=r'' + acquisition_type + '$(x)$')
   plt.plot(xstar, ystar, "r*", markersize=14, label=r'bnb minimizer')
-  for label in labels:
-    args = np.argwhere(label == clustering.labels_)
-    plt.plot(Xqueue[args], Yqueue[args], "*", markersize=12)
+  #for label in labels:
+  #  args = np.argwhere(label == clustering.labels_)
+  #  plt.plot(Xqueue[args], Yqueue[args], "*", markersize=12)
   plt.legend()
   plt.show()
-  #exit()
+  ##exit()
 
   
   
-  bo_maxiter = 3
-  batch_size = 1
-  options = {
-      'acquisition_type': acquisition_type,
-      'bo_maxiter': bo_maxiter, 
-      'batch_size': batch_size,
-      'opt_solver': 'BnB',
-      'solver_options' : solver_options,
-  }
-  
-  bo = BOAlgorithm(problem, gp_model, x_train, y_train, options=options)
-  bo.optimize()
-  x_bo = bo.getOptimizationHistory()[0]
-  x_train_superset = np.concatenate((x_train, x_bo), axis=0)
-  for i in range(bo_maxiter):
-    x_train2 = x_train_superset[:-bo_maxiter+i]
-    y_train2 = problem.evaluate(x_train2)
-    gp_model2 = smtKRG(theta, problem.xlimits, nx)
-    gp_model2.train(x_train2, y_train2)
-    if acquisition_type == "LCB":
-      acqf2 = LCBacquisition(gp_model2)
-    else:
-      acqf2 = EIacquisition(gp_model2)
-    Y_acqf2 = [acqf2.evaluate(x)[0] for x in X]
-    y_star2 = acqf2.evaluate(np.atleast_2d(x_bo[i]))
-    plt.plot(X, Y_acqf2,'k--', label=r''+acquisition_type+'$(x)$')
-    plt.plot(x_bo[i], y_star2, r'r*', markersize=12, label=r'bnb minimizer')
-    plt.xlabel("x")
-    plt.legend()
-    plt.title(r""+acquisition_type+"$(x)$ at BO iteration {0:d}".format(i))
-    plt.show()
+  #bo_maxiter = 1
+  #batch_size = 1
+  #options = {
+  #    'acquisition_type': acquisition_type,
+  #    'bo_maxiter': bo_maxiter, 
+  #    'batch_size': batch_size,
+  #    'opt_solver': 'BnB',
+  #    'solver_options' : solver_options,
+  #}
+  #
+  #bo = BOAlgorithm(problem, gp_model, x_train, y_train, options=options)
+  #bo.optimize()
+  #x_bo = bo.getOptimizationHistory()[0]
+  #x_train_superset = np.concatenate((x_train, x_bo), axis=0)
+  #for i in range(bo_maxiter):
+  #  x_train2 = x_train_superset[:-bo_maxiter+i]
+  #  y_train2 = problem.evaluate(x_train2)
+  #  gp_model2 = smtKRG(theta, problem.xlimits, nx)
+  #  gp_model2.train(x_train2, y_train2)
+  #  if acquisition_type == "LCB":
+  #    acqf2 = LCBacquisition(gp_model2)
+  #  else:
+  #    acqf2 = EIacquisition(gp_model2)
+  #  Y_acqf2 = [acqf2.evaluate(x)[0] for x in X]
+  #  y_star2 = acqf2.evaluate(np.atleast_2d(x_bo[i]))
+  #  plt.plot(X, Y_acqf2,'k--', label=r''+acquisition_type+'$(x)$')
+  #  plt.plot(x_bo[i], y_star2, r'r*', markersize=12, label=r'bnb minimizer')
+  #  plt.xlabel("x")
+  #  plt.legend()
+  #  plt.title(r""+acquisition_type+"$(x)$ at BO iteration {0:d}".format(i))
+  #  plt.show()

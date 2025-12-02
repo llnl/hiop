@@ -157,5 +157,7 @@ class EvaluationManager:
 
     return list(X), list(F)
   def completed_tasks(self) -> bool:
-    return (len(self._queue) == 0)  
+    return (len(self._queue) == 0)
+  def num_submitted_tasks(self) -> int:
+    return len(self._queue)  
 
