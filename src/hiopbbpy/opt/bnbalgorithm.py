@@ -299,7 +299,8 @@ class BnBAlgorithm(BnBAlgorithmBase):
       num_bfs_workers = 1
     self.bbsevaluator = MPIEvaluator(function_mode=False, max_workers = num_bbs_workers)
     self.bfsevaluator = MPIEvaluator(function_mode=False, max_workers = num_bfs_workers)  
-
+    self.num_bbs_workers = num_bbs_workers
+    self.num_bfs_workers = num_bfs_workers
 
   # For minimization, we find a feasible function value as the upper bound on the minimum value of the acquisition function.
   def compute_acqf_upper_bound(self, l, u):
@@ -334,11 +335,15 @@ class BnBAlgorithm(BnBAlgorithmBase):
     acqf_U = self.acqf.evaluate(x_midpoint).flatten()[0]
     return acqf_bounds[0], acqf_U
   def _prune_queue(self, queue, lub, eps):
-    """Keep only nodes that can beat current GUB within tolerance; then re-heapify."""
+    """Keep only nodes whose lower-bound is not greater or equal least upper-bound + eps; then re-heapify."""
     # queue items are (L, counter, node)
-    pruned = [(L, c, n) for (L, c, n) in queue if L <= lub + eps]
+    pruned = [(L, c, n) for (L, c, n) in queue if L < lub + eps]
     heapq.heapify(pruned)
     return pruned
+  def _prune_node_list(self, node_list, lub, eps):
+    """Keep only nodes whose lower-bound is not greater or equal least upper-bound + eps; then re-heapify."""
+    pruned_node_list = [node for node in node_list if node.aq_L < lub + eps]
+    return pruned_node_list 
   def optimize(self):
     opt = self.bnboptimize(self.gpsurrogate.xlimits[:,0], self.gpsurrogate.xlimits[:,1])
     lopt = opt[0]
@@ -393,35 +398,50 @@ class BnBAlgorithm(BnBAlgorithmBase):
 
     heapq.heapify(self.queue)    
 
-
+    all_bfsnodes = []
     
     # stopping criterion should be on the total maximum number of branched nodes
     num_branches = 0
     while num_branches < self.max_bnbiter:  
       
       # collect nodes to be branched on in list structure
-      nodes = []
-      
+      bbsnodes = []
       for i in range(self.nodes_per_batch - 1):
         if not self.queue:
           break # no more nodes in queue to branch on
         _, _, node = heapq.heappop(self.queue)
-        nodes.append(node)
+        bbsnodes.append(node)
 
       # parallel branching and upper/lower bound node compuatations
       brancher = branching_wrapper(self.acqf, LUB = self.LUB, epsilon_prune=self.epsilon_prune)
-      nodes = np.array(nodes)
-      self.evaluator.submit_tasks(brancher.callback, nodes)
+      bbsnodes = np.array(bbsnodes)
+      self.bbsevaluator.submit_tasks(brancher.callback, bbsnodes)
+      
+      # TODO: different nodes_per_batch for bbs/bfs sets
+      bfsnodes  = []
+      for i in range(self.nodes_per_batch - 1):
+        if len(all_bfsnodes) == 0:
+          break
+        node = all_bfsnodes.pop(0)
+        bfsnodes.append(node)
+      bfsnodes = np.array(bfsnodes)
+      self.bfsevaluator.submit_tasks(brancher.callback, bfsnodes)
 
-      # self.evaluator.sync()
       # asynchronously retrieve results from Evaluator that have been processed
-      children = self.evaluator.retrieve_results()
+      bbschildren = self.bbsevaluator.retrieve_results()
       
       # not all children are return, hence children is a ragged array
       # need to flatten this ragged list
-      children = [item for sublist in children for item in sublist]
-      num_branches += len(children)
-      
+      bbschildren = [item for sublist in bbschildren for item in sublist]
+      num_branches += len(bbschildren)
+
+      bfschildren = self.bfsevaluator.retrieve_results()
+      bfschildren = [item for sublist in bfschildren for item in sublist]
+      num_branches += len(bfschildren)
+
+      children = bbschildren + bfschildren # join child lists 
+      if len(children) == 0:
+        continue 
       # update best_node and queue via children
       updated_best_node = False
       for child in children:
@@ -429,13 +449,27 @@ class BnBAlgorithm(BnBAlgorithmBase):
           self.best_node = child
           self.LUB = self.best_node.aq_U
           updated_best_node=True
-        # if gap of child with LUB is small enough exit here
-        if child.aq_L < self.LUB + self.epsilon_prune:
-          heapq.heappush(self.queue, (child.aq_L, next(self._ctr), child))
+      children_lower_bounds = [child.aq_L for child in children]
+      args = np.argwhere(np.array(children_lower_bounds) < self.LUB + self.epsilon_prune).flatten()
+      children = [children[arg] for arg in args]
       
+      # TODO: criteria for moving children to all_bfsnodes or queue
+      # now move pruned children to data structs for (potential) future evaluation
+      children_lower_bounds = [child.aq_L for child in children]
+      # sort the children in order of increasing acqf lower-bounds
+      args = np.argsort(children_lower_bounds)
+      children = [children[arg] for arg in args]
+      for child in children:
+        if len(self.queue) < self.num_bbs_workers:
+          heapq.heappush(self.queue, (child.aq_L, next(self._ctr), child))
+        else:
+          all_bfsnodes.append(child)
+           
+
+ 
       # BnB opt progress report
-      # only report if a child was returned in most recent
-      # retrieve_results() Evaluator call
+      # only report if one or more children were returned in most recent
+      # retrieve_results() MPIEvaluator calls
       # only check optimality gap and reprune if one or more children were returned
       if len(children) > 0:
         gap = self.best_node.aq_U - self.best_node.aq_L
@@ -446,6 +480,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
         print(f"gap = {gap}")
         # prune queue based on potentially updated least upper bound
         self.queue = self._prune_queue(self.queue, self.LUB, self.epsilon_prune)
+        all_bfsnodes = self._prune_node_list(all_bfsnodes, self.LUB, self.epsilon_prune)
 
       if updated_best_node:
         if gap < self.epsilon_gap:
