@@ -5,6 +5,7 @@ from scipy import linalg
 from .acquisition import EIacquisition, LCBacquisition
 from ..utils.util import Evaluator, MPIEvaluator
 from itertools import count
+from mpi4py import MPI
 
 # BnBNode
 # corners of interval [l, u]
@@ -65,7 +66,6 @@ class BnBAlgorithmBase:
     self.upper_bound = np.inf
     self.final_gap = None
     self.final_diameter = None
-    self.total_nodes = 0
     self.verbose = False
 
     # Training data
@@ -284,6 +284,22 @@ class BnBAlgorithm(BnBAlgorithmBase):
     self.evaluator = options.get('evaluator', self.evaluator)
     self.nodes_per_batch = options.get('nodes_per_batch', self.nodes_per_batch)
 
+    num_available_workers = MPI.COMM_WORLD.Get_size() - 1
+    if num_available_workers > 1:
+      # roughly evenly split workers for use in bbs and bfs evaluators
+      num_bbs_workers = np.ceil(num_available_workers / 2).astype(int)
+      num_bfs_workers = num_available_workers - num_bbs_workers
+    else:
+      # num_available_workers == 1 or num_available_workers == 0
+      # can occur when running on one process in which root is both master and the
+      # only worker process. If there are 2 mpi processes then root is master and
+      # there is one worker process. This worker process will be used for both
+      # bbs and bfs evaluators
+      num_bbs_workers = 1
+      num_bfs_workers = 1
+    self.bbsevaluator = MPIEvaluator(function_mode=False, max_workers = num_bbs_workers)
+    self.bfsevaluator = MPIEvaluator(function_mode=False, max_workers = num_bfs_workers)  
+
 
   # For minimization, we find a feasible function value as the upper bound on the minimum value of the acquisition function.
   def compute_acqf_upper_bound(self, l, u):
@@ -317,10 +333,10 @@ class BnBAlgorithm(BnBAlgorithmBase):
     x_midpoint = np.atleast_2d(( l + u) / 2.)
     acqf_U = self.acqf.evaluate(x_midpoint).flatten()[0]
     return acqf_bounds[0], acqf_U
-  def _prune_queue(self, queue, gub, eps):
+  def _prune_queue(self, queue, lub, eps):
     """Keep only nodes that can beat current GUB within tolerance; then re-heapify."""
     # queue items are (L, counter, node)
-    pruned = [(L, c, n) for (L, c, n) in queue if L <= gub + eps]
+    pruned = [(L, c, n) for (L, c, n) in queue if L <= lub + eps]
     heapq.heapify(pruned)
     return pruned
   def optimize(self):
@@ -387,20 +403,18 @@ class BnBAlgorithm(BnBAlgorithmBase):
       nodes = []
       
       for i in range(self.nodes_per_batch - 1):
-        if not self.queue:# or not nodes_to_be_evaluated < max_nodes_to_be_evaluated:
-          break
+        if not self.queue:
+          break # no more nodes in queue to branch on
         _, _, node = heapq.heappop(self.queue)
         nodes.append(node)
-        #self.total_nodes += 2
-        #nodes_to_be_evaluated += 2 # will evaluate each child
 
       # parallel branching and upper/lower bound node compuatations
       brancher = branching_wrapper(self.acqf, LUB = self.LUB, epsilon_prune=self.epsilon_prune)
       nodes = np.array(nodes)
       self.evaluator.submit_tasks(brancher.callback, nodes)
 
-      # asynchronously retrieve results from Evaluator that have been processed
       # self.evaluator.sync()
+      # asynchronously retrieve results from Evaluator that have been processed
       children = self.evaluator.retrieve_results()
       
       # not all children are return, hence children is a ragged array
@@ -421,7 +435,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
       
       # BnB opt progress report
       # only report if a child was returned in most recent
-      # retrieve_results() Evluator call
+      # retrieve_results() Evaluator call
       # only check optimality gap and reprune if one or more children were returned
       if len(children) > 0:
         gap = self.best_node.aq_U - self.best_node.aq_L
@@ -439,7 +453,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
           break
 
     print("\n=== Optimization Finished ===")
-    print(f"Total nodes explored: {self.total_nodes}")
+    print(f"Total number of branches: {num_branches}")
     print(f"Best bounds: l={self.best_node.l}, u={self.best_node.u}")
     print(f"Best feasible acquisition value (LUB): {self.LUB}")
     print(f"Final gap: {gap}")
