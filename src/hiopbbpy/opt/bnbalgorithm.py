@@ -13,6 +13,9 @@ try:
 except ImportError:
   print("unable to import mpi4py")
 
+import time
+
+
 # BnBNode
 # corners of interval [l, u]
 # upper and lower bounds of acquisition function
@@ -282,14 +285,14 @@ class BnBAlgorithm(BnBAlgorithmBase):
     self.epsilon_prune = 1.e-14
     self.max_bnbiter = 2000
     self.nodes_per_batch = 1
-    #self.evaluator = MPIEvaluator(function_mode=False)
+    self.max_bnbtime = 12 * 60 # 12 minutes
 
     # Set options form command 
     self.epsilon_gap = options.get('epsilon_gap', self.epsilon_gap)
     self.epsilon_diam = options.get('epsilon_diam', self.epsilon_diam)
     self.epsilon_prune = options.get('epsilon_prune', self.epsilon_prune)
     self.max_bnbiter = options.get('max_iter', self.max_bnbiter)
-    #self.evaluator = options.get('evaluator', self.evaluator)
+    self.max_bnbtime = options.get('max_bnbtime', self.max_bnbtime)
     self.nodes_per_batch = options.get('nodes_per_batch', self.nodes_per_batch)
 
     if is_running_with_mpi():
@@ -315,7 +318,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
     self.bfsevaluator = MPIEvaluator(function_mode=False, max_workers = num_bfs_workers)  
     self.num_bbs_workers = num_bbs_workers
     self.num_bfs_workers = num_bfs_workers
-    self.max_queue_size = 40 * self.num_bbs_workers
+    self.max_queue_size = 10 * self.num_bbs_workers
 
   # For minimization, we find a feasible function value as the upper bound on the minimum value of the acquisition function.
   def compute_acqf_upper_bound(self, l, u):
@@ -440,25 +443,34 @@ class BnBAlgorithm(BnBAlgorithmBase):
 
     all_bfsnodes = []
 
-    num_bbs_tasks_per_loop = np.zeros(10, dtype=np.int32)
     
     # stopping criterion should be on the total maximum number of branched nodes
-    num_branches = 0
+    self.num_branches = 0
 
     initial_gap = self.best_node.aq_U - self.best_node.aq_L
 
-    i_loop = 0
-    while num_branches < self.max_bnbiter:  
-      i_loop += 1
+    max_bbs_node_size = 0
+    max_bfs_node_size = 0
+    start_time = time.time()
+    while self.num_branches < self.max_bnbiter:  
       # collect nodes to be branched on in list structure
       bbsnodes = []
       num_submitted_nodes = 0
 
-      #if self.bbsevaluator.num_submitted_tasks() + self.bfsevaluator.num_submitted_tasks() > 200:
-      #  continue
+      # if the number of submitted jobs is too large then wait for some jobs to be processed
+      if self.bbsevaluator.num_submitted_tasks() + self.bfsevaluator.num_submitted_tasks() > 10 * (self.num_bbs_workers + self.num_bfs_workers):
+        if time.time() - start_time > self.max_bnbtime:
+          print("maximum time has elapsed")
+          break
+        else:
+          print("num submitted bbs tasks = ", self.bbsevaluator.num_submitted_tasks())
+          print("num submitted bfs tasks = ", self.bfsevaluator.num_submitted_tasks())
+          time.sleep(1.0) # give time for Evaluators to process jobs
+          continue
 
-      if self.bbsevaluator.num_submitted_tasks() < 10:
-        for i in range(self.nodes_per_batch - 1):
+      # only submit additional tasks if there aren't too many in the Evaluators queue
+      if self.bbsevaluator.num_submitted_tasks() < 10 * self.num_bbs_workers:
+        for i in range(self.nodes_per_batch):
           if (not self.queue):
             break # no more nodes available to send to evaluator for branching/bound computations
           _, _, node = heapq.heappop(self.queue)
@@ -471,8 +483,9 @@ class BnBAlgorithm(BnBAlgorithmBase):
         self.bbsevaluator.submit_tasks(brancher.callback, bbsnodes)
       
       bfsnodes  = []
-      if self.bfsevaluator.num_submitted_tasks() < 10:
-        for i in range(self.nodes_per_batch - 1):
+      # only submit additional tasks if there aren't too many in the Evaluators queue
+      if self.bfsevaluator.num_submitted_tasks() < 10 * self.num_bfs_workers:
+        for i in range(self.nodes_per_batch):
           if len(all_bfsnodes) == 0: 
             break # no more nodes available to send to evaluator for branching/bound computations
           node = all_bfsnodes.pop(0)
@@ -483,10 +496,6 @@ class BnBAlgorithm(BnBAlgorithmBase):
       # asynchronously retrieve results from Evaluator that have been processed
       bbschildren = self.bbsevaluator.retrieve_results()
 
-      num_bbs_tasks_per_loop[i_loop%10] = len(bbschildren)
-      #print("num bbs children evaluated = ", len(bbschildren))
-      #print("number of submitted bbs parents = ", num_submitted_nodes)
-      
       # not all children are return, hence children is a ragged array
       # need to flatten this ragged list
       bbschildren = [item for sublist in bbschildren for item in sublist]
@@ -495,7 +504,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
       bfschildren = [item for sublist in bfschildren for item in sublist]
 
       children = bbschildren + bfschildren # join child lists 
-      num_branches += len(children)
+      self.num_branches += len(children)
       if len(children) == 0:
         continue
 
@@ -520,11 +529,13 @@ class BnBAlgorithm(BnBAlgorithmBase):
           heapq.heappush(self.queue, (child.aq_L, next(self._ctr), child))
         else:
           all_bfsnodes.append(child)
+      max_bbs_node_size = max(max_bbs_node_size, len(self.queue))
+      max_bfs_node_size = max(max_bfs_node_size, len(all_bfsnodes))
            
 
       # BnB opt progress report 
       gap = self.best_node.aq_U - self.best_node.aq_L
-      print(f"\n--- Total number branches  {num_branches} ---")
+      print(f"\n--- Total number branches  {self.num_branches} ---")
       print(f"Best node bounds: l={self.best_node.l}, u={self.best_node.u}")
       print(f"Node acquisition bounds: L={self.best_node.aq_L}, U={self.best_node.aq_U}")
       print(f"Current best feasible value (LUB): {self.LUB}")
@@ -539,12 +550,14 @@ class BnBAlgorithm(BnBAlgorithmBase):
       all_bfsnodes = self._prune_node_list(all_bfsnodes, self.LUB, self.epsilon_prune)
 
       if updated_best_node:
-        if gap / initial_gap  < self.epsilon_gap:
-          print(f"STOP: optimality gap = {gap/initial_gap} < {self.epsilon_gap}")
+        if gap  < self.epsilon_gap:
+          print(f"STOP: optimality gap = {gap} < {self.epsilon_gap}")
           break
 
     print("\n=== Optimization Finished ===")
-    print(f"Total number of branches: {num_branches}")
+    print(f"Total number of branches: {self.num_branches}")
+    print(f"Max BBS node list size: {max_bbs_node_size}")
+    print(f"Max BFS node list size: {max_bfs_node_size}")
     print(f"Best bounds: l={self.best_node.l}, u={self.best_node.u}")
     print(f"Best feasible acquisition value (LUB): {self.LUB}")
     print(f"Initial gap: {initial_gap}")

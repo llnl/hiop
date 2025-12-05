@@ -41,11 +41,16 @@ class QuadraticShift(Problem):
 
 
 if __name__ == "__main__":
-  nx = 2        # dimension of the problem
   parser = argparse.ArgumentParser(prog='myprogram')
   parser.add_argument("--nx", type=int, default=2, help="dimension of problem")
+  parser.add_argument("--bnbtol", type=float, default=0.01, help="tolerance for bnb optimizer")
+  parser.add_argument("--bnbmaxiter", type=int, default=1000, help="maximum number of bnb iterations") 
+  parser.add_argument("--bnbmaxtime", type=float, default=180., help="maximum time for bnb opt") 
   args = parser.parse_args()
-  nx = args.nx
+  nx = args.nx # dimension of the problem
+  bnbtol = args.bnbtol # tolerance for bnb optimizer
+  bnbmaxiter = args.bnbmaxiter
+  bnbmaxtime = args.bnbmaxtime
 
   acquisition_type = 'LCB'  
   ### parameters
@@ -85,22 +90,21 @@ if __name__ == "__main__":
   else:
     acqf = EIacquisition(gp_model)
   
-  #evaluator = MPIEvaluator(function_mode=False)
   
   solver_options = {
       'epsilon_diam' : 1.e-14,
-      'epsilon_gap' : 1.e-2,    
-      'max_iter': 100,
-      'nodes_per_batch' : 5#,
-      #'evaluator': evaluator
+      'epsilon_gap' : bnbtol,    
+      'max_iter': bnbmaxiter,
+      'max_bnbtime': bnbmaxtime,
+      'nodes_per_batch' : 32
   }
   bnb = BnBAlgorithm(acqf, options=solver_options)
   bnb.initialize()
   xstar = np.atleast_2d(bnb.optimize())
-  print(xstar)
-  print(xstar.shape)
   ystar = acqf.evaluate(xstar)
-  print(ystar)
+  num_branches = bnb.num_branches
+  print("number of branches in bnb algorithm = ", num_branches)
+
   
   #queue = bnb.queue
   ##print(queue)  
@@ -119,19 +123,20 @@ if __name__ == "__main__":
   ##print("{0:d} unique clustering groups".format(len(labels)))
   #Xqueue = Xqueue.flatten()
   #Yqueue = Yqueue.flatten()
-  l = problem.xlimits[:, 0].astype(float)
-  u = problem.xlimits[:, 1].astype(float)
-  n_plot_pts = 1000
-  X = np.atleast_2d(np.linspace(l[0], u[0], n_plot_pts)).transpose()
-  Yacqf = [acqf.evaluate(x)[0] for x in X]
-  
-  plt.plot(X, Yacqf, 'k--', label=r'' + acquisition_type + '$(x)$')
-  plt.plot(xstar, ystar, "r*", markersize=14, label=r'bnb minimizer')
-  #for label in labels:
-  #  args = np.argwhere(label == clustering.labels_)
-  #  plt.plot(Xqueue[args], Yqueue[args], "*", markersize=12)
-  plt.legend()
-  plt.show()
+  if False and nx == 1:
+    l = problem.xlimits[:, 0].astype(float)
+    u = problem.xlimits[:, 1].astype(float)
+    n_plot_pts = 1000
+    X = np.atleast_2d(np.linspace(l[0], u[0], n_plot_pts)).transpose()
+    Yacqf = [acqf.evaluate(x)[0] for x in X]
+    
+    plt.plot(X, Yacqf, 'k--', label=r'' + acquisition_type + '$(x)$')
+    plt.plot(xstar, ystar, "r*", markersize=14, label=r'bnb minimizer')
+    #for label in labels:
+    #  args = np.argwhere(label == clustering.labels_)
+    #  plt.plot(Xqueue[args], Yqueue[args], "*", markersize=12)
+    plt.legend()
+    plt.show()
   ##exit()
 
   
