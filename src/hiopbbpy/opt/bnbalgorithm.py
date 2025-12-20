@@ -358,24 +358,9 @@ class BnBAlgorithm(BnBAlgorithmBase):
         x_points[i, j] = l[j] + ((u[j] - l[j])/2.) * np.floor(i / (3**j)).astype(int) % 3
     acqf_eval = self.acqf.evaluate(x_points)
     acqf_U = min(acqf_eval.flatten())
+    if acqf_U < acqf_bounds[0]:
+      print("ERROR in bound computations U < L")
     
-    #acqf_callback = {'obj' : self.acqf.scalar_evaluate}
-    #if self.acqf.has_gradient:
-    #  acqf_callback['grad'] = self.acqf.scalar_eval_g
-    #minimizer_method = "SLSQP"
-    #minimizer_options = {"maxiter" : 100}
-    #minimizer_constraints = ()
-    #acqf_minimizer = minimizer_wrapper(acqf_callback, minimizer_method, self.gpsurrogate.xlimits, minimizer_constraints, minimizer_options)
-    #x0_pts = np.array([[uniform(b[0], b[1]) for b in self.gpsurrogate.xlimits] for _ in range(1)])
-
-    #opt_evaluator = Evaluator()    
-    #opt_output = opt_evaluator.run(acqf_minimizer.minimizer_callback, x0_pts)[0]
-    #assert opt_output[2], f"local optimizer failed"
-
-
-    #return acqf_bounds[0], opt_output[1]#acqf_U
-
-
     return acqf_bounds[0], acqf_U
   def _prune_queue(self, queue, lub, eps):
     """Keep only nodes whose lower-bound is not greater or equal least upper-bound + eps; then re-heapify."""
@@ -452,69 +437,155 @@ class BnBAlgorithm(BnBAlgorithmBase):
     max_bbs_node_size = 0
     max_bfs_node_size = 0
     start_time = time.time()
-    while self.num_branches < self.max_bnbiter:  
-      # collect nodes to be branched on in list structure
-      bbsnodes = []
-      num_submitted_nodes = 0
-
-      # if the number of submitted jobs is too large then wait for some jobs to be processed
-      if self.bbsevaluator.num_submitted_tasks() + self.bfsevaluator.num_submitted_tasks() > 10 * (self.num_bbs_workers + self.num_bfs_workers):
-        if time.time() - start_time > self.max_bnbtime:
-          print("maximum time has elapsed")
-          break
-        else:
-          print("num submitted bbs tasks = ", self.bbsevaluator.num_submitted_tasks())
-          print("num submitted bfs tasks = ", self.bfsevaluator.num_submitted_tasks())
-          time.sleep(1.0) # give time for Evaluators to process jobs
-          continue
-
-      # only submit additional tasks if there aren't too many in the Evaluators queue
-      if self.bbsevaluator.num_submitted_tasks() < 10 * self.num_bbs_workers:
-        for i in range(self.nodes_per_batch):
-          if (not self.queue):
-            break # no more nodes available to send to evaluator for branching/bound computations
-          _, _, node = heapq.heappop(self.queue)
-          bbsnodes.append(node)
-          num_submitted_nodes += 1
-
-        # parallel branching and upper/lower bound node compuatations
-        brancher = branching_wrapper(self.acqf, LUB = self.LUB, epsilon_prune=self.epsilon_prune)
-        bbsnodes = np.array(bbsnodes)
-        self.bbsevaluator.submit_tasks(brancher.callback, bbsnodes)
+    while self.num_branches < self.max_bnbiter: # iteration limit
+      if time.time() - start_time > self.max_bnbtime: # time limit
+        print("maximum time has elapsed")
+        break
       
-      bfsnodes  = []
-      # only submit additional tasks if there aren't too many in the Evaluators queue
-      if self.bfsevaluator.num_submitted_tasks() < 10 * self.num_bfs_workers:
-        for i in range(self.nodes_per_batch):
-          if len(all_bfsnodes) == 0: 
-            break # no more nodes available to send to evaluator for branching/bound computations
-          node = all_bfsnodes.pop(0)
-          bfsnodes.append(node)
-        bfsnodes = np.array(bfsnodes)
-        self.bfsevaluator.submit_tasks(brancher.callback, bfsnodes)
-
+      # -- retrieve submitted tasks -- 
       # asynchronously retrieve results from Evaluator that have been processed
+      self.bbsevaluator.sync()
       bbschildren = self.bbsevaluator.retrieve_results()
 
       # not all children are return, hence children is a ragged array
       # need to flatten this ragged list
       bbschildren = [item for sublist in bbschildren for item in sublist]
 
+      self.bfsevaluator.sync()
       bfschildren = self.bfsevaluator.retrieve_results()
       bfschildren = [item for sublist in bfschildren for item in sublist]
 
-      children = bbschildren + bfschildren # join child lists 
-      self.num_branches += len(children)
+      children = bbschildren + bfschildren # join child lists
+
       if len(children) == 0:
+        if len(self.queue) == 0 and len(all_bfsnodes) == 0:
+          print("no children retrieved and no nodes in bfs/bbs node lists")
+          exit()
+      if len(children) > 0:
+        self.num_branches += len(children)
+        print(f"{len(children)} children evaluated")
+        print(f"elapsed time: {time.time() - start_time}")
+        # update best_node via children
+        updated_best_node = False
+        for child in children:
+          if child.aq_U < child.aq_L:
+            print("ERROR: child upper bound < child lower bound")
+            exit()
+          if child.aq_U <= self.LUB:
+            self.best_node = child
+            self.LUB = self.best_node.aq_U
+            updated_best_node = True
+        children_lower_bounds = [child.aq_L for child in children]
+        args = np.argwhere(np.array(children_lower_bounds) < self.LUB + self.epsilon_prune).flatten()
+        print(f"{len(args)} children to be appended to bbs/bfs lists")
+        children = [children[arg] for arg in args]
+
+        # now move pruned children to data structs for (potential) future evaluation
+        children_lower_bounds = [child.aq_L for child in children]
+        # sort the children in order of increasing acqf lower-bounds
+        args = np.argsort(children_lower_bounds)
+        children = [children[arg] for arg in args]
+        for child in children:
+          if len(self.queue) < self.max_queue_size:
+            heapq.heappush(self.queue, (child.aq_L, next(self._ctr), child))
+          else:
+            all_bfsnodes.append(child)
+        max_bbs_node_size = max(max_bbs_node_size, len(self.queue))
+        max_bfs_node_size = max(max_bfs_node_size, len(all_bfsnodes))
+        
+        # reprune
+        print(f"|bbs nodes| = {len(self.queue)}, |bfs nodes| = {len(all_bfsnodes)} (prior to pruning)")
+        self.queue = self._prune_queue(self.queue, self.LUB, self.epsilon_prune)
+        all_bfsnodes = self._prune_node_list(all_bfsnodes, self.LUB, self.epsilon_prune)
+        print(f"|bbs nodes| = {len(self.queue)}, |bfs nodes| = {len(all_bfsnodes)} (after pruning)")
+        if updated_best_node:
+          print("best node not yet submitted to evaluator")
+        #if self.best_node not in all_bfsnodes and self.best_node not in 
+             
+
+        # BnB opt progress report 
+        gap = self.best_node.aq_U - self.best_node.aq_L
+        print(f"\n--- Total number branches  {self.num_branches} ---")
+        print(f"Best node bounds: l={self.best_node.l}, u={self.best_node.u}")
+        print(f"Node acquisition bounds: L={self.best_node.aq_L}, U={self.best_node.aq_U}")
+        print(f"Current best feasible value (LUB): {self.LUB}")
+        print(f"gap = {gap}")
+        print(f"size of bbs queue = {len(self.queue)}")
+        print(f"size of bfs node list = {len(all_bfsnodes)}")
+        print(f"number of submitted jobs (bbs): {self.bbsevaluator.num_submitted_tasks()}")
+        print(f"number of submitted jobs (bfs): {self.bfsevaluator.num_submitted_tasks()}")
+        print(f"--- ---\n")
+
+
+        if updated_best_node:
+          if gap  < self.epsilon_gap:
+            print(f"STOP: optimality gap = {gap} < {self.epsilon_gap}")
+            break
+      
+        
+      # -- submit new tasks --
+
+      # collect nodes to be branched on in list structure
+      bbsnodes = []
+
+      # if the number of submitted jobs is too large then wait for some jobs to be processed
+      if self.bbsevaluator.num_submitted_tasks() + self.bfsevaluator.num_submitted_tasks() > 10 * (self.num_bbs_workers + self.num_bfs_workers):
+        print("num submitted bbs tasks = ", self.bbsevaluator.num_submitted_tasks())
+        print("num submitted bfs tasks = ", self.bfsevaluator.num_submitted_tasks())
+        time.sleep(1.e-6) # give time for Evaluators to process jobs
         continue
 
+      # only submit additional tasks if there aren't too many in the Evaluators queue
+      if True:#self.bbsevaluator.num_submitted_tasks() < 10 * self.num_bbs_workers:
+        for i in range(self.nodes_per_batch):
+          if (not self.queue):
+            break # no more nodes available to send to evaluator for branching/bound computations
+          _, _, node = heapq.heappop(self.queue)
+          bbsnodes.append(node)
+
+        # parallel branching and upper/lower bound node compuatations
+        brancher = branching_wrapper(self.acqf, LUB = self.LUB, epsilon_prune=self.epsilon_prune)
+        bbsnodes = np.array(bbsnodes)
+        if len(bbsnodes) > 0:
+          self.bbsevaluator.submit_tasks(brancher.callback, bbsnodes)
+      bfsnodes  = []
+      # only submit additional tasks if there aren't too many in the Evaluators queue
+      if True:#self.bfsevaluator.num_submitted_tasks() < 10 * self.num_bfs_workers:
+        for i in range(self.nodes_per_batch):
+          if len(all_bfsnodes) == 0: 
+            break # no more nodes available to send to evaluator for branching/bound computations
+          node = all_bfsnodes.pop(0)
+          bfsnodes.append(node)
+        bfsnodes = np.array(bfsnodes)
+        if len(bfsnodes) > 0:
+          self.bfsevaluator.submit_tasks(brancher.callback, bfsnodes)
+
+
+    # retrieve all running jobs
+    self.bbsevaluator.sync()
+    bbschildren = self.bbsevaluator.retrieve_results()
+
+    # not all children are return, hence children is a ragged array
+    # need to flatten this ragged list
+    bbschildren = [item for sublist in bbschildren for item in sublist]
+
+    self.bfsevaluator.sync()
+    bfschildren = self.bfsevaluator.retrieve_results()
+    bfschildren = [item for sublist in bfschildren for item in sublist]
+
+    children = bbschildren + bfschildren # join child lists
+
+    if len(children) > 0:
+      self.num_branches += len(children)
+      print(f"{len(children)} children evaluated")
+      print(f"elapsed time: {time.time() - start_time}")
       # update best_node via children
       updated_best_node = False
       for child in children:
         if child.aq_U <= self.LUB:
           self.best_node = child
           self.LUB = self.best_node.aq_U
-          updated_best_node=True
+          updated_best_node = True
       children_lower_bounds = [child.aq_L for child in children]
       args = np.argwhere(np.array(children_lower_bounds) < self.LUB + self.epsilon_prune).flatten()
       children = [children[arg] for arg in args]
@@ -535,24 +606,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
 
       # BnB opt progress report 
       gap = self.best_node.aq_U - self.best_node.aq_L
-      print(f"\n--- Total number branches  {self.num_branches} ---")
-      print(f"Best node bounds: l={self.best_node.l}, u={self.best_node.u}")
-      print(f"Node acquisition bounds: L={self.best_node.aq_L}, U={self.best_node.aq_U}")
-      print(f"Current best feasible value (LUB): {self.LUB}")
-      print(f"gap = {gap}")
-      print(f"size of bbs queue = {len(self.queue)}")
-      print(f"size of bfs node list = {len(all_bfsnodes)}")
-      print(f"number of submitted jobs (bbs): {self.bbsevaluator.num_submitted_tasks()}")
-      print(f"number of submitted jobs (bfs): {self.bfsevaluator.num_submitted_tasks()}")
 
-      # reprune
-      self.queue = self._prune_queue(self.queue, self.LUB, self.epsilon_prune)
-      all_bfsnodes = self._prune_node_list(all_bfsnodes, self.LUB, self.epsilon_prune)
-
-      if updated_best_node:
-        if gap  < self.epsilon_gap:
-          print(f"STOP: optimality gap = {gap} < {self.epsilon_gap}")
-          break
 
     print("\n=== Optimization Finished ===")
     print(f"Total number of branches: {self.num_branches}")
@@ -770,7 +824,8 @@ class branching_wrapper:
         x_points[i, j] = l[j] + ((u[j] - l[j])/2.) * np.floor(i / (3**j)).astype(int) % 3
     acqf_eval = self.acqf.evaluate(x_points)
     acqf_U = min(acqf_eval.flatten())
-
+    if acqf_bounds[0] > acqf_U:
+      print("ERROR in bound computations U < L")
 
     #x_midpoint = np.atleast_2d(( l + u) / 2.)
     #acqf_U = self.acqf.evaluate(x_midpoint).flatten()[0]
@@ -795,13 +850,6 @@ class branching_wrapper:
     for node in nodes.flatten():
       for child_l, child_u in branch(node.l, node.u):
         acqf_L, acqf_U = self.compute_acqf_bounds(child_l, child_u)
-        # Child-level pre-prune
-        #TODO: revisit this!
-        # currently will be easier to track how many function
-        # evaluations are in the queue for the MPIEvaluator
-        # by removing this pre-pruning stage
-        #if acqf_L >= self.LUB + self.epsilon_prune:
-        #  continue
         child = BnBNode(child_l, child_u, acqf_L, acqf_U)
         output.append(child)
     return [output]
