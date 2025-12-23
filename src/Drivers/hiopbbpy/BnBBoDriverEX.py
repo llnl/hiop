@@ -92,7 +92,7 @@ if __name__ == "__main__":
   
   
   solver_options = {
-      'epsilon_diam' : 1.e-14,
+      'epsilon_prune' : 1.e-12,
       'epsilon_gap' : bnbtol,    
       'max_iter': bnbmaxiter,
       'max_bnbtime': bnbmaxtime,
@@ -123,7 +123,7 @@ if __name__ == "__main__":
   ##print("{0:d} unique clustering groups".format(len(labels)))
   #Xqueue = Xqueue.flatten()
   #Yqueue = Yqueue.flatten()
-  if False and nx == 1:
+  if nx == 1:
     l = problem.xlimits[:, 0].astype(float)
     u = problem.xlimits[:, 1].astype(float)
     n_plot_pts = 1000
