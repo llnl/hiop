@@ -555,14 +555,11 @@ class BnBAlgorithm(BnBAlgorithmBase):
 
 
       # if the number of submitted jobs is too large then wait for some jobs to be processed
-      if self.bbsevaluator.num_submitted_tasks() + self.bfsevaluator.num_submitted_tasks() > 10 * (self.num_bbs_workers + self.num_bfs_workers):
-
-      
-      
+      #if self.bbsevaluator.num_submitted_tasks() + self.bfsevaluator.num_submitted_tasks() > 10 * (self.num_bbs_workers + self.num_bfs_workers):
       # collect nodes to be branched on in list structure
-      bbsnodes = []
       # only submit additional tasks if there aren't too many in the Evaluators queue
       if self.bbsevaluator.num_submitted_tasks() < 10 * self.num_bbs_workers:
+        bbsnodes = []
         for i in range(self.nodes_per_batch):
           if (not self.queue):
             break # no more nodes available to send to evaluator for branching/bound computations
@@ -575,12 +572,10 @@ class BnBAlgorithm(BnBAlgorithmBase):
         if len(bbsnodes) > 0:
           self.bbsevaluator.submit_tasks(brancher.callback, bbsnodes)
       
-      bfsnodes  = []
       # only submit additional tasks if there aren't too many in the Evaluators queue
       if self.bfsevaluator.num_submitted_tasks() < 10 * self.num_bfs_workers:
-        #n = len(all_bfsnodes)
+        bfsnodes  = []
         for i in range(self.nodes_per_batch):
-        #for i in range(n):
           if len(all_bfsnodes) == 0: 
             break # no more nodes available to send to evaluator for branching/bound computations
           node = all_bfsnodes.pop(0)
