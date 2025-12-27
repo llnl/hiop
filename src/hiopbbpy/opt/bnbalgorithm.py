@@ -349,38 +349,44 @@ class BnBAlgorithm(BnBAlgorithmBase):
     var = np.array([var_U, var_L])
     acqf_bounds = self.acqf.evaluate_meansig2(mu, var)
     
-    #x_midpoint = np.atleast_2d(( l + u) / 2.)
-    #acqf_U = self.acqf.evaluate(x_midpoint).flatten()[0]
-    #n_points = 3 ** self.gpsurrogate.ndim
+    opt_solver = "SLSQP"
+    opt_solver_options = {'maxiter' : 200}
+    constraints = []
+    box_bounds = [[l[i], u[i]] for i in range(len(l))]
+    acqf_callback = {'obj' : self.acqf.scalar_evaluate}
+    if self.acqf.has_gradient:
+      acqf_callback['grad'] = self.acqf.scalar_eval_g
+    
+    opt_evaluator = Evaluator()
+    acqf_minimizer = minimizer_wrapper(acqf_callback, opt_solver, box_bounds, constraints, opt_solver_options)
+
+    x0 = [[(l[i] + u[i]) / 2. for i in range(len(u))]]
+    opt_sol = opt_evaluator.run(acqf_minimizer.minimizer_callback, x0)[0]
+    assert (np.all(opt_sol[0] >= l) and np.all(opt_sol[0] <= u)), f"acqf minimizer not within bounds"
+    acqf_U = opt_sol[1]
+
+    #opt_evaluator.run(acqf_callback.
+
+    #n_points = 1
     #x_points = np.zeros((n_points, self.gpsurrogate.ndim))
     #for i in range(n_points):
     #  for j in range(self.gpsurrogate.ndim):
-    #    x_points[i, j] = l[j] + (u[j] - l[j]) * (np.floor(i / (3**j)).astype(int) % 3).astype(float) / 2.
-    #n_points = self.gpsurrogate.ndim
-    #x_points = np.zeros((n_points, self.gpsurrogate.ndim))
-    #for i in range(n_points):
-    #  for j in range(self.gpsurrogate.ndim):
-    #    x_points[i, j] = l[j] + (u[j] - l[j]) * float((i + j) % self.gpsurrogate.ndim) / float(self.gpsurrogate.ndim)
-    n_points = 1
-    x_points = np.zeros((n_points, self.gpsurrogate.ndim))
-    for i in range(n_points):
-      for j in range(self.gpsurrogate.ndim):
-        x_points[i, j] = (l[j] + u[j]) / 2.
-    acqf_eval = self.acqf.evaluate(x_points)
-    acqf_U = min(acqf_eval.flatten())
-    if acqf_U < acqf_bounds[0]:
-      print("ERROR in bound computations U < L")
-      print(f"Acquisition function evaluations for node defined by bounds: {l} {u}")
-      for i in range(n_points):
-        print(f"acqf({x_points[i,:]}) = {acqf_eval[i]}")
-      if np.any(acqf_eval >= acqf_bounds[0]):
-        print("one point evaluation >= L")
-        #feasible_idxs = np.argwhere(acqf_eval >= acqf_bounds[0])
-        #acqf_eval = acqf_eval[feasible_idxs]
-        #acqf_eval.sort()
-        #acqf_U = min(acqf_eval)
-      else:
-        print("all point evaluations < L")
+    #    x_points[i, j] = (l[j] + u[j]) / 2.
+    #acqf_eval = self.acqf.evaluate(x_points)
+    #acqf_U = min(acqf_eval.flatten())
+    #if acqf_U < acqf_bounds[0]:
+    #  print("ERROR in bound computations U < L")
+    #  print(f"Acquisition function evaluations for node defined by bounds: {l} {u}")
+    #  for i in range(n_points):
+    #    print(f"acqf({x_points[i,:]}) = {acqf_eval[i]}")
+    #  if np.any(acqf_eval >= acqf_bounds[0]):
+    #    print("one point evaluation >= L")
+    #    #feasible_idxs = np.argwhere(acqf_eval >= acqf_bounds[0])
+    #    #acqf_eval = acqf_eval[feasible_idxs]
+    #    #acqf_eval.sort()
+    #    #acqf_U = min(acqf_eval)
+    #  else:
+    #    print("all point evaluations < L")
     
     return acqf_bounds[0], acqf_U
   def _prune_queue(self, queue, lub, eps):
@@ -795,6 +801,22 @@ class branching_wrapper:
     mu  = np.array([mu_L, mu_U])
     var = np.array([var_U, var_L])
     acqf_bounds = self.acqf.evaluate_meansig2(mu, var)
+    
+    opt_solver = "SLSQP"
+    opt_solver_options = {'maxiter' : 200}
+    constraints = []
+    box_bounds = [[l[i], u[i]] for i in range(len(l))]
+    acqf_callback = {'obj' : self.acqf.scalar_evaluate}
+    if self.acqf.has_gradient:
+      acqf_callback['grad'] = self.acqf.scalar_eval_g
+    
+    opt_evaluator = Evaluator()
+    acqf_minimizer = minimizer_wrapper(acqf_callback, opt_solver, box_bounds, constraints, opt_solver_options)
+
+    x0 = [[(l[i] + u[i]) / 2. for i in range(len(u))]]
+    opt_sol = opt_evaluator.run(acqf_minimizer.minimizer_callback, x0)[0]
+    assert (np.all(opt_sol[0] >= l) and np.all(opt_sol[0] <= u)), f"acqf minimizer not within bounds"
+    acqf_U = opt_sol[1]
     #n_points = 3 ** self.gpsurrogate.ndim
     #x_points = np.zeros((n_points, self.gpsurrogate.ndim))
     #for i in range(n_points):
@@ -809,22 +831,22 @@ class branching_wrapper:
     #for i in range(n_points):
     #  for j in range(self.gpsurrogate.ndim):
     #    x_points[i, j] = l[j] + (u[j] - l[j]) * float((i + j) % self.gpsurrogate.ndim) / float(self.gpsurrogate.ndim)
-    n_points = 1
-    x_points = np.zeros((n_points, self.gpsurrogate.ndim))
-    for i in range(n_points):
-      for j in range(self.gpsurrogate.ndim):
-        x_points[i, j] = (l[j] + u[j]) / 2.
-    acqf_eval = self.acqf.evaluate(x_points)
-    acqf_U = min(acqf_eval.flatten())
-    if acqf_bounds[0] > acqf_U:
-      print("ERROR in bound computations U < L")
-      print(f"Acquisition function evaluations for node defined by bounds: {l} {u}")
-      for i in range(n_points):
-        print(f"acqf({x_points[i,:]}) = {acqf_eval[i]}")
-      if np.any(acqf_eval >= acqf_bounds[0]):
-        print("one point evaluation >= L")
-      else:
-        print("all point evaluations < L")
+    #n_points = 1
+    #x_points = np.zeros((n_points, self.gpsurrogate.ndim))
+    #for i in range(n_points):
+    #  for j in range(self.gpsurrogate.ndim):
+    #    x_points[i, j] = (l[j] + u[j]) / 2.
+    #acqf_eval = self.acqf.evaluate(x_points)
+    #acqf_U = min(acqf_eval.flatten())
+    #if acqf_bounds[0] > acqf_U:
+    #  print("ERROR in bound computations U < L")
+    #  print(f"Acquisition function evaluations for node defined by bounds: {l} {u}")
+    #  for i in range(n_points):
+    #    print(f"acqf({x_points[i,:]}) = {acqf_eval[i]}")
+    #  if np.any(acqf_eval >= acqf_bounds[0]):
+    #    print("one point evaluation >= L")
+    #  else:
+    #    print("all point evaluations < L")
 
     #x_midpoint = np.atleast_2d(( l + u) / 2.)
     #acqf_U = self.acqf.evaluate(x_midpoint).flatten()[0]
