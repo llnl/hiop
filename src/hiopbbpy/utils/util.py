@@ -120,16 +120,18 @@ class Logger:
 
     # Create a logger instance with a given name        
     self._logger = logging.getLogger(name)
+    self._logger.propagate = False  # prevent double logging
 
     # Create a console output handler
-    ch = logging.StreamHandler()
+    if not self._logger.handlers:     
+      ch = logging.StreamHandler()
 
-    # Define the output format: logger name, and message
-    formatter = logging.Formatter('%(name)s %(message)s')
+      # Define the output format: logger name, and message
+      formatter = logging.Formatter('%(name)s %(message)s')
 
-    # Add the handle
-    ch.setFormatter(formatter)
-    self._logger.addHandler(ch)
+      # Add the handle
+      ch.setFormatter(formatter)
+      self._logger.addHandler(ch)
 
   def setlevel(self, level_str):
     level = getattr(logging, str(level_str).upper(), logging.INFO)

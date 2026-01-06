@@ -351,8 +351,17 @@ class minimizer_wrapper:
         xopt = y.x
         yopt = y.fun
       elif self.method == "trust-constr":
-        nonlinear_constraint = NonlinearConstraint(self.constraints['cons'], self.constraints['cl'], self.constraints['cu'], jac=self.constraints['jac'])
-        y = minimize(self.fun['obj'], x0, method=self.method, bounds=self.bounds, constraints=[nonlinear_constraint], options=self.solver_options)
+        constraints = []
+        if self.constraints:  # non-empty dict → constrained problem
+          nonlinear_constraint = NonlinearConstraint(
+              self.constraints['cons'],
+              self.constraints['cl'],
+              self.constraints['cu'],
+              jac=self.constraints.get('jac', None)
+          )
+          constraints.append(nonlinear_constraint)
+
+        y = minimize(self.fun['obj'], x0, method=self.method, bounds=self.bounds, constraints=constraints, options=self.solver_options)
         success = y.success
         if not success:
           msg = y.message
