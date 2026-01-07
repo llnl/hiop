@@ -271,7 +271,7 @@ class BnBAlgorithmBase:
 
 
 class BnBAlgorithm(BnBAlgorithmBase):
-  def __init__(self, acqf, options = {}):
+  def __init__(self, acqf, options = {}, sync_mode=False):
     self.acqf = acqf
     self.gpsurrogate = acqf.gpsurrogate
     super().__init__(x = self.gpsurrogate.training_x, y = self.gpsurrogate.training_y)
@@ -295,13 +295,15 @@ class BnBAlgorithm(BnBAlgorithmBase):
     self.max_bnbtime = options.get('max_bnbtime', self.max_bnbtime)
     self.nodes_per_batch = options.get('nodes_per_batch', self.nodes_per_batch)
 
+    self.sync_mode = sync_mode # synchronous or asynchronous
+
     if is_running_with_mpi():
       num_available_workers = MPI.COMM_WORLD.Get_size() - 1
       if num_available_workers > 1:
         # roughly evenly split workers for use in bbs and bfs evaluators
         #num_bbs_workers = num_available_workers
         #num_bfs_workers = 1
-        num_bbs_workers = np.ceil(num_available_workers / 2).astype(int)
+        num_bbs_workers = np.ceil(num_available_workers * 3 / 4).astype(int)
         num_bfs_workers = max(1, num_available_workers - num_bbs_workers)
       else:
         # num_available_workers == 1 or num_available_workers == 0
@@ -349,31 +351,30 @@ class BnBAlgorithm(BnBAlgorithmBase):
     var = np.array([var_U, var_L])
     acqf_bounds = self.acqf.evaluate_meansig2(mu, var)
     
-    opt_solver = "SLSQP"
-    opt_solver_options = {'maxiter' : 200}
-    constraints = []
-    box_bounds = [[l[i], u[i]] for i in range(len(l))]
-    acqf_callback = {'obj' : self.acqf.scalar_evaluate}
-    if self.acqf.has_gradient:
-      acqf_callback['grad'] = self.acqf.scalar_eval_g
-    
-    opt_evaluator = Evaluator()
-    acqf_minimizer = minimizer_wrapper(acqf_callback, opt_solver, box_bounds, constraints, opt_solver_options)
+    #opt_solver = "SLSQP"
+    #opt_solver_options = {'maxiter' : 200}
+    #constraints = []
+    #box_bounds = [[l[i], u[i]] for i in range(len(l))]
+    #acqf_callback = {'obj' : self.acqf.scalar_evaluate}
+    #if self.acqf.has_gradient:
+    #  acqf_callback['grad'] = self.acqf.scalar_eval_g
+    #
+    #opt_evaluator = Evaluator()
+    #acqf_minimizer = minimizer_wrapper(acqf_callback, opt_solver, box_bounds, constraints, opt_solver_options)
 
-    x0 = [[(l[i] + u[i]) / 2. for i in range(len(u))]]
-    opt_sol = opt_evaluator.run(acqf_minimizer.minimizer_callback, x0)[0]
-    assert (np.all(opt_sol[0] >= l) and np.all(opt_sol[0] <= u)), f"acqf minimizer not within bounds"
-    acqf_U = opt_sol[1]
+    #x0 = [[(l[i] + u[i]) / 2. for i in range(len(u))]]
+    #opt_sol = opt_evaluator.run(acqf_minimizer.minimizer_callback, x0)[0]
+    #assert (np.all(opt_sol[0] >= l) and np.all(opt_sol[0] <= u)), f"acqf minimizer not within bounds"
+    #acqf_U = opt_sol[1]
 
-    #opt_evaluator.run(acqf_callback.
 
-    #n_points = 1
-    #x_points = np.zeros((n_points, self.gpsurrogate.ndim))
-    #for i in range(n_points):
-    #  for j in range(self.gpsurrogate.ndim):
-    #    x_points[i, j] = (l[j] + u[j]) / 2.
-    #acqf_eval = self.acqf.evaluate(x_points)
-    #acqf_U = min(acqf_eval.flatten())
+    n_points = 1
+    x_points = np.zeros((n_points, self.gpsurrogate.ndim))
+    for i in range(n_points):
+      for j in range(self.gpsurrogate.ndim):
+        x_points[i, j] = (l[j] + u[j]) / 2.
+    acqf_eval = self.acqf.evaluate(x_points)
+    acqf_U = min(acqf_eval.flatten())
     #if acqf_U < acqf_bounds[0]:
     #  print("ERROR in bound computations U < L")
     #  print(f"Acquisition function evaluations for node defined by bounds: {l} {u}")
@@ -470,14 +471,16 @@ class BnBAlgorithm(BnBAlgorithmBase):
       
       # -- retrieve submitted tasks -- 
       # asynchronously retrieve results from Evaluator that have been processed
-      #self.bbsevaluator.sync()
+      if self.sync_mode:
+        self.bbsevaluator.sync()
       bbschildren = self.bbsevaluator.retrieve_results()
 
       # not all children are return, hence children is a ragged array
       # need to flatten this ragged list
       bbschildren = [item for sublist in bbschildren for item in sublist]
 
-      #self.bfsevaluator.sync()
+      if self.sync_mode:
+        self.bfsevaluator.sync()
       bfschildren = self.bfsevaluator.retrieve_results()
       bfschildren = [item for sublist in bfschildren for item in sublist]
 
@@ -497,10 +500,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
         # update best_node via children
         updated_best_node = False
         for child in children:
-          if child.aq_U < child.aq_L:
-            print("ERROR: child upper bound < child lower bound")
-            print(f"upper - lower = {child.aq_U - child.aq_L}")
-            exit()
+          assert child.aq_U >= child.aq_L, "ERROR: child upper bound < child lower bound"
           if child.aq_U <= self.LUB:
             self.best_node = child
             self.LUB = self.best_node.aq_U
@@ -509,6 +509,9 @@ class BnBAlgorithm(BnBAlgorithmBase):
           print("best node not updated")
         else:
           print("best node updated")
+          if np.linalg.norm(self.best_node.l - self.best_node.u, np.inf) < self.epsilon_diam:
+            print("diameter of best node sufficiently small")
+            break
         
         # pre-prune
         children_lower_bounds = [child.aq_L for child in children]
@@ -522,7 +525,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
         args = np.argsort(children_lower_bounds)
         children = [children[arg] for arg in args]
         for child in children:
-          if len(self.queue) < self.max_queue_size:
+          if len(self.queue) < 100 * self.num_bbs_workers:
             heapq.heappush(self.queue, (child.aq_L, next(self._ctr), child))
           else:
             all_bfsnodes.append(child)
@@ -530,10 +533,8 @@ class BnBAlgorithm(BnBAlgorithmBase):
         max_bfs_node_size = max(max_bfs_node_size, len(all_bfsnodes))
         
         # reprune
-        #print(f"|bbs nodes| = {len(self.queue)}, |bfs nodes| = {len(all_bfsnodes)} (prior to pruning)")
         self.queue = self._prune_queue(self.queue, self.LUB, self.epsilon_prune)
         all_bfsnodes = self._prune_node_list(all_bfsnodes, self.LUB, self.epsilon_prune)
-        #print(f"|bbs nodes| = {len(self.queue)}, |bfs nodes| = {len(all_bfsnodes)} (after pruning)")
            
 
         # BnB opt progress report 
@@ -802,21 +803,21 @@ class branching_wrapper:
     var = np.array([var_U, var_L])
     acqf_bounds = self.acqf.evaluate_meansig2(mu, var)
     
-    opt_solver = "SLSQP"
-    opt_solver_options = {'maxiter' : 200}
-    constraints = []
-    box_bounds = [[l[i], u[i]] for i in range(len(l))]
-    acqf_callback = {'obj' : self.acqf.scalar_evaluate}
-    if self.acqf.has_gradient:
-      acqf_callback['grad'] = self.acqf.scalar_eval_g
-    
-    opt_evaluator = Evaluator()
-    acqf_minimizer = minimizer_wrapper(acqf_callback, opt_solver, box_bounds, constraints, opt_solver_options)
+    #opt_solver = "SLSQP"
+    #opt_solver_options = {'maxiter' : 200}
+    #constraints = []
+    #box_bounds = [[l[i], u[i]] for i in range(len(l))]
+    #acqf_callback = {'obj' : self.acqf.scalar_evaluate}
+    #if self.acqf.has_gradient:
+    #  acqf_callback['grad'] = self.acqf.scalar_eval_g
+    #
+    #opt_evaluator = Evaluator()
+    #acqf_minimizer = minimizer_wrapper(acqf_callback, opt_solver, box_bounds, constraints, opt_solver_options)
 
-    x0 = [[(l[i] + u[i]) / 2. for i in range(len(u))]]
-    opt_sol = opt_evaluator.run(acqf_minimizer.minimizer_callback, x0)[0]
-    assert (np.all(opt_sol[0] >= l) and np.all(opt_sol[0] <= u)), f"acqf minimizer not within bounds"
-    acqf_U = opt_sol[1]
+    #x0 = [[(l[i] + u[i]) / 2. for i in range(len(u))]]
+    #opt_sol = opt_evaluator.run(acqf_minimizer.minimizer_callback, x0)[0]
+    #assert (np.all(opt_sol[0] >= l) and np.all(opt_sol[0] <= u)), f"acqf minimizer not within bounds"
+    #acqf_U = opt_sol[1]
     #n_points = 3 ** self.gpsurrogate.ndim
     #x_points = np.zeros((n_points, self.gpsurrogate.ndim))
     #for i in range(n_points):
@@ -831,13 +832,13 @@ class branching_wrapper:
     #for i in range(n_points):
     #  for j in range(self.gpsurrogate.ndim):
     #    x_points[i, j] = l[j] + (u[j] - l[j]) * float((i + j) % self.gpsurrogate.ndim) / float(self.gpsurrogate.ndim)
-    #n_points = 1
-    #x_points = np.zeros((n_points, self.gpsurrogate.ndim))
-    #for i in range(n_points):
-    #  for j in range(self.gpsurrogate.ndim):
-    #    x_points[i, j] = (l[j] + u[j]) / 2.
-    #acqf_eval = self.acqf.evaluate(x_points)
-    #acqf_U = min(acqf_eval.flatten())
+    n_points = 1
+    x_points = np.zeros((n_points, self.gpsurrogate.ndim))
+    for i in range(n_points):
+      for j in range(self.gpsurrogate.ndim):
+        x_points[i, j] = (l[j] + u[j]) / 2.
+    acqf_eval = self.acqf.evaluate(x_points)
+    acqf_U = min(acqf_eval.flatten())
     #if acqf_bounds[0] > acqf_U:
     #  print("ERROR in bound computations U < L")
     #  print(f"Acquisition function evaluations for node defined by bounds: {l} {u}")
