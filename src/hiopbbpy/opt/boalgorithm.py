@@ -64,7 +64,7 @@ class BOAlgorithmBase:
   # Method to return the optimal objective
   def getOptimalObjective(self):
     y_opt = np.array(self.y_opt, copy=True)
-    return y_opt
+    return y_opt[0]
 
 # A subclass of BOAlgorithmBase implementing a full Bayesian Optimization workflow
 class BOAlgorithm(BOAlgorithmBase):
