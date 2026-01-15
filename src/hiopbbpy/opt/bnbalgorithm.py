@@ -3,6 +3,7 @@ from numpy.random import uniform
 import cvxpy as cp
 import heapq
 from scipy import linalg
+from scipy.stats import qmc
 from .acquisition import EIacquisition, LCBacquisition
 from ..utils.util import Evaluator, MPIEvaluator
 from ..utils.new_eval_manager import is_running_with_mpi
@@ -15,6 +16,31 @@ except ImportError:
 
 import time
 import math
+
+
+# define the variance upper bound problem
+# these problems are in the form
+# \max_{z} 1/2 z^T A z + b^T z + c
+# s.t. kl <= C z <= ku
+# where A is negative semi-definite
+# here the evaluate function is flipped negative in order that we can use ipopt minimization
+class variance_U_problem:
+  def __init__(self, A, b, C):
+    self.A = A
+    self.b = b
+    self.c = c
+    self.C = C 
+  # objective 1/2 x^T A x + b^T x + c
+  def evaluate(self, z):
+    return -1. * (np.inner(z, 0.5 * self.A.dot(z) + self.b) + self.c)
+  def evaluate_grad(self, z):
+    return -1. * (self.A.dot(z) + self.b)
+  def constraint(self, z):
+    return self.C.dot(z)
+  def constraintJacobian(self, z):
+    return self.C[:,:]
+
+    
 
 # BnBNode
 # corners of interval [l, u]
@@ -160,6 +186,8 @@ class BnBAlgorithmBase:
     self.c_obj = 1. + np.inner(w[0], w[0])
     self.z = cp.Variable(ntrain)
     self.obj = 0.5 * cp.quad_form(self.z, self.A_obj) + self.b_obj.T @ self.z + self.c_obj
+
+    variance_bound_problem = variance_U_problem(self.A_obj, self.b_obj, self.c_obj, self.C) 
 
     
 
@@ -384,19 +412,16 @@ class BnBAlgorithm(BnBAlgorithmBase):
       assert opt_sol[2], "optimizer did not converge"
       acqf_U = self.acqf.evaluate(np.atleast_2d(opt_sol[0])).flatten()[0]
     else:
-      n_points = 3 ** self.gpsurrogate.ndim
+      s_per_dim = 3
+      n_points = s_per_dim ** self.gpsurrogate.ndim
       x_points = np.zeros((n_points, self.gpsurrogate.ndim))
       for i in range(n_points):
         for j in range(self.gpsurrogate.ndim):
-          x_points[i, j] = l[j] + (u[j] - l[j]) / 2. * float(int(i / 3**j) % 3)
-      #n_points = 3
-      #x_points = np.zeros((n_points, self.gpsurrogate.ndim))
-      ##for i in range(n_points):
-      ##  for j in range(self.gpsurrogate.ndim):
-      ##    x_points[i, j] = (l[j] + u[j]) / 2.
-      #x_points[0, :] = l[:]
-      #x_points[1, :] = (l[:] + u[:]) / 2.
-      #x_points[2, :] = u[:]
+          x_points[i, j] = l[j] + (u[j] - l[j]) / (s_per_dim - 1.) * float(int(i / s_per_dim**j) % s_per_dim)
+      #n_points = 10
+      #sampler = qmc.LatinHypercube(len(u))
+      #x_points = sampler.random(n=n_points)
+      #qmc.scale(x_points, l, u) 
       acqf_eval = self.acqf.evaluate(x_points)
       acqf_U = min(acqf_eval.flatten())
 
@@ -501,13 +526,18 @@ class BnBAlgorithm(BnBAlgorithmBase):
     initial_gap = self.best_node.aq_U - self.best_node.aq_L
     initial_vol = math.prod(self.best_node.u - self.best_node.l)
 
+    gap_history = [initial_gap]
+    prunedvol_history = [0.]
+    pruningratio_history = [1.]
+    branch_history = [1]
+
+    initial_diam = self.best_node.diam
+    smallest_diam = initial_diam
+
     max_bbs_node_size = 0
     max_bfs_node_size = 0
     start_time = time.time()
     while self.num_branches < self.max_bnbiter: # iteration limit
-      if time.time() - start_time > self.max_bnbtime: # time limit
-        print("maximum time has elapsed")
-        break
       
       # -- retrieve submitted tasks -- 
       # asynchronously retrieve results from Evaluator that have been processed
@@ -531,6 +561,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
         #  assert self.bbsevaluator.num_submitted_tasks() + self.bfsevaluator.num_submitted_tasks() > 0, "node lists empty and Evaluators have no tasks submitted"
       else:
         self.num_branches += len(children)
+        branch_history.append(self.num_branches)
         print(f"elapsed time: {time.time() - start_time}")
         print(f"evaluators returned {len(children)} children")
         # update best_node via children
@@ -541,13 +572,11 @@ class BnBAlgorithm(BnBAlgorithmBase):
             self.best_node = child
             self.LUB = self.best_node.aq_U
             updated_best_node = True
+        gap_history.append(self.best_node.aq_U - self.best_node.aq_L)
         if not updated_best_node:
           print("best node not updated")
         else:
           print("best node updated")
-          if np.linalg.norm(self.best_node.l - self.best_node.u, np.inf) < self.epsilon_diam:
-            print("diameter of best node sufficiently small")
-            break
         
         # pre-prune
         children_lower_bounds = [child.aq_L for child in children]
@@ -560,12 +589,17 @@ class BnBAlgorithm(BnBAlgorithmBase):
         # sort the children in order of increasing acqf lower-bounds
         args = np.argsort(children_lower_bounds)
         children = [children[arg] for arg in args]
+        
+        # update smallest diameter
+        child_diams = np.array([child.diam for child in children])
+        smallest_diam = min(smallest_diam, min(child_diams))
+
         # sort children into bbs and bfs lists
         for child in children:
-          if len(self.queue) < 10 * self.num_bbs_workers:
+          if True:#len(self.queue) < 10 * self.num_bbs_workers:
             heapq.heappush(self.queue, (child.aq_L, next(self._ctr), child))
           else:
-            all_bfsnodes.append(child)
+            all_bfsnodes.append(child) # TODO: prepend... according to number of workers
         max_bbs_node_size = max(max_bbs_node_size, len(self.queue))
         max_bfs_node_size = max(max_bfs_node_size, len(all_bfsnodes))
         
@@ -576,7 +610,14 @@ class BnBAlgorithm(BnBAlgorithmBase):
         for node in pruned_nodes:
           all_prunednodes.append(node)
           total_prunedvol += math.prod(node.u - node.l)
+        prunedvol_history.append(total_prunedvol)
 
+
+        if len(pruningratio_history) == 1:
+          pruningratio = 1.
+        else:
+          pruningratio = len(all_prunednodes) / (len(all_prunednodes) + len(self.queue) + len(all_bfsnodes) + self.bbsevaluator.num_submitted_tasks() + self.bfsevaluator.num_submitted_tasks())
+        pruningratio_history.append(pruningratio)
 
         # BnB opt progress report 
         gap = self.best_node.aq_U - self.best_node.aq_L
@@ -587,6 +628,8 @@ class BnBAlgorithm(BnBAlgorithmBase):
         #print(f"Current best feasible value (LUB): {self.LUB}")
         print(f"total pruned vol: {total_prunedvol}")
         print(f"domain vol: {initial_vol}")
+        print(f"pruning ratio: {pruningratio}")
+        print(f"smallest node diam: {smallest_diam}")
         print(f"size of bbs queue = {len(self.queue)}")
         print(f"size of bfs node list = {len(all_bfsnodes)}")
         print(f"number of submitted jobs (bbs): {self.bbsevaluator.num_submitted_tasks()}")
@@ -599,8 +642,14 @@ class BnBAlgorithm(BnBAlgorithmBase):
           if gap  < self.epsilon_gap:
             print(f"STOP: optimality gap = {gap} < {self.epsilon_gap}")
             break
-  
-    
+        if np.linalg.norm(self.best_node.l - self.best_node.u, np.inf) < self.epsilon_diam:
+          print("diameter of best node sufficiently small")
+          break
+      
+      
+      if time.time() - start_time > self.max_bnbtime: # time limit
+        print("maximum time has elapsed")
+        break
       # -- submit new tasks --
 
 
@@ -608,8 +657,8 @@ class BnBAlgorithm(BnBAlgorithmBase):
       #if self.bbsevaluator.num_submitted_tasks() + self.bfsevaluator.num_submitted_tasks() > 10 * (self.num_bbs_workers + self.num_bfs_workers):
       # collect nodes to be branched on in list structure
       # only submit additional tasks if there aren't too many in the Evaluators queue
-      num_bbs_tasks_to_submit = 10 * self.num_bbs_workers - self.bbsevaluator.num_submitted_tasks()
-      #num_bbs_tasks_to_submit = len(self.queue)
+      #num_bbs_tasks_to_submit = 10 * self.num_bbs_workers - self.bbsevaluator.num_submitted_tasks()
+      num_bbs_tasks_to_submit = len(self.queue)
       if num_bbs_tasks_to_submit > 0:
         bbsnodes = []
         for i in range(num_bbs_tasks_to_submit):
@@ -638,15 +687,49 @@ class BnBAlgorithm(BnBAlgorithmBase):
         if len(bfsnodes) > 0:
           self.bfsevaluator.submit_tasks(brancher.callback, bfsnodes)
 
-    # TODO: sync step and prune
-    #       get final data
 
+    self.all_nonpruned_nodes = all_bfsnodes + [n for (L, c, n) in self.queue]
+    self.all_prunednodes = all_prunednodes
+    self.prunedvol_history = prunedvol_history
+    self.pruningratio_history = pruningratio_history
+    self.gap_history = gap_history
+    self.branch_history = branch_history
+
+    ## TODO: sync step and prune
+    ##       get final data
+    ## grab any remaining tasks hanging in the evaluators
+    #self.bbsevaluator.sync()
+    #bbschildren = self.bbsevaluator.retrieve_results()
+
+    ## not all children are return, hence children is a ragged array
+    ## need to flatten this ragged list
+    #bbschildren = [item for sublist in bbschildren for item in sublist]
+
+    #self.bfsevaluator.sync()
+    #bfschildren = self.bfsevaluator.retrieve_results()
+    #bfschildren = [item for sublist in bfschildren for item in sublist]
+
+    #children = bbschildren + bfschildren # join child lists
+    # TODO: determine if any child nodes have a better LUB
+    #       prune
+    #       update pruned_vol
+    #       if ndim == 2 plot pruned node region
+    #                    color pruned node region via plot filling
+    #                    non-pruned points plotted on top
+    #       include another dimension independent measure of spread 
+    # then embed in a BO loop 
+   
+    max_nodes_for_min_diam = int(1 + 2 * ((2. / smallest_diam) ** len(self.best_node.l) - 1.))
 
     print("\n=== Optimization Finished ===")
     print(f"Total number of branches: {self.num_branches}")
     print(f"Max BBS node list size: {max_bbs_node_size}")
     print(f"Max BFS node list size: {max_bfs_node_size}")
     print(f"Best bounds: l={self.best_node.l}, u={self.best_node.u}")
+    print(f"total pruned vol: {total_prunedvol}")
+    print(f"domain vol: {initial_vol}")
+    print(f"smallest node diam: {smallest_diam}")
+    print(f"max nodes to reach smallest node diam: {max_nodes_for_min_diam}")
     print(f"Best feasible acquisition value (LUB): {self.LUB}")
     print(f"Initial gap: {initial_gap}")
     print(f"Final gap: {gap}")
@@ -872,15 +955,20 @@ class branching_wrapper:
       assert opt_sol[2], "optimizer did not converge"
       acqf_U = self.acqf.evaluate(np.atleast_2d(opt_sol[0])).flatten()[0]
     else:
-      n_points = 3 ** self.gpsurrogate.ndim
+      s_per_dim = 3
+      n_points = s_per_dim ** self.gpsurrogate.ndim
       x_points = np.zeros((n_points, self.gpsurrogate.ndim))
       for i in range(n_points):
         for j in range(self.gpsurrogate.ndim):
-          x_points[i, j] = l[j] + (u[j] - l[j]) / 2. * float(int(i / 3**j) % 3)
+          x_points[i, j] = l[j] + (u[j] - l[j]) / (s_per_dim - 1.) * float(int(i / s_per_dim**j) % s_per_dim)
           #x_points[i, j] = (l[j] + u[j]) / 2.
-      #x_points[0, :] = l[:]
-      #x_points[1, :] = (l[:] + u[:]) / 2.
-      #x_points[2, :] = u[:]
+      ##x_points[0, :] = l[:]
+      ##x_points[1, :] = (l[:] + u[:]) / 2.
+      ##x_points[2, :] = u[:]
+      #n_points = 10
+      #sampler = qmc.LatinHypercube(len(u))
+      #x_points = sampler.random(n=n_points)
+      #qmc.scale(x_points, l, u) 
       acqf_eval = self.acqf.evaluate(x_points)
       acqf_U = min(acqf_eval.flatten())
     #n_points = 3 ** self.gpsurrogate.ndim
