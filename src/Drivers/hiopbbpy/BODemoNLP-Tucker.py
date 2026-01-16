@@ -114,7 +114,7 @@ base.beta = beta
 l = problem.xlimits[:, 0].astype(float)
 u = problem.xlimits[:, 1].astype(float)
 
-nboxes = 1000
+nboxes = int(1.e6)
 box_sizes = (u - l) / float(nboxes)
 midpoints = np.zeros((nboxes,))
 kLs = np.zeros((nboxes, n_samples))
