@@ -204,10 +204,11 @@ class BOAlgorithm(BOAlgorithmBase):
       )
     else:
       # Instantiate BnB with GP surrogate and BO callback
-      bnb = BnBAlgorithm(acqf, options=self.solver_options)
+      bnb = BnBAlgorithm(acqf, options=self.solver_options, saveData=True)
      
       # Initialize BnB (perhaps use old set of boxes here)
-      bnb.initialize(queue=self.bnb_queue)
+      #bnb.initialize(queue=self.bnb_queue) do not use old box set
+      bnb.initialize()
       
       # Run BnB optimization
       best_xopt = bnb.optimize()

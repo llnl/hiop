@@ -98,7 +98,7 @@ if __name__ == "__main__":
   random.seed(42)
 
   acquisition_type = 'LCB'  
-  file_beg = ''
+  plot_acquisition = True
   ### parameters
   n_samples = 25  # number of the initial samples to train GP
   if nx == 1:
@@ -133,7 +133,7 @@ if __name__ == "__main__":
     acqf = EIacquisition(gp_model)
   
   
-  solver_options = {
+  bnb_solver_options = {
       'epsilon_prune' : 1.e-12,
       'epsilon_gap' : bnbtol, 
       'epsilon_diam' : bnbtol / 100.,
@@ -141,178 +141,47 @@ if __name__ == "__main__":
       'max_bnbtime': bnbmaxtime,
       'nodes_per_batch' : 32
   }
-  bnb = BnBAlgorithm(acqf, options=solver_options, sync_mode=True)
-  bnb.initialize()
-  xstar = np.atleast_2d(bnb.optimize())
-  ystar = acqf.evaluate(xstar)
-  num_branches = bnb.num_branches
-  print("number of branches in bnb algorithm = ", num_branches)
 
-  
-  #queue = bnb.queue
-  ##print(queue)  
-  ##print(queue[2][2].l, queue[2][2].u)
-  #Xqueue = np.atleast_2d([(queue[i][2].l + queue[i][2].u) / 2. for i in range(len(queue))])
-  #Yqueue = acqf.evaluate(Xqueue)
-  ##print(Xqueue)
-  ##from scipy.cluster.hierarchy import linkage, dendrogram
-  ##
-  ##linked = linkage(Xqueue, method='ward')
-  ##for item in dir(linked):
-  ##  print(item)
-  ##from sklearn.cluster import DBSCAN
-  ##clustering = DBSCAN(eps=0.05).fit(Xqueue)
-  ##labels = np.unique(clustering.labels_)
-  ##print("{0:d} unique clustering groups".format(len(labels)))
-  #Xqueue = Xqueue.flatten()
-  #Yqueue = Yqueue.flatten()
-  if nx == 1 and False:
-    l = problem.xlimits[:, 0].astype(float)
-    u = problem.xlimits[:, 1].astype(float)
-    n_plot_pts = 1000
-    X = np.atleast_2d(np.linspace(l[0], u[0], n_plot_pts)).transpose()
-    Yacqf = [acqf.evaluate(x)[0] for x in X]
-    
-    plt.plot(X, Yacqf, 'k--', label=r'' + acquisition_type + '$(x)$')
-    plt.plot(xstar, ystar, "r*", markersize=14, label=r'bnb minimizer')
-    #for label in labels:
-    #  args = np.argwhere(label == clustering.labels_)
-    #  plt.plot(Xqueue[args], Yqueue[args], "*", markersize=12)
-    plt.legend()
-    plt.show()
-  if nx == 2:
-    l = problem.xlimits[:, 0].astype(float)
-    u = problem.xlimits[:, 1].astype(float)
-    X1D = [np.linspace(l[i], u[i],  200) for i in range(nx)]
-    Xx, Xy = np.meshgrid(X1D[0], X1D[1])
-    Z = np.array([[acqf.evaluate(np.atleast_2d([Xx[i, j], Xy[i, j]])).flatten()[0] for j in range(Xx.shape[1])] for i in range(Xx.shape[0])])
-    plt.contourf(Xx, Xy, Z, levels=20, cmap='viridis')
-    plt.colorbar(label='Acquisition function value')
-    plt.savefig('acqf.png')
-    plt.close()
-
-    # TODO: plot acqf upper bound - acqf lower bound on sequence of grids to see convergence
-
-  plt.plot(bnb.branch_history, bnb.gap_history, label='gap')
-  if len(bnb.branch_history) == len(bnb.prunedvol_history):
-    plt.plot(bnb.branch_history, 1. - np.array(bnb.prunedvol_history), label='1. - pruned vol')
-  if len(bnb.branch_history) == len(bnb.pruningratio_history):
-    plt.plot(bnb.branch_history, bnb.pruningratio_history, label='pruning ratio')
-  plt.xlabel('number of bnb nodes explored')
-  plt.legend()
-  plt.yscale('log')
-  plt.savefig('gaphistory.png')
-  plt.close()
-
-  pruned_nodes = bnb.all_prunednodes 
-  nonpruned_nodes = bnb.all_nonpruned_nodes
-  all_nodes = pruned_nodes + nonpruned_nodes
-  if nx == 2:
-    # threshold plotting the pruned region
-    # this plotting procedure takes time
-    # when there are many pruned nodes
-    if len(pruned_nodes) < 10000:
-      for i, node in enumerate(pruned_nodes):
-        Xnode = np.linspace(node.l[0], node.u[0], num=3)
-        Ylower = node.l[1] * np.ones(len(Xnode))
-        Yupper = node.u[1] * np.ones(len(Xnode))
-        if i == 0:
-          plt.fill_between(Xnode, Ylower, Yupper, color='lightblue', alpha=0.5, label='pruned region')
-        else:
-          plt.fill_between(Xnode, Ylower, Yupper, color='lightblue', alpha=0.5)
-    nonpruned_node_midpoints = np.array([node.midpoint for node in nonpruned_nodes])
-    print("shape of nonpruned_node midpoints = ", nonpruned_node_midpoints.shape)
-    plt.scatter(nonpruned_node_midpoints[:,0], nonpruned_node_midpoints[:,1], color='red', marker='o', s=10, label='nonpruned midpoints')
-    plt.legend()
-    plt.savefig('prunedregion.png')
-    plt.close()
-  # plot acqf upper and lower bounds on the regions defined by nodes
-  if nx == 2 and False:
-    acqf_upper_bounds = [node.aq_U for node in all_nodes]
-    acqf_lower_bounds = [node.aq_L for node in all_nodes]
-    gaps = [all_nodes[i].aq_U - all_nodes[i].aq_L for i in range(len(all_nodes))]
-    LUB = min(acqf_upper_bounds) # least upper bound
-    GUB = max(acqf_upper_bounds) # greatest upper bound
-    LLB = min(acqf_lower_bounds) # least lower bound
-    GLB = max(acqf_upper_bounds) # greatest lower bound
-    max_gap = max(gaps)
-    min_gap = min(gaps)
-    for node in all_nodes:
-      Xnode = np.linspace(node.l[0], node.u[0], num=3)
-      Ylower = node.l[1] * np.ones(len(Xnode))
-      Yupper = node.u[1] * np.ones(len(Xnode))
-      plt.fill_between(Xnode, Ylower, Yupper, color='black', alpha=1. - (node.aq_U - LUB) / (GUB - LUB))
-    plt.title(f'(acqf ub - LUB) / (GUB - LUB), GUB = {GUB:1.2e}, LUB = {LUB:1.2e}')
-    plt.savefig('acqf_ub.png')
-    plt.close()
-    for node in all_nodes:
-      Xnode = np.linspace(node.l[0], node.u[0], num=3)
-      Ylower = node.l[1] * np.ones(len(Xnode))
-      Yupper = node.u[1] * np.ones(len(Xnode))
-      plt.fill_between(Xnode, Ylower, Yupper, color='black', alpha=1. - (node.aq_L - LLB) / (GLB - LLB))
-    plt.title(f'(acqf lb - LLB) / (GLB - LLB), GLB = {GLB:1.2e}, LLB = {LLB:1.2e}')
-    plt.savefig('acqf_lb.png')
-    plt.close()
-    for i, node in enumerate(all_nodes):
-      Xnode = np.linspace(node.l[0], node.u[0], num=3)
-      Ylower = node.l[1] * np.ones(len(Xnode))
-      Yupper = node.u[1] * np.ones(len(Xnode))
-      plt.fill_between(Xnode, Ylower, Yupper, color='black', alpha=1. - gaps[i]/max_gap)
-    plt.title(f'gap/max_gap, max_gap = {max_gap:1.2e}, min_gap = {min_gap:1.2e}')
-    plt.savefig('acqf_gap.png')
-    plt.close()
-
-
-  # determine an optimal number of clusters via k-means + silhouette score
-  # this is a dimension independent measure
-  nonpruned_node_midpoints = np.array([node.midpoint for node in nonpruned_nodes])
-  cluster_values = [k for k in range(2, min(10, len(nonpruned_node_midpoints)))]
-  silhouette_scores = []
-  for k in cluster_values:
-    kmeans = KMeans(n_clusters=k, init='k-means++', n_init='auto', random_state=42)
-    cluster_labels = kmeans.fit_predict(nonpruned_node_midpoints)
-    score = silhouette_score(nonpruned_node_midpoints, cluster_labels)
-    silhouette_scores.append(score)
-    print(f"The Silhouette score of the nonpruned nodes on {k} clusters is {score}")
-  plt.plot(cluster_values, silhouette_scores)
-  plt.xlabel('k (# of clusters)')
-  plt.ylabel('Silhouette score')
-  plt.savefig('silhouettescore.png')
-  plt.close()
-  
-
-
-  
-
-
-  #bo_maxiter = 1
-  #batch_size = 1
-  #options = {
-  #    'acquisition_type': acquisition_type,
-  #    'bo_maxiter': bo_maxiter, 
-  #    'batch_size': batch_size,
-  #    'opt_solver': 'BnB',
-  #    'solver_options' : solver_options,
-  #}
-  #
-  #bo = BOAlgorithm(problem, gp_model, x_train, y_train, options=options)
-  #bo.optimize()
-  #x_bo = bo.getOptimizationHistory()[0]
-  #x_train_superset = np.concatenate((x_train, x_bo), axis=0)
-  #for i in range(bo_maxiter):
-  #  x_train2 = x_train_superset[:-bo_maxiter+i]
-  #  y_train2 = problem.evaluate(x_train2)
-  #  gp_model2 = smtKRG(theta, problem.xlimits, nx)
-  #  gp_model2.train(x_train2, y_train2)
-  #  if acquisition_type == "LCB":
-  #    acqf2 = LCBacquisition(gp_model2)
-  #  else:
-  #    acqf2 = EIacquisition(gp_model2)
-  #  Y_acqf2 = [acqf2.evaluate(x)[0] for x in X]
-  #  y_star2 = acqf2.evaluate(np.atleast_2d(x_bo[i]))
-  #  plt.plot(X, Y_acqf2,'k--', label=r''+acquisition_type+'$(x)$')
-  #  plt.plot(x_bo[i], y_star2, r'r*', markersize=12, label=r'bnb minimizer')
-  #  plt.xlabel("x")
-  #  plt.legend()
-  #  plt.title(r""+acquisition_type+"$(x)$ at BO iteration {0:d}".format(i))
-  #  plt.show()
+  bo_maxiter = 2
+  batch_size = 1
+  options = {
+      'acquisition_type': acquisition_type,
+      'bo_maxiter': bo_maxiter, 
+      'batch_size': batch_size,
+      'opt_solver': 'BnB',
+      'solver_options' : bnb_solver_options,
+  }
+  bo = BOAlgorithm(problem, gp_model, x_train, y_train, options=options)
+  bo.optimize()
+  x_bo = bo.getOptimizationHistory()[0]
+  x_train_superset = np.concatenate((x_train, x_bo), axis=0)
+  for i in range(bo_maxiter):
+    x_train2 = x_train_superset[:-bo_maxiter+i]
+    y_train2 = problem.evaluate(x_train2)
+    gp_model2 = smtKRG(theta, problem.xlimits, nx)
+    gp_model2.train(x_train2, y_train2)
+    if acquisition_type == "LCB":
+      acqf2 = LCBacquisition(gp_model2)
+    else:
+      acqf2 = EIacquisition(gp_model2)
+    if nx == 1:
+      Y_acqf2 = [acqf2.evaluate(x)[0] for x in X]
+      y_star2 = acqf2.evaluate(np.atleast_2d(x_bo[i]))
+      plt.plot(X, Y_acqf2,'k--', label=r''+acquisition_type+'$(x)$')
+      plt.plot(x_bo[i], y_star2, r'r*', markersize=12, label=r'bnb minimizer')
+      plt.xlabel("x")
+      plt.legend()
+      plt.title(r""+acquisition_type+"$(x)$ at BO iteration {0:d}".format(i))
+      plt.savefig("acqf_BOit"+str(i)+".png")
+      plt.close()
+    elif nx == 2:
+      l = problem.xlimits[:, 0].astype(float)
+      u = problem.xlimits[:, 1].astype(float)
+      X1D = [np.linspace(l[i], u[i],  200) for i in range(nx)]
+      Xx, Xy = np.meshgrid(X1D[0], X1D[1])
+      Z = np.array([[acqf2.evaluate(np.atleast_2d([Xx[i, j], Xy[i, j]])).flatten()[0] for j in range(Xx.shape[1])] for i in range(Xx.shape[0])])
+      plt.contourf(Xx, Xy, Z, levels=20, cmap='viridis')
+      plt.plot(x_bo[i][0], x_bo[i][1], r'r*', markersize=12)
+      plt.colorbar(label='Acquisition function value')
+      plt.savefig("acqf_BOit"+str(i)+".png")
+      plt.close()

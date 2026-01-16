@@ -25,7 +25,7 @@ import math
 # where A is negative semi-definite
 # here the evaluate function is flipped negative in order that we can use ipopt minimization
 class variance_U_problem:
-  def __init__(self, A, b, C):
+  def __init__(self, A, b, c, C):
     self.A = A
     self.b = b
     self.c = c
@@ -299,7 +299,7 @@ class BnBAlgorithmBase:
 
 
 class BnBAlgorithm(BnBAlgorithmBase):
-  def __init__(self, acqf, options = {}, sync_mode=False):
+  def __init__(self, acqf, options = {}, sync_mode=False, BOit=0, saveData=False):
     self.acqf = acqf
     self.gpsurrogate = acqf.gpsurrogate
     super().__init__(x = self.gpsurrogate.training_x, y = self.gpsurrogate.training_y)
@@ -314,7 +314,8 @@ class BnBAlgorithm(BnBAlgorithmBase):
     self.max_bnbiter = 2000
     self.nodes_per_batch = 1
     self.max_bnbtime = 12 * 60 # 12 minutes
-
+    self.BOit = BOit
+    self.saveData = saveData
     # Set options form command 
     self.epsilon_gap = options.get('epsilon_gap', self.epsilon_gap)
     self.epsilon_diam = options.get('epsilon_diam', self.epsilon_diam)
@@ -694,6 +695,20 @@ class BnBAlgorithm(BnBAlgorithmBase):
     self.pruningratio_history = pruningratio_history
     self.gap_history = gap_history
     self.branch_history = branch_history
+    if self.saveData:
+      np.savetxt("branch_history_BOit"+str(self.BOit)+".dat", self.branch_history)
+      np.savetxt("gap_history_BOit"+str(self.BOit)+".dat", self.gap_history)
+      np.savetxt("prunedvol_history_BOit"+str(self.BOit)+".dat", self.prunedvol_history)
+      np.savetxt("pruningratio_history_BOit"+str(self.BOit)+".dat", self.pruningratio_history)
+      np.savetxt("pruned_nodes_ls_BOit"+str(self.BOit)+".dat", np.array([node.l for node in all_prunednodes]))
+      np.savetxt("pruned_nodes_us_BOit"+str(self.BOit)+".dat", np.array([node.u for node in all_prunednodes]))
+      np.savetxt("pruned_nodes_aqU_BOit"+str(self.BOit)+".dat", np.array([node.aq_U for node in all_prunednodes]))
+      np.savetxt("pruned_nodes_aqL_BOit"+str(self.BOit)+".dat", np.array([node.aq_L for node in all_prunednodes]))
+      np.savetxt("nonpruned_nodes_ls_BOit"+str(self.BOit)+".dat", np.array([node.l for node in self.all_nonpruned_nodes]))
+      np.savetxt("nonpruned_nodes_us_BOit"+str(self.BOit)+".dat", np.array([node.u for node in self.all_nonpruned_nodes]))
+      np.savetxt("nonpruned_nodes_aqU_BOit"+str(self.BOit)+".dat", np.array([node.aq_U for node in self.all_nonpruned_nodes]))
+      np.savetxt("nonpruned_nodes_aqL_BOit"+str(self.BOit)+".dat", np.array([node.aq_L for node in self.all_nonpruned_nodes]))
+    
 
     ## TODO: sync step and prune
     ##       get final data
