@@ -87,17 +87,19 @@ class PeriodicObjective(Problem):
 if __name__ == "__main__":
   parser = argparse.ArgumentParser(prog='myprogram')
   parser.add_argument("--nx", type=int, default=2, help="dimension of problem")
+  parser.add_argument("--boiter", type=int, default=2, help="BO iterations") 
   parser.add_argument("--bnbtol", type=float, default=0.01, help="tolerance for bnb optimizer")
   parser.add_argument("--bnbmaxiter", type=int, default=1000, help="maximum number of bnb iterations") 
   parser.add_argument("--bnbmaxtime", type=float, default=180., help="maximum time for bnb opt") 
   args = parser.parse_args()
   nx = args.nx # dimension of the problem
+  boiter = args.boiter
   bnbtol = args.bnbtol # tolerance for bnb optimizer
   bnbmaxiter = args.bnbmaxiter
   bnbmaxtime = args.bnbmaxtime
   random.seed(42)
 
-  acquisition_type = 'LCB'  
+  acquisition_type = 'EI'  
   plot_acquisition = True
   ### parameters
   n_samples = 25  # number of the initial samples to train GP
@@ -142,11 +144,10 @@ if __name__ == "__main__":
       'nodes_per_batch' : 32
   }
 
-  bo_maxiter = 2
   batch_size = 1
   options = {
       'acquisition_type': acquisition_type,
-      'bo_maxiter': bo_maxiter, 
+      'bo_maxiter': boiter, 
       'batch_size': batch_size,
       'opt_solver': 'BnB',
       'solver_options' : bnb_solver_options,
@@ -155,8 +156,8 @@ if __name__ == "__main__":
   bo.optimize()
   x_bo = bo.getOptimizationHistory()[0]
   x_train_superset = np.concatenate((x_train, x_bo), axis=0)
-  for i in range(bo_maxiter):
-    x_train2 = x_train_superset[:-bo_maxiter+i]
+  for i in range(boiter):
+    x_train2 = x_train_superset[:-boiter+i]
     y_train2 = problem.evaluate(x_train2)
     gp_model2 = smtKRG(theta, problem.xlimits, nx)
     gp_model2.train(x_train2, y_train2)
@@ -180,8 +181,10 @@ if __name__ == "__main__":
       X1D = [np.linspace(l[i], u[i],  200) for i in range(nx)]
       Xx, Xy = np.meshgrid(X1D[0], X1D[1])
       Z = np.array([[acqf2.evaluate(np.atleast_2d([Xx[i, j], Xy[i, j]])).flatten()[0] for j in range(Xx.shape[1])] for i in range(Xx.shape[0])])
-      plt.contourf(Xx, Xy, Z, levels=20, cmap='viridis')
+      plt.contourf(Xx, Xy, Z, levels=40, cmap='viridis')
       plt.plot(x_bo[i][0], x_bo[i][1], r'r*', markersize=12)
-      plt.colorbar(label='Acquisition function value')
+      plt.xlabel(r'$x$')
+      plt.ylabel(r'$y$')
+      plt.colorbar(label=r'$\varphi(x,y)$, acquisition function')
       plt.savefig("acqf_BOit"+str(i)+".png")
       plt.close()
