@@ -708,7 +708,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
       np.savetxt("nonpruned_nodes_us_BOit"+str(self.BOit)+".dat", np.array([node.u for node in self.all_nonpruned_nodes]))
       np.savetxt("nonpruned_nodes_aqU_BOit"+str(self.BOit)+".dat", np.array([node.aq_U for node in self.all_nonpruned_nodes]))
       np.savetxt("nonpruned_nodes_aqL_BOit"+str(self.BOit)+".dat", np.array([node.aq_L for node in self.all_nonpruned_nodes]))
-    
+      np.savetxt("kriging_weights_BOit"+str(self.BOit)+".dat", self.gamma) 
 
     ## TODO: sync step and prune
     ##       get final data
