@@ -99,7 +99,7 @@ if __name__ == "__main__":
   bnbmaxtime = args.bnbmaxtime
   random.seed(42)
 
-  acquisition_type = 'EI'  
+  acquisition_type = 'LCB'  
   plot_acquisition = True
   ### parameters
   n_samples = 25  # number of the initial samples to train GP
