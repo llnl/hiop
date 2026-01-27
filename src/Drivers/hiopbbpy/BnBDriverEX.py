@@ -124,6 +124,7 @@ if __name__ == "__main__":
   y_train = problem.evaluate(x_train)
   
   gp_model = smtKRG(theta, problem.xlimits, nx)
+  gp_model.set_nugget(1.e-9)
   gp_model.train(x_train, y_train)
   
   
@@ -140,8 +141,9 @@ if __name__ == "__main__":
       'max_iter': bnbmaxiter,
       'max_bnbtime': bnbmaxtime,
       'nodes_per_batch' : 32,
-      'pure_BBS' : False,
-      'sync_mode' : False,
+      'pure_BBS' : True,
+      'sync_mode' : True,
+      'acqf_UB_opt': True,
   }
   bnb = BnBAlgorithm(acqf, options=solver_options)
   bnb.initialize()

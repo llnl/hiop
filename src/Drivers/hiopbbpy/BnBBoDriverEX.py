@@ -91,12 +91,14 @@ if __name__ == "__main__":
   parser.add_argument("--bnbtol", type=float, default=0.01, help="tolerance for bnb optimizer")
   parser.add_argument("--bnbmaxiter", type=int, default=1000, help="maximum number of bnb iterations") 
   parser.add_argument("--bnbmaxtime", type=float, default=180., help="maximum time for bnb opt") 
+  parser.add_argument("--nugget", type=float, default=2.220446049250313e-14, help="nugget added to posterior GP for numerical stability")
   args = parser.parse_args()
   nx = args.nx # dimension of the problem
   boiter = args.boiter
   bnbtol = args.bnbtol # tolerance for bnb optimizer
   bnbmaxiter = args.bnbmaxiter
   bnbmaxtime = args.bnbmaxtime
+  nugget = args.nugget
   random.seed(42)
 
   acquisition_type = 'LCB'  
@@ -126,6 +128,7 @@ if __name__ == "__main__":
   y_train = problem.evaluate(x_train)
   
   gp_model = smtKRG(theta, problem.xlimits, nx)
+  gp_model.set_nugget(nugget)
   gp_model.train(x_train, y_train)
   
   
@@ -144,6 +147,7 @@ if __name__ == "__main__":
       'nodes_per_batch' : 32,
       'pure_BBS' : True,
       'sync_mode' : True,
+      'acqf_UB_opt': True,
   }
 
   batch_size = 1
