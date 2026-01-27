@@ -20,7 +20,7 @@ from hiopbbpy.opt import BnBAlgorithmBase, LCBacquisition
 ### parameters
 n_samples = 10  # number of the initial samples to train GP
 theta = 1.e-2  # hyperparameter for GP kernel
-nx = 1         # dimension of the problem
+nx = 2         # dimension of the problem
 c2D=np.array([1.25, 2.5])
 c1D=np.array([1.25])
 if nx == 1:
@@ -77,17 +77,17 @@ gp_model.train(x_train, y_train)
 # In[3]:
 
 
-l = problem.xlimits[:, 0].astype(float)
-u = problem.xlimits[:, 1].astype(float)
-n_plot_pts = 1000
-X = np.atleast_2d(np.linspace(l[0], u[0], n_plot_pts)).transpose()
+#l = problem.xlimits[:, 0].astype(float)
+#u = problem.xlimits[:, 1].astype(float)
+#n_plot_pts = 1000
+#X = np.atleast_2d(np.linspace(l[0], u[0], n_plot_pts)).transpose()
+#
+#muX = gp_model.mean(X)
+#sigmaX = np.sqrt(gp_model.variance(X))
+#beta = 3.0
 
-muX = gp_model.mean(X)
-sigmaX = np.sqrt(gp_model.variance(X))
-beta = 3.0
-
-acqf = LCBacquisition(gp_model, beta=beta)
-Y_acqf = acqf.evaluate(X)
+acqf = LCBacquisition(gp_model)
+#Y_acqf = acqf.evaluate(X)
 
 #plt.plot(X, Y_acqf, label=r'$LCB(x)$')
 #plt.plot(X, muX, "-.", label=r'$\mu(x)$')
@@ -108,13 +108,13 @@ base.gpsurrogate = gp_model
 base.sync_from_smt()              # fills kernel_spec/p, theta, Xc, offsets, beta0/gamma, C, sigma2
 
 # (Optional) ensure we try to compute a nontrivial lower bound for variance
-base.BnB_LBmethod = None          # if "IPOPT", sigma2_L will be 0 in your current code
-base.beta = beta
+#base.BnB_LBmethod = None          # if "IPOPT", sigma2_L will be 0 in your current code
+#base.beta = beta
 # Pick a box to test (use full domain here; swap l/u to any node box you want)
 l = problem.xlimits[:, 0].astype(float)
 u = problem.xlimits[:, 1].astype(float)
 
-nboxes = 1000
+nboxes = 50
 box_sizes = (u - l) / float(nboxes)
 midpoints = np.zeros((nboxes,))
 kLs = np.zeros((nboxes, n_samples))
@@ -130,6 +130,7 @@ LCB_Us_sample = np.zeros((nboxes,) * nx)
 
 for i in range(nboxes):
     for j in range(nboxes):
+        print(i, j)
         if nx == 2:
             li = l + np.array([i * box_sizes[0], j * box_sizes[1]])
             ui = l + np.array([(i + 1) * box_sizes[0], (j +1) * box_sizes[1]])
@@ -149,7 +150,15 @@ for i in range(nboxes):
         #LCB_L = base.rs_lcb(mu_L, np.sqrt(max(s2_U, 0.0)))     # lower bound on LCB over the box
         #LCB_U = base.rs_lcb(mu_U, np.sqrt(max(s2_L, 0.0)))     # upper bound on LCB over the box
         
-        x_pts = np.atleast_2d(np.linspace(li, ui, num=200))
+        if nx == 1:
+            x_pts = np.atleast_2d(np.linspace(li, ui, num=200))
+        else:
+            x_slice_pts = [np.linspace(li[k], ui[k], num=30) for k in range(nx)]
+            xv, yv = np.meshgrid(x_slice_pts[0], x_slice_pts[1])
+            xv = xv.flatten()
+            yv = yv.flatten()
+            x_pts = np.array([[xv[k], yv[k]] for k in range(len(xv))])     
+         
         LCB_U_sample = min(acqf.evaluate(x_pts).flatten())
         #print(LCB_U_sample)
         
@@ -164,7 +173,7 @@ for i in range(nboxes):
         elif nx == 2:
             LCB_Ls[i][j] = LCB_L
             LCB_Us[i][j] = LCB_U
-        
+            LCB_Us_sample[i][j] = LCB_U_sample
         
 
         muLs[i] = mu_L
@@ -173,8 +182,8 @@ for i in range(nboxes):
         s2Us[i] = s2_U
         kLs[i,:] = kL[:]
         kUs[i,:] = kU[:]       
-mu = gp_model.mean(midpoints)
-s2 = gp_model.variance(midpoints)
+#mu = gp_model.mean(midpoints)
+#s2 = gp_model.variance(midpoints)
 
 
 # In[32]:
@@ -234,7 +243,12 @@ mu_bandgap = np.linalg.norm(muUs - muLs, np.inf)
 
 # In[38]:
 
-
-for i in range(nboxes):
-    if LCB_Us_sample[i] > LCB_Us[i]:
-        print("error")
+if nx == 1:
+    for i in range(nboxes):
+        if LCB_Us_sample[i] > LCB_Us[i]:
+            print("error")
+elif nx == 2:
+    for i in range(nboxes):
+        for j in range(nboxes):
+            if LCB_Us_sample[i][j] > LCB_Us[i][j]:
+                print("error")
