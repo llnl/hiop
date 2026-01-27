@@ -204,7 +204,7 @@ class BOAlgorithm(BOAlgorithmBase):
       )
     else:
       # Instantiate BnB with GP surrogate and BO callback
-      bnb = BnBAlgorithm(acqf, options=self.solver_options, sync_mode=True, BOit=BOit, saveData=True)
+      bnb = BnBAlgorithm(acqf, options=self.solver_options, BOit=BOit, saveData=True)
      
       # Initialize BnB (perhaps use old set of boxes here)
       #bnb.initialize(queue=self.bnb_queue) do not use old box set

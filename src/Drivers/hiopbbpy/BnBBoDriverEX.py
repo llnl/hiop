@@ -141,7 +141,9 @@ if __name__ == "__main__":
       'epsilon_diam' : bnbtol / 100.,
       'max_iter': bnbmaxiter,
       'max_bnbtime': bnbmaxtime,
-      'nodes_per_batch' : 32
+      'nodes_per_batch' : 32,
+      'pure_BBS' : True,
+      'sync_mode' : True,
   }
 
   batch_size = 1

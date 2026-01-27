@@ -299,7 +299,7 @@ class BnBAlgorithmBase:
 
 
 class BnBAlgorithm(BnBAlgorithmBase):
-  def __init__(self, acqf, options = {}, sync_mode=False, BOit=0, saveData=False):
+  def __init__(self, acqf, options = {}, BOit=0, saveData=False):
     self.acqf = acqf
     self.gpsurrogate = acqf.gpsurrogate
     super().__init__(x = self.gpsurrogate.training_x, y = self.gpsurrogate.training_y)
@@ -316,6 +316,9 @@ class BnBAlgorithm(BnBAlgorithmBase):
     self.max_bnbtime = 12 * 60 # 12 minutes
     self.BOit = BOit
     self.saveData = saveData
+    self.acqf_UB_opt = False
+    self.pure_BBS = False  # pure BBS search or hybrid BBS/BFS search
+    self.sync_mode = False # synchronous or asynchronous evaluations
     # Set options form command 
     self.epsilon_gap = options.get('epsilon_gap', self.epsilon_gap)
     self.epsilon_diam = options.get('epsilon_diam', self.epsilon_diam)
@@ -323,17 +326,20 @@ class BnBAlgorithm(BnBAlgorithmBase):
     self.max_bnbiter = options.get('max_iter', self.max_bnbiter)
     self.max_bnbtime = options.get('max_bnbtime', self.max_bnbtime)
     self.nodes_per_batch = options.get('nodes_per_batch', self.nodes_per_batch)
-
-    self.sync_mode = sync_mode # synchronous or asynchronous
+    self.acqf_UB_opt = options.get('acqf_ub_opt', self.acqf_UB_opt)
+    self.pure_BBS = options.get('pure_BBS', self.pure_BBS)
+    self.sync_mode = options.get('sync_mode', self.sync_mode)
 
     if is_running_with_mpi():
       num_available_workers = MPI.COMM_WORLD.Get_size() - 1
       if num_available_workers > 1:
         # roughly evenly split workers for use in bbs and bfs evaluators
-        #num_bbs_workers = num_available_workers
-        #num_bfs_workers = 1
-        num_bbs_workers = np.ceil(num_available_workers * 3 / 4).astype(int)
-        num_bfs_workers = max(1, num_available_workers - num_bbs_workers)
+        if self.pure_BBS:
+          num_bbs_workers = num_available_workers
+          num_bfs_workers = 1
+        else:
+          num_bbs_workers = np.ceil(num_available_workers * 3 / 4).astype(int)
+          num_bfs_workers = max(1, num_available_workers - num_bbs_workers)
       else:
         # num_available_workers == 1 or num_available_workers == 0
         # can occur when running on one process in which root is both master and the
@@ -380,24 +386,9 @@ class BnBAlgorithm(BnBAlgorithmBase):
     var = np.array([var_U, var_L])
     acqf_bounds = self.acqf.evaluate_meansig2(mu, var)
     
-    #opt_solver = "SLSQP"
-    #opt_solver_options = {'maxiter' : 200}
-    #constraints = []
-    #box_bounds = [[l[i], u[i]] for i in range(len(l))]
-    #acqf_callback = {'obj' : self.acqf.scalar_evaluate}
-    #if self.acqf.has_gradient:
-    #  acqf_callback['grad'] = self.acqf.scalar_eval_g
-    #
-    #opt_evaluator = Evaluator()
-    #acqf_minimizer = minimizer_wrapper(acqf_callback, opt_solver, box_bounds, constraints, opt_solver_options)
-
-    #x0 = [[(l[i] + u[i]) / 2. for i in range(len(u))]]
-    #opt_sol = opt_evaluator.run(acqf_minimizer.minimizer_callback, x0)[0]
-    #assert (np.all(opt_sol[0] >= l) and np.all(opt_sol[0] <= u)), f"acqf minimizer not within bounds"
-    #acqf_U = opt_sol[1]
-    if False:
-      opt_solver = "SLSQP"
-      opt_solver_options = {'maxiter' : 1000}
+    if self.acqf_UB_opt:
+      opt_solver = "IPOPT"
+      opt_solver_options = {'max_iter' : 1000, 'tol' : 1.e-5, 'honor_original_bounds' : 'yes', 'print_level' : 2}
       constraints = []
       box_bounds = [[l[i], u[i]] for i in range(len(l))]
       acqf_callback = {'obj' : self.acqf.scalar_evaluate}
@@ -419,35 +410,9 @@ class BnBAlgorithm(BnBAlgorithmBase):
       for i in range(n_points):
         for j in range(self.gpsurrogate.ndim):
           x_points[i, j] = l[j] + (u[j] - l[j]) / (s_per_dim - 1.) * float(int(i / s_per_dim**j) % s_per_dim)
-      #n_points = 10
-      #sampler = qmc.LatinHypercube(len(u))
-      #x_points = sampler.random(n=n_points)
-      #qmc.scale(x_points, l, u) 
       acqf_eval = self.acqf.evaluate(x_points)
       acqf_U = min(acqf_eval.flatten())
-
-
-    #n_points = 1
-    #x_points = np.zeros((n_points, self.gpsurrogate.ndim))
-    #for i in range(n_points):
-    #  for j in range(self.gpsurrogate.ndim):
-    #    x_points[i, j] = (l[j] + u[j]) / 2.
-    #acqf_eval = self.acqf.evaluate(x_points)
-    #acqf_U = min(acqf_eval.flatten())
-    #if acqf_U < acqf_bounds[0]:
-    #  print("ERROR in bound computations U < L")
-    #  print(f"Acquisition function evaluations for node defined by bounds: {l} {u}")
-    #  for i in range(n_points):
-    #    print(f"acqf({x_points[i,:]}) = {acqf_eval[i]}")
-    #  if np.any(acqf_eval >= acqf_bounds[0]):
-    #    print("one point evaluation >= L")
-    #    #feasible_idxs = np.argwhere(acqf_eval >= acqf_bounds[0])
-    #    #acqf_eval = acqf_eval[feasible_idxs]
-    #    #acqf_eval.sort()
-    #    #acqf_U = min(acqf_eval)
-    #  else:
-    #    print("all point evaluations < L")
-    assert acqf_bounds[0] <= acqf_U, "acqf_U < acqf_L"
+    assert acqf_bounds[0] <= acqf_U, "acqf_L > acqf_U"
     
     return acqf_bounds[0], acqf_U
   def _prune_queue(self, queue, lub, eps):
@@ -581,9 +546,6 @@ class BnBAlgorithm(BnBAlgorithmBase):
         
         # pre-prune
         children_lower_bounds = [child.aq_L for child in children]
-        #args = np.argwhere(np.array(children_lower_bounds) < self.LUB + self.epsilon_prune).flatten()
-        #children = [children[arg] for arg in args]
-        #print(f"{len(children)} children to be appended to bbs/bfs lists")
 
         # now move pruned children to data structs for (potential) future evaluation
         children_lower_bounds = [child.aq_L for child in children]
@@ -597,10 +559,10 @@ class BnBAlgorithm(BnBAlgorithmBase):
 
         # sort children into bbs and bfs lists
         for child in children:
-          if True:#len(self.queue) < 10 * self.num_bbs_workers:
+          if self.pure_BBS or len(self.queue) < 10 * self.num_bbs_workers:
             heapq.heappush(self.queue, (child.aq_L, next(self._ctr), child))
           else:
-            all_bfsnodes.append(child) # TODO: prepend... according to number of workers
+            all_bfsnodes.append(child) #TODO: prepend... according to number of workers
         max_bbs_node_size = max(max_bbs_node_size, len(self.queue))
         max_bfs_node_size = max(max_bfs_node_size, len(all_bfsnodes))
         
@@ -658,8 +620,10 @@ class BnBAlgorithm(BnBAlgorithmBase):
       #if self.bbsevaluator.num_submitted_tasks() + self.bfsevaluator.num_submitted_tasks() > 10 * (self.num_bbs_workers + self.num_bfs_workers):
       # collect nodes to be branched on in list structure
       # only submit additional tasks if there aren't too many in the Evaluators queue
-      #num_bbs_tasks_to_submit = 10 * self.num_bbs_workers - self.bbsevaluator.num_submitted_tasks()
-      num_bbs_tasks_to_submit = len(self.queue)
+      if self.sync_mode:
+        num_bbs_tasks_to_submit = len(self.queue)
+      else:
+        num_bbs_tasks_to_submit = 10 * self.num_bbs_workers - self.bbsevaluator.num_submitted_tasks()
       if num_bbs_tasks_to_submit > 0:
         bbsnodes = []
         for i in range(num_bbs_tasks_to_submit):
@@ -675,8 +639,10 @@ class BnBAlgorithm(BnBAlgorithmBase):
           self.bbsevaluator.submit_tasks(brancher.callback, bbsnodes)
       
       # only submit additional tasks if there aren't too many in the Evaluators queue
-      num_bfs_tasks_to_submit = 10 * self.num_bfs_workers - self.bfsevaluator.num_submitted_tasks()
-      #num_bfs_tasks_to_submit = len(all_bfsnodes)
+      if self.sync_mode:
+        num_bfs_tasks_to_submit = len(all_bfsnodes)
+      else:
+        num_bfs_tasks_to_submit = 10 * self.num_bfs_workers - self.bfsevaluator.num_submitted_tasks()
       if num_bfs_tasks_to_submit > 0:
         bfsnodes  = []
         for i in range(num_bfs_tasks_to_submit):
@@ -754,13 +720,14 @@ class BnBAlgorithm(BnBAlgorithmBase):
 
 
 class branching_wrapper:
-  def __init__(self, acqf, LUB=np.inf, epsilon_prune=1.e-14):
+  def __init__(self, acqf, LUB=np.inf, epsilon_prune=1.e-14, acqf_UB_opt=False):
     self.LUB = LUB # least upper bound
     self.epsilon_prune = epsilon_prune
     self.acqf = acqf
     self.gpsurrogate = acqf.gpsurrogate
     self.x = self.gpsurrogate.training_x
     self.y = self.gpsurrogate.training_y
+    self.acqf_UB_opt = acqf_UB_opt
     if not (isinstance(self.acqf, LCBacquisition) or isinstance(self.acqf, EIacquisition)):
       raise NotImplementedError("Unrecognized acquisition function type")
     self.sync_from_smt()
@@ -952,9 +919,9 @@ class branching_wrapper:
     var = np.array([var_U, var_L])
     acqf_bounds = self.acqf.evaluate_meansig2(mu, var)
     
-    if False:
-      opt_solver = "SLSQP"
-      opt_solver_options = {'maxiter' : 1000}
+    if self.acqf_UB_opt:
+      opt_solver = "IPOPT"
+      opt_solver_options = {'max_iter' : 1000, 'tol' : 1.e-5, 'honor_original_bounds' : 'yes', 'print_level' : 2}
       constraints = []
       box_bounds = [[l[i], u[i]] for i in range(len(l))]
       acqf_callback = {'obj' : self.acqf.scalar_evaluate}
