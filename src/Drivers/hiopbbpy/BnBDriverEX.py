@@ -124,6 +124,7 @@ if __name__ == "__main__":
   y_train = problem.evaluate(x_train)
   
   gp_model = smtKRG(theta, problem.xlimits, nx)
+  gp_model.set_nugget(1.e-9)
   gp_model.train(x_train, y_train)
   
   
@@ -139,9 +140,12 @@ if __name__ == "__main__":
       'epsilon_diam' : bnbtol / 100.,
       'max_iter': bnbmaxiter,
       'max_bnbtime': bnbmaxtime,
-      'nodes_per_batch' : 32
+      'nodes_per_batch' : 32,
+      'pure_BBS' : True,
+      'sync_mode' : True,
+      'acqf_UB_opt': True,
   }
-  bnb = BnBAlgorithm(acqf, options=solver_options, sync_mode=True)
+  bnb = BnBAlgorithm(acqf, options=solver_options)
   bnb.initialize()
   xstar = np.atleast_2d(bnb.optimize())
   ystar = acqf.evaluate(xstar)
@@ -222,10 +226,11 @@ if __name__ == "__main__":
           plt.fill_between(Xnode, Ylower, Yupper, color='lightblue', alpha=0.5)
     nonpruned_node_midpoints = np.array([node.midpoint for node in nonpruned_nodes])
     print("shape of nonpruned_node midpoints = ", nonpruned_node_midpoints.shape)
-    plt.scatter(nonpruned_node_midpoints[:,0], nonpruned_node_midpoints[:,1], color='red', marker='o', s=10, label='nonpruned midpoints')
-    plt.legend()
-    plt.savefig('prunedregion.png')
-    plt.close()
+    if len(nonpruned_node_midpoints) > 0:
+      plt.scatter(nonpruned_node_midpoints[:,0], nonpruned_node_midpoints[:,1], color='red', marker='o', s=10, label='nonpruned midpoints')
+      plt.legend()
+      plt.savefig('prunedregion.png')
+      plt.close()
   # plot acqf upper and lower bounds on the regions defined by nodes
   if nx == 2 and False:
     acqf_upper_bounds = [node.aq_U for node in all_nodes]

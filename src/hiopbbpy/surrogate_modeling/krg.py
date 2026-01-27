@@ -60,3 +60,7 @@ class smtKRG(GaussianProcess):
     if not self.trained:
       raise ValueError("must train kriging model before utilizing it to predict gradient")
     return self.surrogatesmt.predict_variance_gradient(x)
+
+  def set_nugget(self, nugget):
+    assert nugget >= 0., "nugget value must be non-negative"
+    self.surrogatesmt.options["nugget"] = nugget

@@ -149,7 +149,7 @@ class BOAlgorithm(BOAlgorithmBase):
     self.logger.debug("Surrogate training complete.")
 
   # Method to find the best next sampling point via optimizing the acquisition function
-  def _find_best_point(self, x_train, y_train, x0 = None):
+  def _find_best_point(self, x_train, y_train, x0 = None, BOit=0):
     self.logger.info(f"Start finding the best sampling point:")
     self._train_surrogate(x_train, y_train)
     if self.acquisition_type == "LCB":
@@ -204,7 +204,7 @@ class BOAlgorithm(BOAlgorithmBase):
       )
     else:
       # Instantiate BnB with GP surrogate and BO callback
-      bnb = BnBAlgorithm(acqf, options=self.solver_options, saveData=True)
+      bnb = BnBAlgorithm(acqf, options=self.solver_options, BOit=BOit, saveData=True)
      
       # Initialize BnB (perhaps use old set of boxes here)
       #bnb.initialize(queue=self.bnb_queue) do not use old box set
@@ -266,7 +266,7 @@ class BOAlgorithm(BOAlgorithmBase):
       for j in range(self.batch_size):
         # Get a new sample point
         self.logger.scalars(f"In batch {j+1}/{self.batch_size}")
-        x_new = self._find_best_point(x_train, y_train_virtual)
+        x_new = self._find_best_point(x_train, y_train_virtual, BOit=i)
         
         # Update training sample points
         x_train = np.vstack([x_train, x_new])

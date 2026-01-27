@@ -78,7 +78,11 @@ class EIacquisition(acquisition):
     elif sig.size == 1 and np.abs(sig) <= 1e-24:
       retval = 0.0
     elif sig.size > 1:
-      raise NotImplementedError("TODO --- Not implemented yet!")
+      retval = np.zeros((sig.size, 1))
+      for i in range(sig.size):
+        z = (y_min - pred[i]) / sig[i]
+        retval[i,:] = sig[i] * (z * norm.cdf(z) + norm.pdf(z))
+      retval = np.atleast_2d(retval)
 
     ## instead of maximize EI, we minimize -EI
     retval *= -1.
