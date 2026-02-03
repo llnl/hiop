@@ -149,6 +149,9 @@ class Problem:
     # Each sample is feasible only if all constraints are satisfied
     return feas_matrix.all(axis=1)
 
+  def set_seed(self, seed : int) -> None:
+    self.sampler = qmc.LatinHypercube(self.ndim, seed = seed)
+
   def sample(self, nsample: int) -> np.ndarray:
     """
     generate nsample samples from domain defined

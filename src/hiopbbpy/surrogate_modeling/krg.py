@@ -12,7 +12,7 @@ from smt.design_space import DesignSpace
 
 
 class smtKRG(GaussianProcess):
-  def __init__(self, theta, xlimits, ndim, corr="pow_exp", pow_exp_power=1.0, noise0=None, random_state=None):
+  def __init__(self, theta, xlimits, ndim, corr="pow_exp", pow_exp_power=1.0, noise0=None, random_state=None, hyper_opt="TNC"):
     super().__init__(ndim, xlimits)
     if random_state is None:
       random_state = 42
@@ -22,14 +22,18 @@ class smtKRG(GaussianProcess):
                        print_global=False,
                        eval_noise=False,
                        corr=corr,
-                       pow_exp_power=pow_exp_power)
+                       pow_exp_power=pow_exp_power,
+                       hyper_opt = hyper_opt,
+                       theta0 = [theta])
     else:
       self.surrogatesmt = KRG(design_space=design_space,
                        print_global=False,
                        noise0=noise0,
                        eval_noise=False,
                        corr=corr,
-                       pow_exp_power=pow_exp_power)
+                       pow_exp_power=pow_exp_power,
+                       hyper_opt=hyper_opt,
+                       theta0 = [theta])
     self.trained = False
 
   def mean(self, x):

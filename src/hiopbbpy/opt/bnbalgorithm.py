@@ -187,7 +187,33 @@ class BnBAlgorithmBase:
     self.z = cp.Variable(ntrain)
     self.obj = 0.5 * cp.quad_form(self.z, self.A_obj) + self.b_obj.T @ self.z + self.c_obj
 
-    variance_bound_problem = variance_U_problem(self.A_obj, self.b_obj, self.c_obj, self.C) 
+    # improved optimization problem to determine LCB lower bound
+    self.b_obj2 = np.zeros(ntrain + 1)
+    self.b_obj2[-1] = -3.0 # -\beta TODO: call this value from LCB acqf!!!! (MOVE this to BnBALgorithm not in base!)
+    self.b_obj2[:ntrain] = self.y_std * np.dot(self.gamma, self.C)
+    self.c_obj2 = self.y_mean + self.y_std * self.beta0
+    self.C2 = np.zeros((ntrain, ntrain+1))
+    self.C2[:,:ntrain] = self.C[:,:]
+    self.A_constraint2 = np.zeros((ntrain + 1, ntrain+1))
+    self.A_constraint2[:ntrain, :ntrain] = self.sigma2 * self.A_obj
+    self.A_constraint2[ntrain, ntrain] = -2.
+    self.b_constraint2 = np.zeros(ntrain + 1)
+    self.b_constraint2[:ntrain] = self.sigma2 * self.b_obj[:, 0]
+    self.c_constraint2 = self.sigma2 * self.c_obj
+    self.en1 = np.zeros(ntrain+1)
+    self.en1[ntrain] = 1.
+    self.X = cp.Variable(ntrain+1) # (z, s), z = C * k
+    self.obj2 = self.b_obj2.T @ self.X + self.c_obj2
+    self.cons2 = 0.5 * cp.quad_form(self.X, self.A_constraint2) + self.b_constraint2 @ self.X + self.c_constraint2
+
+
+    
+
+
+
+
+
+    #variance_bound_problem = variance_U_problem(self.A_obj, self.b_obj, self.c_obj, self.C) 
 
     
 
@@ -223,13 +249,66 @@ class BnBAlgorithmBase:
     dmin = np.maximum(0.0, np.maximum(l_c - Xc, Xc - u_c))        # (nt,d)
     dmax = np.maximum(np.abs(l_c - Xc), np.abs(u_c - Xc))         # (nt,d)
 
+    # construct the matrix of constraints that is specific to B k >= 0
+    n_train = Xc.shape[0]
+    #B = np.zeros((n_train * (n_train - 1), n_train))
+    B = []
     if spec == "pow_exp":
       # power-exponential: k = exp(-sum_j θ_j |dx_j|^p)
       p = getattr(self, "p", 2.0)
       s_min = (th * (dmin ** p)).sum(axis=1)
       s_max = (th * (dmax ** p)).sum(axis=1)
       kU = np.exp(-s_min)                                       # max on box
-      kL = np.exp(-s_max)                                       # min on box
+      kL = np.exp(-s_max)                                  # min on box
+      idx = 0
+      B = []
+      for i in range(n_train):
+        if p != 2.0 and p != 1.0:
+          break
+        for j in range(i):
+          if p == 1.0:
+            xi = Xc[i]
+            xj = Xc[j]
+            dxij = xi - xj
+            max_arg = th[0] * np.linalg.norm(dxij, 2)
+            Kij_u = np.exp(max_arg)
+            Kij_l = np.exp(-1.0 * max_arg)
+            if Kij_u < 1.e4 and Kij_u > 1.e-4:
+              constraint_row_u = np.zeros(n_train)
+              constraint_row_u[i] = -1.
+              constraint_row_u[j] = 1. * Kij_u
+              B.append(constraint_row_u)
+              #B[2 * idx , i] = -1.
+              #B[2 * idx , j] = 1. * Kij_u
+            # lower bound Kij_l * kj <= ki ==> ki - Kij_l >= 0
+            if Kij_l < 1.e4 and Kij_l > 1.e-4:
+              constraint_row_l = np.zeros(n_train)
+              constraint_row_l[i] = 1.
+              constraint_row_l[j] = -1. * Kij_l
+              B.append(constraint_row_l)
+            
+          if p == 2.0:
+            xi = Xc[i]
+            xj = Xc[j]
+            dxij = xi - xj
+            boxdxij = np.array([l_c * dxij, u_c * dxij])
+            chimax = 2. * sum(np.max(boxdxij, axis = 0))
+            chimin = 2. * sum(np.min(boxdxij, axis = 0))
+            Kij_u = np.exp(th[0] * (chimax + np.linalg.norm(xj, 2) ** 2. - np.linalg.norm(xi, 2) ** 2.))
+            Kij_l = np.exp(th[0] * (chimin + np.linalg.norm(xj, 2) ** 2. - np.linalg.norm(xi, 2) ** 2.))
+            # upper bound ki <= Kij_u * kj ==> Kij_u * kj - ki >= 0
+            if Kij_u < 1.e4 and Kij_u > 1.e-4:
+              constraint_row_u = np.zeros(n_train)
+              constraint_row_u[i] = -1.
+              constraint_row_u[j] = 1. * Kij_u
+              B.append(constraint_row_u)
+            # lower bound Kij_l * kj <= ki ==> ki - Kij_l >= 0
+            if Kij_l < 1.e4 and Kij_l > 1.e-4:
+              constraint_row_l = np.zeros(n_train)
+              constraint_row_l[i] = 1.
+              constraint_row_l[j] = -1. * Kij_l
+              B.append(constraint_row_l)
+            idx += 1
     elif spec == "matern12":
       # Matérn ν=1/2 (a.k.a. abs-exp): k = exp(-sum_j θ_j |dx_j|)
       s_min = (th * dmin).sum(axis=1)
@@ -253,18 +332,32 @@ class BnBAlgorithmBase:
       kL = np.prod(gmax, axis=1)
     else:
       raise ValueError(f"Unsupported kernel_spec: {spec}")
-    return kL, kU
+    B = np.array(B)
+    return kL, kU, B
 
   def mu_bounds(self, kL, kU):
     # compute in normalized y-space
-    lo = np.where(self.gamma >= 0.0, kL, kU)
-    hi = np.where(self.gamma >= 0.0, kU, kL)
-    mu_L_n = self.beta0 + float(np.dot(self.gamma, lo))  # normalized
-    mu_U_n = self.beta0 + float(np.dot(self.gamma, hi))  # normalized
+    B = getattr(self, "B", np.array([]))
+    if len(B) == 0:
+      lo = np.where(self.gamma >= 0.0, kL, kU)
+      hi = np.where(self.gamma >= 0.0, kU, kL)
+      mu_L_n = self.beta0 + float(np.dot(self.gamma, lo))  # normalized
+      mu_U_n = self.beta0 + float(np.dot(self.gamma, hi))  # normalized
+    else:
+      # min gamma^T k, where kL <= k <= kU and Bcon k >= 0
+      kvar = cp.Variable(len(self.gamma))
+      mu_obj = self.gamma.T @ kvar + self.beta0
+      cons = [kvar >= kL, kvar <= kU, B @ kvar >= 0]
+      mu_U_n = cp.Problem(cp.Maximize(mu_obj), cons).solve(solver="OSQP",verbose=False, eps_abs=1.e-14, eps_rel=1.e-10)
+      mu_L_n = cp.Problem(cp.Minimize(mu_obj), cons).solve(solver="OSQP",verbose=False, eps_abs=1.e-14, eps_rel=1.e-10)
+      assert np.isfinite(mu_U_n), "convex optimizer (max mean) did not converge"
+      assert np.isfinite(mu_L_n), "convex optimizer (min mean) did not converge"
 
     # de-normalize like SMT
     mu_L = self.y_mean + self.y_std * mu_L_n
     mu_U = self.y_mean + self.y_std * mu_U_n
+
+
     return mu_L, mu_U
 
   def sigma2_bounds(self, kL, kU, l = None, u = None):
@@ -288,7 +381,13 @@ class BnBAlgorithmBase:
       s2_L = min(S2.flatten())
 
     # variance upper-bound (in terms of kernel k) defined by convex QP
-    cons = [self.C @ self.z >= kL, self.C @ self.z <= kU]
+    B = getattr(self, "B", np.array([]))
+    if len(B) == 0:
+      cons = [self.C @ self.z >= kL, self.C @ self.z <= kU]
+    else:
+      Bcon = B.dot(self.C)
+      cons = [self.C @ self.z >= kL, self.C @ self.z <= kU, Bcon @ self.z >= 0]
+
     s2_U_n = cp.Problem(cp.Maximize(self.obj), cons).solve(solver="OSQP",verbose=False, eps_abs=1.e-14, eps_rel=1.e-10)
     assert np.isfinite(s2_U_n), "convex optimizer did not converge"
     
@@ -305,6 +404,8 @@ class BnBAlgorithm(BnBAlgorithmBase):
     super().__init__(x = self.gpsurrogate.training_x, y = self.gpsurrogate.training_y)
     if not (isinstance(self.acqf, LCBacquisition) or isinstance(self.acqf, EIacquisition)):
       raise NotImplementedError("Unrecognized acquisition function type")
+    if not (isinstance(self.acqf, LCBacquisition)):
+      raise NotImplementedError("Only supprting LCB right now")
     self.sync_from_smt()
     
     # Stopping criteria parameters (default)    
@@ -361,7 +462,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
   def compute_acqf_upper_bound(self, l, u):
     # We compute the upper bound of the acquisition function based on bounds of the kernel, mu and sigma.
     # Compute the kernel bounds with given x
-    kL, kU = self.ker_bounds(l, u)
+    kL, kU, _ = self.ker_bounds(l, u)
     # Compute the mean bounds
     mu_L, mu_U = self.mu_bounds(kL, kU)
     var_L, var_U = self.sigma2_bounds(kL, kU, l=l, u=u)
@@ -370,22 +471,37 @@ class BnBAlgorithm(BnBAlgorithmBase):
   def compute_acqf_lower_bound(self, l, u):
     # We compute the upper bound of the acquisition function based on bounds of the kernel, mu and sigma.
     # Compute the kernel bounds with given x
-    kL, kU = self.ker_bounds(l, u)
+    kL, kU, _= self.ker_bounds(l, u)
     # Compute the mean bounds
     mu_L, mu_U = self.mu_bounds(kL, kU)
     var_L,var_U = self.sigma2_bounds(kL, kU, l=l, u=u)
     return self.acqf.evaluate_meansig2(np.atleast_1d(mu_L), np.atleast_1d(var_U))[0]
   def compute_acqf_bounds(self, l, u):
     # kernel bounds
-    kL, kU = self.ker_bounds(l, u)
-    # mean bounds
-    mu_L, mu_U = self.mu_bounds(kL, kU)
-    var_L, var_U = self.sigma2_bounds(kL, kU, l=l, u=u)
-    # evaluate acquisition at (mu_L, var_U) and (mu_U, var_L)
-    mu  = np.array([mu_L, mu_U])
-    var = np.array([var_U, var_L])
-    acqf_bounds = self.acqf.evaluate_meansig2(mu, var)
-    
+    kL, kU, B = self.ker_bounds(l, u)
+    self.B = B 
+    # obtain acqf lower-bound 
+    # B k >= 0, k = C2 z
+    if isinstance(self.acqf, LCBacquisition):
+      if len(B) > 0: # one or more kernel coupling constraints
+        B2 = B.dot(self.C2)
+        cons = [self.C2 @ self.X >= kL, self.C2 @ self.X <= kU, self.cons2 >= 0, self.en1 @ self.X >= 0, B2 @ self.X >= 0]
+      else: # no kernel coupling constraints
+        cons = [self.C2 @ self.X >= kL, self.C2 @ self.X <= kU, self.cons2 >= 0, self.en1 @ self.X >= 0]
+      acqf_L = cp.Problem(cp.Minimize(self.obj2), cons).solve(verbose=False)
+      assert np.isfinite(acqf_L), "convex optimizer did not converge"
+    else:
+      # mean bounds
+      mu_L, mu_U = self.mu_bounds(kL, kU)
+      var_L, var_U = self.sigma2_bounds(kL, kU, l=l, u=u)
+      # evaluate acquisition at (mu_L, var_U) and (mu_U, var_L)
+      mu  = np.array([mu_L, mu_U])
+      var = np.array([var_U, var_L])
+      acqf_bounds = self.acqf.evaluate_meansig2(mu, var)
+      acqf_L = acqf_bounds[0]
+
+
+ 
     if self.acqf_UB_opt:
       opt_solver = "IPOPT"
       opt_solver_options = {'max_iter' : 1000, 'tol' : 1.e-5, 'honor_original_bounds' : 'yes', 'print_level' : 2}
@@ -412,9 +528,9 @@ class BnBAlgorithm(BnBAlgorithmBase):
           x_points[i, j] = l[j] + (u[j] - l[j]) / (s_per_dim - 1.) * float(int(i / s_per_dim**j) % s_per_dim)
       acqf_eval = self.acqf.evaluate(x_points)
       acqf_U = min(acqf_eval.flatten())
-    assert acqf_bounds[0] <= acqf_U, "acqf_L > acqf_U"
-    
-    return acqf_bounds[0], acqf_U
+    #assert acqf_bounds[0] <= acqf_U, "acqf_L > acqf_U"
+    #return acqf_bounds[0], acqf_U
+    return acqf_L, acqf_U
   def _prune_queue(self, queue, lub, eps):
     """Keep only nodes whose lower-bound is not greater or equal least upper-bound + eps; then re-heapify."""
     # queue items are (L, counter, node)
@@ -843,6 +959,8 @@ class branching_wrapper:
       s_max = (th * (dmax ** p)).sum(axis=1)
       kU = np.exp(-s_min)                                       # max on box
       kL = np.exp(-s_max)                                       # min on box
+      # construct a matrix of constraints that is specific to squared exponential.
+
     elif spec == "matern12":
       # Matérn ν=1/2 (a.k.a. abs-exp): k = exp(-sum_j θ_j |dx_j|)
       s_min = (th * dmin).sum(axis=1)
