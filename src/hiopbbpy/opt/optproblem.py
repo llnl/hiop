@@ -35,14 +35,21 @@ class IpoptProb:
     self.eval_g  = gradient
     self.xl = [b[0] for b in xbounds]
     self.xu = [b[1] for b in xbounds]
-    self.cl = []
-    self.cu = []
     self.nvar = len(xbounds)
 
     self.ipopt_options = solver_options
     self.ipopt_options['sb'] = 'yes'
 
-    if isinstance(self.cons, list):
+    unconstrained = (
+            constraint is None
+            or constraint == {}
+            or constraint == []
+        )
+    if unconstrained:
+      self.cl = []
+      self.cu = []
+      self.ncon = 0
+    elif isinstance(self.cons, list):
       # constraints is provided as a list of dict, supported by SLSQP and Ipopt
       for con in self.cons:
         check_required_keys(con,['type', 'fun'])
@@ -60,7 +67,7 @@ class IpoptProb:
       self.cl = constraint['cl']
       self.cu = constraint['cu']
     else:
-      raise ValueError("constraints must be provided as a dict of a list of dict.")
+      raise ValueError("constraints must be None, {}, [], a dict, or a list of dict.")
     self.ncon = len(self.cl)
 
     cyipopt = _require_cyipopt()
@@ -80,10 +87,13 @@ class IpoptProb:
     return self.eval_g(x)
 
   def constraints(self, x):
+    if self.ncon == 0:
+      return np.zeros((0,), dtype=float)
+
     if isinstance(self.cons, list):
       return np.array([con['fun'](x) for con in self.cons])
     else:
-      return self.cons['cons'](x)
+      return np.asarray(self.cons['cons'](x), dtype=float)
 
   def jacobian(self, x):
     if isinstance(self.cons, list):
