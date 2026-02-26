@@ -40,7 +40,7 @@ class variance_U_problem:
   def constraintJacobian(self, z):
     return self.C[:,:]
 
-    
+	    
 
 # BnBNode
 # corners of interval [l, u]
@@ -106,6 +106,7 @@ class BnBAlgorithmBase:
     # Training data
     self.x = x
     self.y = y
+    self.ntrain = self.x.shape[0]
 
   def sync_from_smt(self):
     sm = self.gpsurrogate.surrogatesmt
@@ -205,8 +206,6 @@ class BnBAlgorithmBase:
     u_c = self._normalize(u).ravel()
 
     Xc  = self.Xc                # (nt, d)
-    th  = self.theta.ravel()     # (d,)
-    spec = self.kernel_spec
 
     # per-point, per-dimension distance extremes (normalized space)
     dmin = np.maximum(0.0, np.maximum(l_c - Xc, Xc - u_c))        # (nt,d)
@@ -230,6 +229,8 @@ class BnBAlgorithmBase:
     # per-point, per-dimension distance extremes (normalized space)
     dmin = np.maximum(0.0, np.maximum(l_c - Xc, Xc - u_c))        # (nt,d)
     dmax = np.maximum(np.abs(l_c - Xc), np.abs(u_c - Xc))         # (nt,d)
+    self.dmin = dmin
+    self.dmax = dmax
 
     # construct the matrix of constraints that is specific to B k >= 0
     n_train = Xc.shape[0]
@@ -254,13 +255,13 @@ class BnBAlgorithmBase:
             max_arg = th[0] * np.linalg.norm(dxij, 2)
             Kij_u = np.exp(max_arg)
             Kij_l = np.exp(-1.0 * max_arg)
+
             if Kij_u < 1.e4 and Kij_u > 1.e-4:
               constraint_row_u = np.zeros(n_train)
-              constraint_row_u[i] = -1.
-              constraint_row_u[j] = 1. * Kij_u
+              # -ki + Kij_u * kj >= 0
+              constraint_row_u[i] = -1. # -ki
+              constraint_row_u[j] = Kij_u  
               B.append(constraint_row_u)
-              #B[2 * idx , i] = -1.
-              #B[2 * idx , j] = 1. * Kij_u
             # lower bound Kij_l * kj <= ki ==> ki - Kij_l >= 0
             if Kij_l < 1.e4 and Kij_l > 1.e-4:
               constraint_row_l = np.zeros(n_train)
@@ -315,6 +316,54 @@ class BnBAlgorithmBase:
       raise ValueError(f"Unsupported kernel_spec: {spec}")
     B = np.array(B)
     return kL, kU, B
+  # determine if the 
+  def ker_bound_violation(self, l, u, kOpt):
+    # normalize the box
+    l_c = self._normalize(l).ravel()
+    u_c = self._normalize(u).ravel()
+
+    Xc  = self.Xc                # (nt, d)
+    th  = self.theta.ravel()     # (d,)
+    spec = self.kernel_spec
+
+    # per-point, per-dimension distance extremes (normalized space)
+    dmin = np.maximum(0.0, np.maximum(l_c - Xc, Xc - u_c))        # (nt,d)
+    dmax = np.maximum(np.abs(l_c - Xc), np.abs(u_c - Xc))         # (nt,d)
+    n_train = Xc.shape[0]
+    assert spec == "pow_exp", "expecting that you are using power exponential kernel"
+    if spec == "pow_exp":
+      # power-exponential: k = exp(-sum_j θ_j |dx_j|^p)
+      p = getattr(self, "p", 2.0)
+      assert p == 1.0 or p == 2.0, "expecting that you are using p = 1.0 or p = 2.0"      
+      for i in range(n_train):
+        if p != 2.0 and p != 1.0:
+          break
+        for j in range(i):
+          if p == 1.0:
+            xi = Xc[i]
+            xj = Xc[j]
+            dxij = xi - xj
+            max_arg = th[0] * np.linalg.norm(dxij, 2)
+            Kij_u = np.exp(max_arg)
+            Kij_l = np.exp(-1.0 * max_arg)
+          if p == 2.0:
+            xi = Xc[i]
+            xj = Xc[j]
+            dxij = xi - xj
+            boxdxij = np.array([l_c * dxij, u_c * dxij])
+            chimax = 2. * sum(np.max(boxdxij, axis = 0))
+            chimin = 2. * sum(np.min(boxdxij, axis = 0))
+            Kij_u = np.exp(th[0] * (chimax + np.linalg.norm(xj, 2) ** 2. - np.linalg.norm(xi, 2) ** 2.))
+            Kij_l = np.exp(th[0] * (chimin + np.linalg.norm(xj, 2) ** 2. - np.linalg.norm(xi, 2) ** 2.))
+          #if p == 1.0 or p == 2.0:
+          #  #if not (Kij_l <= kOpt[i] / kOpt[j] <= Kij_u):
+          #  #  print("yes constraint violation")
+          #  #else:
+          #  #  print("no constraint violation")
+          #  #print("Kl_ij = {0:1.8e}, ki / kj = {1:1.8e}, Ku_ij = {2:1.8e}, i = {3:d}, j = {4:d}".format(
+          #  #         Kij_l, kOpt[i] / kOpt[j], Kij_u, i, j))
+    return
+  
 
   def mu_bounds(self, kL, kU):
     # compute in normalized y-space
@@ -329,8 +378,8 @@ class BnBAlgorithmBase:
       kvar = cp.Variable(len(self.gamma))
       mu_obj = self.gamma.T @ kvar + self.beta0
       cons = [kvar >= kL, kvar <= kU, B @ kvar >= 0]
-      mu_U_n = cp.Problem(cp.Maximize(mu_obj), cons).solve(solver="OSQP",verbose=False, eps_abs=1.e-14, eps_rel=1.e-10)
-      mu_L_n = cp.Problem(cp.Minimize(mu_obj), cons).solve(solver="OSQP",verbose=False, eps_abs=1.e-14, eps_rel=1.e-10)
+      mu_U_n = cp.Problem(cp.Maximize(mu_obj), cons).solve(solver="OSQP",verbose=self.verbose_cvx_solver, eps_abs=1.e-14, eps_rel=1.e-10)
+      mu_L_n = cp.Problem(cp.Minimize(mu_obj), cons).solve(solver="OSQP",verbose=self.verbose_cvx_solver, eps_abs=1.e-14, eps_rel=1.e-10)
       assert np.isfinite(mu_U_n), "convex optimizer (max mean) did not converge"
       assert np.isfinite(mu_L_n), "convex optimizer (min mean) did not converge"
 
@@ -369,7 +418,7 @@ class BnBAlgorithmBase:
       Bcon = B.dot(self.C)
       cons = [self.C @ self.z >= kL, self.C @ self.z <= kU, Bcon @ self.z >= 0]
 
-    s2_U_n = cp.Problem(cp.Maximize(self.obj), cons).solve(solver="OSQP",verbose=False, eps_abs=1.e-14, eps_rel=1.e-10)
+    s2_U_n = cp.Problem(cp.Maximize(self.obj), cons).solve(solver="OSQP",verbose=self.verbose_cvx_solver, eps_abs=1.e-14, eps_rel=1.e-10)
     assert np.isfinite(s2_U_n), "convex optimizer did not converge"
     
     # re-scale
@@ -401,6 +450,8 @@ class BnBAlgorithm(BnBAlgorithmBase):
     self.acqf_UB_opt = False
     self.pure_BBS = False  # pure BBS search or hybrid BBS/BFS search
     self.sync_mode = False # synchronous or asynchronous evaluations
+    self.verbose_cvx_solver = False # verbose convex optimizer solves
+    self.opt_mode = 2
     # Set options form command 
     self.epsilon_gap = options.get('epsilon_gap', self.epsilon_gap)
     self.epsilon_diam = options.get('epsilon_diam', self.epsilon_diam)
@@ -410,7 +461,11 @@ class BnBAlgorithm(BnBAlgorithmBase):
     self.nodes_per_batch = options.get('nodes_per_batch', self.nodes_per_batch)
     self.acqf_UB_opt = options.get('acqf_ub_opt', self.acqf_UB_opt)
     self.pure_BBS = options.get('pure_BBS', self.pure_BBS)
-    self.sync_mode = options.get('sync_mode', self.sync_mode)
+    self.sync_mode =  options.get('sync_mode', self.sync_mode)
+    self.verbose_cvx_solver = options.get('verbose_cvx_solver', self.verbose_cvx_solver)
+    self.opt_mode = options.get('opt_mode', self.opt_mode)
+    assert self.opt_mode in [0, 1, 2, 3, 4], "unknown opt_mode"
+
 
     if is_running_with_mpi():
       num_available_workers = MPI.COMM_WORLD.Get_size() - 1
@@ -451,6 +506,13 @@ class BnBAlgorithm(BnBAlgorithmBase):
     self.C2 = np.zeros((ntrain, ntrain+1))
     self.C2[:,:ntrain] = self.C[:,:]
     self.A_constraint2 = np.zeros((ntrain + 1, ntrain+1))
+    ## regularize A_obj
+    #U, s, Vh = np.linalg.svd(self.A_obj)
+    #sreg = [min(si, -1.e-15) for si in s]
+    #Areg = U @ np.diag(sreg) @ Vh
+
+
+    #self.A_constraint2[:ntrain, :ntrain] = self.sigma2 * Areg #self.A_obj
     self.A_constraint2[:ntrain, :ntrain] = self.sigma2 * self.A_obj
     self.A_constraint2[ntrain, ntrain] = -2.
     self.b_constraint2 = np.zeros(ntrain + 1)
@@ -483,17 +545,182 @@ class BnBAlgorithm(BnBAlgorithmBase):
   def compute_acqf_bounds(self, l, u):
     # kernel bounds
     kL, kU, B = self.ker_bounds(l, u)
-    self.B = B 
-    # obtain acqf lower-bound 
-    # B k >= 0, k = C2 z
+    self.B = B
+
+    assert self.kernel_spec == "pow_exp", "not supporting other GP kernel types"
     if isinstance(self.acqf, LCBacquisition):
-      if len(B) > 0: # one or more kernel coupling constraints
-        B2 = B.dot(self.C2)
-        cons = [self.C2 @ self.X >= kL, self.C2 @ self.X <= kU, self.cons2 >= 0, self.en1 @ self.X >= 0, B2 @ self.X >= 0]
-      else: # no kernel coupling constraints
+      if self.p == 1.0:
+        # opt_mode = 0 (previous baseline w ratio constraints)
+        # opt_mode = 1 (Convex relaxation w no ratio constraints on k and no affine constraints)
+        # opt_mode = 2 (Most recent relaxation w ratio constraints and affine constraints
+        opt_mode = self.opt_mode
+     
+        assert opt_mode in [0, 1, 2, 3, 4], "opt mode can only be 0, 1, or 2"
+        # obtain acqf lower-bound 
+        # B k >= 0, k = C2 z
         cons = [self.C2 @ self.X >= kL, self.C2 @ self.X <= kU, self.cons2 >= 0, self.en1 @ self.X >= 0]
-      acqf_L = cp.Problem(cp.Minimize(self.obj2), cons).solve(verbose=False)
+        if len(B) > 0: # one or more kernel coupling constraints
+          B2 = B.dot(self.C2)
+          if opt_mode == 0 or opt_mode == 2 or opt_mode == 3:
+            cons.append(B2 @ self.X >= 0)
+        if opt_mode != 0:
+          xvar = cp.Variable(self.x.shape[1])
+          cons.append(l <= xvar)
+          cons.append(xvar <= u)
+          ntrain = self.x.shape[0]
+          rhovar = cp.Variable(ntrain) 
+          dmin = np.maximum(0.0, np.maximum(l - self.x, self.x - u))        # (nt,d)
+          dmax = np.maximum(np.abs(l - self.x), np.abs(u - self.x))         # (nt,d)
+          rhomin = np.linalg.norm(dmin, axis=1)
+          rhomax = np.linalg.norm(dmax, axis=1)
+          assert len(rhomin) == ntrain
+          th  = self.theta.ravel()     # (d,)
+          # --- constraints ---
+          # || x - x_i || <= rho_i
+          # k_i => exp(-th * \rho_i / xscale)
+          for i in range(ntrain):
+            cons.append(cp.atoms.norm(xvar-self.x[i]) <= rhovar[i]) # || x - x_i|| <= \rho_i
+            cons.append((self.C2 @ self.X)[i] >= cp.atoms.exp( -th * rhovar[i] / self.X_scale)) # do we need to be more careful with this scaling in dim > 1? 
+          kMax = np.exp(-th * rhomin / self.X_scale)
+          kMin = np.exp(-th * rhomax / self.X_scale)
+          # --- constraints --- 
+          # k_i <= secant of k_i(x) over kMin, kMax
+          cons.append(self.C2 @ self.X <= kMax + cp.atoms.multiply((kMin - kMax) / (rhomax - rhomin),  (rhovar  - rhomin)))
+          # \rho_i = max{ \rho_i }
+          cons.append(rhovar <= rhomax)
+        
+          # --- constraints ---
+          # affine constraints on \rho_i via reverse triangle inequality
+          if opt_mode == 2 or opt_mode == 4:
+            for i in range(ntrain):
+              for j in range(i+1, ntrain):
+                dxij_norm = np.linalg.norm(self.x[i] - self.x[j])
+                cons.append(rhovar[i] - rhovar[j] <= dxij_norm)
+                cons.append(rhovar[i] - rhovar[j] >= -1.0 * dxij_norm)
+          # --- constraints ---
+          # convex quadratic constraint on \rho_{i}
+          ncoupling = 2
+          for i in range(ntrain):
+            for j in range(i):
+              idxs = [i, j]
+              q = np.sum(self.x[idxs], axis=0)
+              Jl = 0.5 * ntrain * l **2 - q * l
+              Ju = 0.5 * ntrain * u **2 - q * u
+              Js = np.array([Jl, Ju])
+              max_idx_set = np.argmax(Js, axis=0).flatten()
+              xstar = np.array([l, u])[max_idx_set]
+              R = 0.5 * ntrain * np.inner(xstar, xstar) - np.inner(q, xstar) + 0.5 * sum([np.inner(self.x[j], self.x[j]) for j in idxs])
+              Acoupling = np.zeros((ntrain, ntrain))
+              for idx in idxs:
+                Acoupling[idx, idx] = 1.0
+              #cons.append(0.5 * cp.quad_form(rhovar, Acoupling) <= R)
+      elif self.p == 2.0:
+                # opt_mode = 0 (previous baseline w ratio constraints)
+        # opt_mode = 1 (Convex relaxation w no ratio constraints on k and no affine constraints)
+        # opt_mode = 2 (Most recent relaxation w ratio constraints and affine constraints
+        opt_mode = self.opt_mode
+     
+        assert opt_mode in [0, 1, 2, 3, 4], "opt mode can only be 0, 1, or 2"
+        # obtain acqf lower-bound 
+        # B k >= 0, k = C2 z
+        cons = [self.C2 @ self.X >= kL, self.C2 @ self.X <= kU, self.cons2 >= 0, self.en1 @ self.X >= 0]
+        if len(B) > 0: # one or more kernel coupling constraints
+          B2 = B.dot(self.C2)
+          if opt_mode == 0 or opt_mode == 2 or opt_mode == 3:
+            cons.append(B2 @ self.X >= 0)
+        if opt_mode != 0:
+          xvar = cp.Variable(self.x.shape[1])
+          cons.append(l <= xvar)
+          cons.append(xvar <= u)
+          ntrain = self.x.shape[0]
+          rhovar = cp.Variable(ntrain) 
+          dmin = np.maximum(0.0, np.maximum(l - self.x, self.x - u))        # (nt,d)
+          dmax = np.maximum(np.abs(l - self.x), np.abs(u - self.x))         # (nt,d)
+          rhomin = np.linalg.norm(dmin, axis=1)**2.
+          rhomax = np.linalg.norm(dmax, axis=1)**2.
+          assert len(rhomin) == ntrain
+          th  = self.theta.ravel()     # (d,)
+          # --- constraints ---
+          # || x - x_i || <= rho_i
+          # k_i => exp(-th * \rho_i / xscale)
+          for i in range(ntrain):
+            cons.append(cp.atoms.norm(xvar-self.x[i])**2. <= rhovar[i]) # || x - x_i||^2 <= \rho_i
+            cons.append((self.C2 @ self.X)[i] >= cp.atoms.exp( -th * rhovar[i] / (self.X_scale**self.p)))
+          kMax = np.exp(-th * rhomin / (self.X_scale**self.p))
+          kMin = np.exp(-th * rhomax / (self.X_scale**self.p))
+          # --- constraints --- 
+          # k_i <= secant of k_i(x) over kMin, kMax
+          cons.append(self.C2 @ self.X <= kMax + cp.atoms.multiply((kMin - kMax) / (rhomax - rhomin),  (rhovar  - rhomin)))
+          # \rho_i = max{ \rho_i }
+          cons.append(rhovar <= rhomax)
+        
+          # --- constraints ---
+          # affine constraints on \rho_i via reverse triangle inequality
+          #if opt_mode == 2 or opt_mode == 4:
+          #  for i in range(ntrain):
+          #    for j in range(i+1, ntrain):
+          #      dxij_norm = np.linalg.norm(self.x[i] - self.x[j])
+          #      cons.append(rhovar[i] - rhovar[j] <= dxij_norm)
+          #      cons.append(rhovar[i] - rhovar[j] >= -1.0 * dxij_norm)
+          # --- constraints ---
+          # convex quadratic constraint on \rho_{i}
+          #ncoupling = 2
+          #for i in range(ntrain):
+          #  for j in range(i):
+          #    idxs = [i, j]
+          #    q = np.sum(self.x[idxs], axis=0)
+          #    Jl = 0.5 * ntrain * l **2 - q * l
+          #    Ju = 0.5 * ntrain * u **2 - q * u
+          #    Js = np.array([Jl, Ju])
+          #    max_idx_set = np.argmax(Js, axis=0).flatten()
+          #    xstar = np.array([l, u])[max_idx_set]
+          #    R = 0.5 * ntrain * np.inner(xstar, xstar) - np.inner(q, xstar) + 0.5 * sum([np.inner(self.x[j], self.x[j]) for j in idxs])
+          #    Acoupling = np.zeros((ntrain, ntrain))
+          #    for idx in idxs:
+          #      Acoupling[idx, idx] = 1.0
+          #    #cons.append(0.5 * cp.quad_form(rhovar, Acoupling) <= R)
+
+      opt_tol = 1.e-12
+      try: 
+        acqf_L = cp.Problem(cp.Minimize(self.obj2), cons).solve(verbose=False, tol_gap_abs=opt_tol)
+        pass
+      except Exception as e:
+        print(f"An unexpected error occured: {e}")
+        # solve again but verbosely
+        acqf_L = cp.Problem(cp.Minimize(self.obj2), cons).solve(verbose=True, tol_gap_abs=opt_tol * 1.e6)
+        #assert False, "convex optimizer did not converge"
+      if not np.isfinite(acqf_L):
+        acqf_L = cp.Problem(cp.Minimize(self.obj2), cons).solve(verbose=True, tol_gap_abs=opt_tol * 1.e6)
+        if not np.isfinite(acqf_L):
+          print("checking eigenvalues...")
+          eigs = np.linalg.eigvalsh(self.A_obj)
+          print("max eig = ", max(eigs))
+          print("min eig ", min(eigs))
+
       assert np.isfinite(acqf_L), "convex optimizer did not converge"
+      # check if rhos violate (42)
+      if opt_mode != 0 and self.p == 1.0:
+        for i in range(ntrain):
+          for j in range(ntrain):
+            drhoij = abs(rhovar.value[i] - rhovar.value[j])
+            dxij   = np.linalg.norm(self.x[i] - self.x[j]) 
+            if drhoij > dxij + opt_tol * 10.:
+              print("violation of constraint (42)")
+              print("|rho_{0:d} - rho_{1:d}| = {2:1.8e}".format(i, j, drhoij))
+              print("||x_{0:d} - x_{1:d}|| = {2:1.8e}".format(i, j, dxij))
+      # check if k violates the ratio constraints
+      kopt = self.C2 @ self.X.value
+      ker_bound_violation = self.ker_bound_violation(l, u, kopt)
+      #if ker_bound_violation:
+      #  print("kernel bound violation")
+      #else:
+      #  print("no kernel bound violation")
+      
+      #print("-------l = ", l, "u = ", u, " --------")
+      #print("xstar = ", xvar.value)
+      #for i in range(ntrain):
+      #  print("||x - x_i|| = {0:1.2e}, rho_i = {1:1.2e}, rhomin_i = {2:1.2e}, rhomax_i = {3:1.2e}".format(np.linalg.norm(xvar.value - self.x[i]), rhovar.value[i], rhomin[i], rhomax[i]))
+      #  print("k(rho_i) (convex relaxation underestimate) = {1:1.2e}, k(rho_i) = {0:1.2e}, k_i (convex relaxation overestimate) = {2:1.2e}".format((self.C2 @ self.X.value)[i], np.exp(-th[0] * rhovar.value[i] / self.X_scale[0]), kMax[i] + (kMin[i] - kMax[i]) / (rhomax[i] - rhomin[i]) * (rhovar.value[i] - rhomin[i])))
     else:
       # mean bounds
       mu_L, mu_U = self.mu_bounds(kL, kU)
@@ -522,6 +749,10 @@ class BnBAlgorithm(BnBAlgorithmBase):
       opt_sol = opt_evaluator.run(acqf_minimizer.minimizer_callback, x0)[0]
       assert (np.all(opt_sol[0] >= l) and np.all(opt_sol[0] <= u)), f"acqf minimizer not within bounds"
       assert opt_sol[2], "optimizer did not converge"
+      msg = opt_sol[3]
+      if not "Algorithm terminated successfully at a locally optimal point, satisfying the convergence tolerances" in msg.decode('utf-8'):
+        print("WARING: IPOPT terminated irregularly")
+        print("IPOPT msg: ", msg.decode('utf-8'))
       acqf_U = self.acqf.evaluate(np.atleast_2d(opt_sol[0])).flatten()[0]
     else:
       s_per_dim = 3
@@ -889,6 +1120,9 @@ class branching_wrapper:
     
     self.X_offset, self.X_scale = sm.X_offset, sm.X_scale
     self.Xc = (self.x - self.X_offset) / self.X_scale
+    print("offset shape = ", self.X_offset.shape)
+    print("scale shape = ", self.X_scale.shape)
+
 
     y_mean = getattr(sm, "y_mean", None)
     y_std  = getattr(sm, "y_std",  None)
@@ -940,6 +1174,13 @@ class branching_wrapper:
     self.C2 = np.zeros((ntrain, ntrain+1))
     self.C2[:,:ntrain] = self.C[:,:]
     self.A_constraint2 = np.zeros((ntrain + 1, ntrain+1))
+    # regularize A_obj
+    U, s, Vh = np.linalg.svd(self.A_obj)
+    sreg = [min(si, -1.e-15) for si in s]
+    Areg = U @ np.diag(sreg) @ Vh
+
+
+    #self.A_constraint2[:ntrain, :ntrain] = self.sigma2 * Areg #self.A_obj
     self.A_constraint2[:ntrain, :ntrain] = self.sigma2 * self.A_obj
     self.A_constraint2[ntrain, ntrain] = -2.
     self.b_constraint2 = np.zeros(ntrain + 1)
@@ -1103,6 +1344,7 @@ class branching_wrapper:
   
   def compute_acqf_bounds(self, l, u):
     # kernel bounds
+    assert False, "not testing this now"
     kL, kU, B = self.ker_bounds(l, u)
     self.B = B 
     # obtain acqf lower-bound 
@@ -1113,7 +1355,7 @@ class branching_wrapper:
         cons = [self.C2 @ self.X >= kL, self.C2 @ self.X <= kU, self.cons2 >= 0, self.en1 @ self.X >= 0, B2 @ self.X >= 0]
       else: # no kernel coupling constraints
         cons = [self.C2 @ self.X >= kL, self.C2 @ self.X <= kU, self.cons2 >= 0, self.en1 @ self.X >= 0]
-      acqf_L = cp.Problem(cp.Minimize(self.obj2), cons).solve(verbose=False)
+      acqf_L = cp.Problem(cp.Minimize(self.obj2), cons).solve(verbose=self.verbose_cvx_solver)
       assert np.isfinite(acqf_L), "convex optimizer did not converge"
     else:
       # mean bounds

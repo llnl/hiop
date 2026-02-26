@@ -1,254 +1,216 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[1]:
+# In[ ]:
 
 
 import numpy as np
+import sys
 import matplotlib.pyplot as plt
+import matplotlib as mpl
+mpl.rcParams["font.size"] = 12
 
 from hiopbbpy.problems import Problem
 from hiopbbpy.surrogate_modeling import smtKRG 
-from hiopbbpy.opt import BnBAlgorithmBase, LCBacquisition
+from hiopbbpy.opt import BnBAlgorithmBase, BnBAlgorithm, LCBacquisition, EIacquisition, BnBNode
 
-
+if len(sys.argv) > 1:
+  opt_mode = int(sys.argv[1])
+else:
+  opt_mode = 2
+save_dir = 'newdata/opt_mode'+str(opt_mode) + '/'
 # #### Example 
 
-# In[2]:
+# In[ ]:
 
 
 ### parameters
-n_samples = 10  # number of the initial samples to train GP
-theta = 1.e-2  # hyperparameter for GP kernel
-nx = 2         # dimension of the problem
-c2D=np.array([1.25, 2.5])
-c1D=np.array([1.25])
-if nx == 1:
-    delta = 10.0
-    xlimits = np.array([[0.75 - delta/2.,0.75 + delta/2.]])
-    c1D = np.array([0.75])
-    c = c1D
-elif nx == 2:
-    c = c2D
-
-class QuadraticShift(Problem):
+n_samples = 3  # number of the initial samples to train GP
+theta = 1.e0# hyperparameter for GP kernel
+nx = 1         # dimension of the problem
+    
+class PeriodicObjective(Problem):
     """
-    f(x) = ||x - c||^2
-    - Global minimizer: x* = c
-    - Global minimum:   f* = 0
+    f(x) = \sum_{i in dim(x)} \sin(2\pi * x_i)
+    - Global minimizer: x* = (3/8,) * dim(x) + (1/2) * \mathbb{Z}^{dim(x)}
+    - Global minimum:   f* = -dim(x)
     """
-    def __init__(self, ndim=2, xlimits=None, c=None, constraints=[]):
+    def __init__(self, ndim=2, xlimits=None, constraints=[]):
         if xlimits is None:
-            xlimits = np.array([[-5.0, 5.0]] * ndim, dtype=float)
-        name = "QuadraticShift"
+            xlimits = np.array([[0.0, 1.0]] * ndim, dtype=float)
+        name = "PeriodicObjective"
         super().__init__(ndim, xlimits, name=name, constraints=constraints)
-
-        # choose center if not provided
-        if c is None:
-            c = self.xlimits.mean(axis=1)
-        self.c = np.asarray(c, dtype=float)
-        assert self.c.shape == (ndim,), "c must be a {0:d}D point".format(ndim)
-
         # expose known solution for checking later
-        # below is true when c is in xlimits
-        self.x_star = self.c.copy()
-        self.f_star = 0.0 
+        self.x_star = np.array([0.375,] * ndim)
+        self.f_star = -1.0 * ndim
 
     def _evaluate(self, x: np.ndarray) -> np.ndarray:
-        ne, nx = x.shape
-        assert nx == self.ndim
-        diff = x - self.c[None, :]
-        y = np.sum(diff * diff, axis=1, dtype=float).reshape(ne, 1)
-        return y
+        ne, _ = x.shape
+        y = np.sum(np.sin(4. * np.pi * x), axis=1).reshape(ne, 1)
+        #in_range = [x >= 0.25 and x <= 0.75]
+        in_range = [5./12. <= x[i,0] <= 11./12. for i in range(len(x))]
+        y_update = np.zeros(y.shape)
+        for i in range(len(y)):
+            y_update[i,0] = y[i, 0]
+            if in_range[i]:
+                y_update[i, 0] *= np.cos(24. * np.pi * x[i,0])
+        #y = np.array(y[i,0] * 1.)
+        return y_update
 
-if nx == 1:
-    problem = QuadraticShift(ndim=nx, xlimits=xlimits, c=c)
-else:
-    problem = QuadraticShift(ndim=nx, c=c)
+problem = PeriodicObjective(ndim=nx)
 problem.set_constraints([])  
-    
+
+problem.set_seed(42)
 x_train = problem.sample(n_samples)
 y_train = problem.evaluate(x_train)
 
-gp_model = smtKRG(theta, problem.xlimits, nx)
+gp_model = smtKRG(theta, problem.xlimits, nx, pow_exp_power=1.0, eval_noise=False)#, hyper_opt="NoOp")
 gp_model.train(x_train, y_train)
 
+print("optimal theta = ", gp_model.surrogatesmt.optimal_theta)
 
-# In[3]:
-
-
-#l = problem.xlimits[:, 0].astype(float)
-#u = problem.xlimits[:, 1].astype(float)
-#n_plot_pts = 1000
-#X = np.atleast_2d(np.linspace(l[0], u[0], n_plot_pts)).transpose()
-#
-#muX = gp_model.mean(X)
-#sigmaX = np.sqrt(gp_model.variance(X))
-#beta = 3.0
-
-acqf = LCBacquisition(gp_model)
-#Y_acqf = acqf.evaluate(X)
-
-#plt.plot(X, Y_acqf, label=r'$LCB(x)$')
-#plt.plot(X, muX, "-.", label=r'$\mu(x)$')
-#plt.plot(X, sigmaX, label=r'$\sigma(x)$')
-#plt.xlabel("x")
-#plt.ylabel("LCB(x)")
-#plt.legend()
-#plt.title("acquisition function")
-#plt.show()
+# In[ ]:
 
 
-# In[31]:
-
-
-# Build a base "probe" and populate it from the trained SMT model
-base = BnBAlgorithmBase(x=x_train, y=y_train)
-base.gpsurrogate = gp_model
-base.sync_from_smt()              # fills kernel_spec/p, theta, Xc, offsets, beta0/gamma, C, sigma2
-
-# (Optional) ensure we try to compute a nontrivial lower bound for variance
-#base.BnB_LBmethod = None          # if "IPOPT", sigma2_L will be 0 in your current code
-#base.beta = beta
-# Pick a box to test (use full domain here; swap l/u to any node box you want)
 l = problem.xlimits[:, 0].astype(float)
 u = problem.xlimits[:, 1].astype(float)
+n_plot_pts = 1000
+X = np.atleast_2d(np.linspace(l[0], u[0], n_plot_pts)).transpose()
 
-nboxes = 50
-box_sizes = (u - l) / float(nboxes)
-midpoints = np.zeros((nboxes,))
-kLs = np.zeros((nboxes, n_samples))
-kUs = np.zeros((nboxes, n_samples))
-muLs = np.zeros((nboxes,))
-muUs = np.zeros((nboxes,))
-s2Ls = np.zeros((nboxes,))
-s2Us = np.zeros((nboxes,))
-LCB_Ls = np.zeros((nboxes,) * nx)
-LCB_Us = np.zeros((nboxes,) * nx)
-LCB_Us_sample = np.zeros((nboxes,) * nx)
+muX = gp_model.mean(X)
+sigmaX = np.sqrt(gp_model.variance(X))
+print("max pointwise standard dev = ", max(sigmaX))
+beta = 3.0
+
+acqf = LCBacquisition(gp_model, beta=beta)
+Y_acqf = acqf.evaluate(X)
+Y_true = problem.evaluate(X)
 
 
-for i in range(nboxes):
-    for j in range(nboxes):
-        print(i, j)
-        if nx == 2:
-            li = l + np.array([i * box_sizes[0], j * box_sizes[1]])
-            ui = l + np.array([(i + 1) * box_sizes[0], (j +1) * box_sizes[1]])
+plt.plot(X, Y_acqf, label=r'$LCB(x)$')
+plt.plot(X, muX, "-.", label=r'$\mu(x)$')
+plt.plot(X, sigmaX, label=r'$\sigma(x)$')
+plt.xlabel("x")
+plt.ylabel("LCB(x)")
+plt.legend()
+plt.title("acquisition function")
+plt.savefig(save_dir + 'acqf.png')
+plt.close()
+import matplotlib.pyplot as plt2
+plt.plot(X, Y_true, 'k', label=r'$f(x)$')
+plt.plot(X, muX, 'r--', label=r'$\mu(x)$')
+plt2.fill_between(X.flatten(), (muX-sigmaX).flatten(), (muX + sigmaX).flatten(),
+                 label=r'$\tilde{f}$ confidence region', alpha=0.25)
+plt.scatter(x_train, y_train, marker='o', s=30, c='magenta', label='training points')
+plt.xlabel("x")
+plt.legend()
+#plt.show()
+plt.savefig(save_dir + 'trainingdata.png')
+plt.close()
+
+# In[ ]:
+
+
+bnb_options = {
+    'opt_mode' : opt_mode,
+}
+bnb = BnBAlgorithm(acqf, bnb_options)
+bnb.initialize()
+root = bnb.best_node
+
+
+# In[ ]:
+
+
+from hiopbbpy.opt.bnbalgorithm import branch
+nodes = [root]
+
+num_divisions = 7
+num_branches = 1
+LUBgaps = np.zeros(num_divisions)
+min_gaps = np.zeros(num_divisions)
+max_gaps = np.zeros(num_divisions)
+avg_gaps = np.zeros(num_divisions)
+std_gaps = np.zeros(num_divisions)
+pruning_ratios = np.zeros(num_divisions)
+all_all_gaps = []
+
+for j in range(num_divisions):
+    children = []
+    for node in nodes:
+        for child_l, child_u in branch(node.l, node.u):
+            acqf_L, acqf_U = bnb.compute_acqf_bounds(child_l, child_u)
+            child = BnBNode(child_l, child_u, acqf_L, acqf_U)
+            children.append(child)
+    num_branches += len(children)
+
+    min_idx = np.argmin([child.aq_U for child in children])        
+    LUB = children[min_idx].aq_U
+    LUBgap = children[min_idx].aq_U - children[min_idx].aq_L
+    all_gaps = np.array([child.aq_U - child.aq_L for child in children])
+    min_gaps[j] = min(all_gaps)
+    max_gaps[j] = max(all_gaps)
+    avg_gaps[j] = np.mean(all_gaps)
+    std_gaps[j] = np.std(all_gaps)
+    LUBgaps[j] = LUBgap
+    all_all_gaps.append(all_gaps)
+    
+    pruning_ratio = 0.
+    for i, child in enumerate(children):
+        if child.aq_L > LUB:
+            pruning_ratio += 1.
+    pruning_ratio /= len(children)
+    pruning_ratios[j] = pruning_ratio
+    for i, child in enumerate(children):
+        xplt = np.linspace(child.l[0], child.u[0], num=10)
+        acqf_UB = child.aq_U * np.ones(10)
+        acqf_LB = child.aq_L * np.ones(10)
+        if i == min_idx:
+            ub_color = 'r'
+            lb_color = 'r'
+        elif child.aq_L > LUB:
+            ub_color = 'k'
+            lb_color = 'g'
         else:
-            if j > 0:
-                continue
-            li = l + i * box_sizes[0]
-            ui = l + (i+1) * box_sizes[0]
-        # 1) Bounds from your base class 
-        kL, kU         = base.ker_bounds(li, ui)     # per-point kernel bounds vs each trainingsample
-        mu_L, mu_U     = base.mu_bounds(kL, kU)      # scalar μ bounds on the box
-        s2_L, s2_U     = base.sigma2_bounds(kL, kU,l=li,u=ui)  # scalar σ² bounds on the box
+            ub_color = 'k'
+            lb_color = 'm'
         
-        # 2) (Optional) Node LCB/EI bounds using ONLY base.rs_* with your bounds
-        LCB_L = acqf.evaluate_meansig2(np.atleast_1d(mu_L), np.atleast_1d(s2_U))[0]
-        LCB_U = acqf.evaluate_meansig2(np.atleast_1d(mu_U), np.atleast_1d(s2_L))[0]
-        #LCB_L = base.rs_lcb(mu_L, np.sqrt(max(s2_U, 0.0)))     # lower bound on LCB over the box
-        #LCB_U = base.rs_lcb(mu_U, np.sqrt(max(s2_L, 0.0)))     # upper bound on LCB over the box
-        
-        if nx == 1:
-            x_pts = np.atleast_2d(np.linspace(li, ui, num=200))
+        if i == 0:
+            plt.plot(xplt, acqf_UB, "--" + ub_color, label="acqf UB")
+            plt.plot(xplt, acqf_LB, "-" + lb_color, label="acqf LB")
         else:
-            x_slice_pts = [np.linspace(li[k], ui[k], num=30) for k in range(nx)]
-            xv, yv = np.meshgrid(x_slice_pts[0], x_slice_pts[1])
-            xv = xv.flatten()
-            yv = yv.flatten()
-            x_pts = np.array([[xv[k], yv[k]] for k in range(len(xv))])     
-         
-        LCB_U_sample = min(acqf.evaluate(x_pts).flatten())
-        #print(LCB_U_sample)
-        
-        
-        
-        
-        if nx == 1:
-            LCB_Ls[i] = LCB_L
-            LCB_Us[i] = LCB_U
-            LCB_Us_sample[i] = LCB_U_sample
-            midpoints[i] = (li[0] + ui[0]) / 2.
-        elif nx == 2:
-            LCB_Ls[i][j] = LCB_L
-            LCB_Us[i][j] = LCB_U
-            LCB_Us_sample[i][j] = LCB_U_sample
-        
-
-        muLs[i] = mu_L
-        muUs[i] = mu_U
-        s2Ls[i] = s2_L
-        s2Us[i] = s2_U
-        kLs[i,:] = kL[:]
-        kUs[i,:] = kU[:]       
-#mu = gp_model.mean(midpoints)
-#s2 = gp_model.variance(midpoints)
+            plt.plot(xplt, acqf_UB, "--" + ub_color)
+            plt.plot(xplt, acqf_LB, "-" + lb_color)
+    plt.plot(X, Y_acqf, label=r'$LCB(x)$')
+    plt.title('gap = {0:1.2e}, num_branches = {1:d}, pruning_ratio = {2:1.3f}'.format(
+        LUBgap, num_branches, pruning_ratio))
+    plt.legend()
+    plt.savefig(save_dir + 'ublb'+str(j) + 'divisions.png')
+    plt.close()
+    nodes = children
 
 
-# In[32]:
+# In[ ]:
 
 
-K_bandgaps = [np.linalg.norm(kUs[:,i] - kLs[:,i], np.inf) for i in range(n_samples)]
-
-#for i in range(n_samples):
-#    plt.plot(midpoints, kLs[:,i], label=r'$(k_i)_L(x)$')
-#    plt.plot(midpoints, kUs[:,i], label=r'$(k_i)_U(x)$')
-#    plt.plot(x_train[:,0], np.zeros(n_samples), "k*", label=r'training pts')
-#    plt.plot(x_train[i,0], np.zeros(1), "r*", label=r'$i$th training pt')
-#    plt.legend()
-#    plt.title(r"max $|(k_i)_U(x) - (k_i)_L(x)|$ = {0:1.3e}, ({1:d} boxes)".format(K_bandgaps[i], nboxes))
-#    plt.show()
-
-
-# In[33]:
-
-
-mu_bandgap = np.linalg.norm(muUs - muLs, np.inf)
-
-#plt.plot(midpoints, muUs, label=r'$\mu_U(x)$')
-#plt.plot(midpoints, mu, "--", label=r'$\mu(x)$')
-#plt.plot(midpoints, muLs, label=r'$\mu_L(x)$')
-#plt.plot(x_train[:,0], np.zeros(n_samples), "k*", label=r'training pts')
-#plt.xlabel(r"$x$")
-#plt.legend()
-#plt.title(r"max $|\mu_U(x) - \mu_L(x)|$ = {0:1.3e}".format(mu_bandgap))
+#plt.plot(range(1, num_divisions+1), LUBgaps)
+#plt.yscale('log')
+#plt.ylabel('LUB gap')
+#plt.xlabel('num divisions')
+#plt.show()
+#
+#plt.plot(range(1, num_divisions+1), avg_gaps, label='mean gap')
+#plt.plot(range(1, num_divisions+1), avg_gaps + std_gaps)
+#plt.plot(range(1, num_divisions+1), avg_gaps - std_gaps)
+#plt.yscale('log')
+#plt.ylabel('gap')
+#plt.xlabel('num divisions')
 #plt.show()
 
 
-# In[34]:
-
-
-#plt.plot(midpoints, s2Us, label=r"$\sigma^{2}_{U}(x)$")
-#plt.plot(X, sigmaX**2., label=r"$\sigma^{2}(x)$")
-#plt.plot(midpoints, s2Ls, "k--", label=r"$\sigma^{2}_{L}(x)$")
-#plt.plot(x_train[:,0], np.zeros(n_samples), "k*", label=r'training pts')
-#plt.title('variance bounds on {0:d} boxes'.format(nboxes))
-#plt.legend()
-#plt.show()
-
-
-# In[35]:
-
-
-#plt.plot(midpoints, LCB_Us, label=r"LCB$_{U}(x)$")
-#plt.plot(midpoints, LCB_Us_sample, "--", label=r"LCB$_{U}(x)$ (sample)")
-#plt.plot(X, Y_acqf, label=r'LCB$(x)$')  
-#plt.plot(midpoints, LCB_Ls, label=r"LCB$_{L}(x)$")
-#plt.plot(x_train[:,0], np.zeros(n_samples), "k*", label=r'training pts')
-#plt.title('LCB bounds on {0:d} boxes'.format(nboxes))
-#plt.legend()
-#plt.show()
-
-
-# In[38]:
-
-if nx == 1:
-    for i in range(nboxes):
-        if LCB_Us_sample[i] > LCB_Us[i]:
-            print("error")
-elif nx == 2:
-    for i in range(nboxes):
-        for j in range(nboxes):
-            if LCB_Us_sample[i][j] > LCB_Us[i][j]:
-                print("error")
+np.savetxt(save_dir + 'LUBgapsvsdivisions.dat', LUBgaps)
+np.savetxt(save_dir + 'avggapsvsdivisions.dat', avg_gaps)
+np.savetxt(save_dir + 'stdgapsvsdivisions.dat', std_gaps)
+np.savetxt(save_dir + 'pruningratios.dat', pruning_ratios)
+for i in range(num_divisions):
+    np.savetxt(save_dir + 'allgaps_'+str(i)+'.dat', all_all_gaps[i])
