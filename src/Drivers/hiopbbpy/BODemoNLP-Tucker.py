@@ -39,12 +39,12 @@ class PeriodicObjective(Problem):
     ne, _ = x.shape
     y = np.sum(np.sin(4. * np.pi * x), axis=1).reshape(ne, 1)
     #in_range = [x >= 0.25 and x <= 0.75]
-    in_range = [5./12. <= x[i,0] <= 11./12. for i in range(len(x))]
+    #in_range = [5./12. <= x[i,0] <= 11./12. for i in range(len(x))]
     y_update = np.zeros(y.shape)
     for i in range(len(y)):
       y_update[i,0] = y[i, 0]
-      if in_range[i]:
-        y_update[i, 0] *= np.cos(24. * np.pi * x[i,0])
+      #if in_range[i]:
+      #  y_update[i, 0] *= np.cos(24. * np.pi * x[i,0])
     return y_update
 
 
@@ -56,6 +56,7 @@ if __name__ == "__main__":
   parser.add_argument("--opt_mode", type=int, default=2, help="optimization mode")
   parser.add_argument("--nugget", type=float, default=2.220446049250313e-14, help="nugget added to posterior GP for numerical stability")
   parser.add_argument("--theta0", type=float, default=1.0, help="initial value of GP kernel hyperparameter theta")
+  parser.add_argument("--lengthscale", type=float, default=1.0, help="global length scale for the problem")
   args = parser.parse_args()
   
   # parse arguments
@@ -65,12 +66,15 @@ if __name__ == "__main__":
   make_plts = args.make_plts
   ntrain = args.ntrain
   theta0 = args.theta0
+  lengthscale = args.lengthscale
   
 
   save_dir = 'newdata/opt_mode'+str(opt_mode) + '/'
   
   # ---- black-box objective
-  problem = PeriodicObjective(ndim=nx)
+  xlimits = np.array([[0., 1.]] * nx )
+  xlimits *= lengthscale
+  problem = PeriodicObjective(ndim=nx, xlimits=xlimits)
   problem.set_constraints([])  
   
   # ---- generate GP training data
@@ -129,7 +133,7 @@ if __name__ == "__main__":
   
   bnb_options = {
       'opt_mode' : opt_mode,
-      'acqf_UB_ipopt' : True,
+      'acqf_ub_ipopt' : True,
   }
   bnb = BnBAlgorithm(acqf, bnb_options)
   bnb.initialize()
