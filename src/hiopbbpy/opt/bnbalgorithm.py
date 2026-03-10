@@ -564,11 +564,10 @@ class BnBAlgorithm(BnBAlgorithmBase):
         # obtain acqf lower-bound 
         # B k >= 0, k = C2 z
         cons = [self.C2 @ self.X >= kL, self.C2 @ self.X <= kU, self.cons2 >= 0, self.en1 @ self.X >= 0]
-        # TODO: enable additional constraints when problem dim > 1
-        if len(B) > 0 and self.x.shape[1] == 1: # one or more kernel coupling constraints
-          B2 = B.dot(self.C2)
-          if opt_mode == 0 or opt_mode == 2 or opt_mode == 3:
-            cons.append(B2 @ self.X >= 0)
+        #if len(B) > 0 and self.x.shape[1] == 1: # one or more kernel coupling constraints
+        #  B2 = B.dot(self.C2)
+        #  if opt_mode == 0 or opt_mode == 2 or opt_mode == 3:
+        #    cons.append(B2 @ self.X >= 0)
         if opt_mode != 0:
           xvar = cp.Variable(self.x.shape[1])
           cons.append(l <= xvar)
@@ -577,34 +576,23 @@ class BnBAlgorithm(BnBAlgorithmBase):
           rhovar = cp.Variable(ntrain) 
           dmin = np.maximum(0.0, np.maximum((l - self.x) / self.X_scale, (self.x - u)/ self.X_scale))        # (nt,d)
           dmax = np.maximum(np.abs((l - self.x) / self.X_scale), np.abs((u - self.x) / self.X_scale))         # (nt,d)
-          rhomin = (dmin**self.p).sum(axis=1)
-          rhomax = (dmax**self.p).sum(axis=1) 
-          #np.linalg.norm(dmin, axis=1)**self.p
-          #rhomax = #np.linalg.norm(dmax, axis=1)**self.p
-          #print("l = ", l)
-          #print("u = ", u)
-          #print("training pts = ", self.x)
-          #print("dmin = ", dmin)
-          #print("dmax = ", dmax)
-          #print("rhomin = ", rhomin)
-          #print("rhomax = ", rhomax)
-          assert len(rhomin) == ntrain
           th  = self.theta.ravel()     # (d,)
-          #print("theta = ", th)
-          #print("opt_mode = ", opt_mode)
-          #print("X_scale = ", self.X_scale)
+          rhomin = (th * (dmin**self.p)).sum(axis=1)
+          rhomax = (th * (dmax**self.p)).sum(axis=1) 
+          assert len(rhomin) == ntrain
           # --- constraints ---
-          # || x - x_i || <= rho_i
-          # k_i => exp(-th * \rho_i / xscale)
+          # \theta_j | x_j - x^{(i)}_j || <= rho_i
+          # k_i => exp(-\rho_i / xscale)
           for i in range(ntrain):
-            cons.append(cp.atoms.norm((xvar-self.x[i]) / self.X_scale, p = self.p) ** self.p <= rhovar[i]) # || x - x_i|| <= \rho_i
-            cons.append((self.C2 @ self.X)[i] >= cp.atoms.exp( -th[0] * rhovar[i]))# / (np.linalg.norm(self.X_scale, ord=self.p)**self.p))) # TODO: what to do with theta for dim(x) > 1? 
-          kMax = np.exp(-th[0] * rhomin) #/ (np.linalg.norm(self.X_scale,ord=self.p)**self.p))
-          kMin = np.exp(-th[0] * rhomax) #/ (np.linalg.norm(self.X_scale,ord=self.p)**self.p))
+            cons.append(cp.atoms.norm((xvar-self.x[i]) / ((th**(-1./self.p)) * self.X_scale), p = self.p)**self.p <= rhovar[i])
+            #cons.append(cp.atoms.norm((xvar-self.x[i]) / self.X_scale, p = self.p) ** self.p <= rhovar[i])
+            cons.append((self.C2 @ self.X)[i] >= cp.atoms.exp(-rhovar[i])) 
+          kMax = np.exp(-rhomin)
+          kMin = np.exp(-rhomax)
           # --- constraints --- 
           # k_i <= secant of k_i(x) over kMin, kMax
           cons.append(self.C2 @ self.X <= kMax + cp.atoms.multiply((kMin - kMax) / (rhomax - rhomin),  (rhovar  - rhomin)))
-          # \rho_i = max{ \rho_i }
+          # \rho_i = max_{x in box} { \rho_i(x) }
           cons.append(rhovar <= rhomax)
         
           # --- constraints ---
@@ -613,9 +601,10 @@ class BnBAlgorithm(BnBAlgorithmBase):
             if opt_mode == 2 or opt_mode == 4:
               for i in range(ntrain):
                 for j in range(i+1, ntrain):
-                  dxij_norm = np.linalg.norm((self.x[i] - self.x[j]) / self.X_scale, ord=self.p)**self.p
+                  dxij_norm = np.linalg.norm(th**(1./self.p) * (self.x[i] - self.x[j]) / self.X_scale, ord=self.p)**self.p
                   cons.append(rhovar[i] - rhovar[j] <= dxij_norm)
                   cons.append(rhovar[i] - rhovar[j] >= -1.0 * dxij_norm)
+          # TODO: if self.p == 2.0...
           # --- constraints ---
           # convex quadratic constraint on \rho_{i}
           #ncoupling = 2
@@ -652,15 +641,15 @@ class BnBAlgorithm(BnBAlgorithmBase):
 
       assert np.isfinite(acqf_L), "convex optimizer did not converge"
       # check if rhos violate (42)
-      if opt_mode != 0 and self.p == 1.0:
-        for i in range(ntrain):
-          for j in range(ntrain):
-            drhoij = abs(rhovar.value[i] - rhovar.value[j])
-            dxij   = np.linalg.norm((self.x[i] - self.x[j]) / self.X_scale, ord=self.p) 
-            if drhoij > dxij + opt_tol * 10.:
-              print("violation of constraint (42)")
-              print("|rho_{0:d} - rho_{1:d}| = {2:1.8e}".format(i, j, drhoij))
-              print("||x_{0:d} - x_{1:d}|| = {2:1.8e}".format(i, j, dxij))
+      #if opt_mode != 0 and self.p == 1.0:
+      #  for i in range(ntrain):
+      #    for j in range(ntrain):
+      #      drhoij = abs(rhovar.value[i] - rhovar.value[j])
+      #      dxij   = np.linalg.norm((self.x[i] - self.x[j]) / self.X_scale, ord=self.p) 
+      #      if drhoij > dxij + opt_tol * 10.:
+      #        print("violation of constraint (42)")
+      #        print("|rho_{0:d} - rho_{1:d}| = {2:1.8e}".format(i, j, drhoij))
+      #        print("||x_{0:d} - x_{1:d}|| = {2:1.8e}".format(i, j, dxij))
       # check if k violates the ratio constraints
       kopt = self.C2 @ self.X.value
       # deprecated for now!!!

@@ -128,14 +128,14 @@ if __name__ == "__main__":
       plt.savefig(save_dir + 'trainingdata.png')
       plt.close()
     elif nx == 2:
-      X1D = [np.linspace(l[i], u[i],  400) for i in range(nx)]
+      X1D = [np.linspace(l[i], u[i],  100) for i in range(nx)]
       Xx, Xy = np.meshgrid(X1D[0], X1D[1])
       Z = np.array([[acqf.evaluate(np.atleast_2d([Xx[i, j], Xy[i, j]])).flatten()[0] for j in range(Xx.shape[1])] for i in range(Xx.shape[0])])
       plt.contourf(Xx, Xy, Z, levels=25, cmap='viridis')
       plt.colorbar(label='Acquisition function value')
+      plt.scatter(x_train[:,0], x_train[:,1], c="red")
       plt.savefig(save_dir + 'acqf.png')
       plt.close()
-      exit() 
   # In[ ]:
   
   
@@ -156,9 +156,9 @@ if __name__ == "__main__":
  
   num_divisions = 7
   if nx == 2: 
-    num_divisions = 4
+    num_divisions = 3
   if nx == 3:
-    num_divisions = 4
+    num_divisions = 3
   num_branches = 1
   LUBgaps = np.zeros(num_divisions)
   min_gaps = np.zeros(num_divisions)
@@ -222,6 +222,20 @@ if __name__ == "__main__":
         else:
           plt.plot(xplt, acqf_UB, "--" + ub_color)
           plt.plot(xplt, acqf_LB, "-" + lb_color)
+      if make_plts and nx == 2:
+        X1D = [np.linspace(child.l[i], child.u[i],  40) for i in range(nx)]
+        Xx, Xy = np.meshgrid(X1D[0], X1D[1])
+        Z = np.array([[acqf.evaluate(np.atleast_2d([Xx[i, j], Xy[i, j]])).flatten()[0] - child.aq_L for j in range(Xx.shape[1])] for i in range(Xx.shape[0])])
+        plt.contourf(Xx, Xy, Z, levels=25, cmap='viridis')
+        print("lower bound = ", child.aq_L)
+        print("upper bound = ", child.aq_U)
+        print("minimum (sample) acqf = ", min(Z.flatten()) + child.aq_L)
+        print("gap = ", child.aq_U - child.aq_L)
+        plt.colorbar(label='Acquisition function - acqf LB')
+        plt.scatter(x_train[:,0], x_train[:,1], c='red')
+        plt.show()
+        
+         
     nodes = children
     if make_plts and nx == 1:
       plt.plot(X, Y_acqf, label=r'$LCB(x)$')
@@ -230,6 +244,10 @@ if __name__ == "__main__":
       plt.legend()
       plt.savefig(save_dir + 'ublb'+str(j) + 'divisions.png')
       plt.close()
+    #if make_plts and nx == 2:
+    #  plt.colorbar(label='Acquisition function - acqf LB')
+    #  plt.scatter(x_train[:,0], x_train[:,1], c='red')
+    #  plt.show()
   np.savetxt(save_dir + 'LUBgapsvsdivisions.dat', LUBgaps)
   np.savetxt(save_dir + 'avggapsvsdivisions.dat', avg_gaps)
   np.savetxt(save_dir + 'stdgapsvsdivisions.dat', std_gaps)

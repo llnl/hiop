@@ -18,7 +18,7 @@ class smtKRG(GaussianProcess):
       random_state = 42
     design_space = DesignSpace(xlimits, random_state=random_state)
 
-    theta_bounds = [theta - 1.e-10, theta + 1.e-10]
+    #theta_bounds = [theta - 1.e-10, theta + 1.e-10]
     self.surrogatesmt = KRG(design_space=design_space,
                             print_global=False,
                             noise0=[noise0],
@@ -28,7 +28,7 @@ class smtKRG(GaussianProcess):
                             hyper_opt=hyper_opt,
                             theta0 = [theta],
                             nugget=nugget,
-                            theta_bounds=theta_bounds,
+    #                        theta_bounds=theta_bounds,
                             )
     self.trained = False
 
