@@ -21,10 +21,17 @@ class minimizer_wrapper:
     msg = ""
     for x0 in x0s:
       if self.method == "SLSQP":
-        if 'grad' in self.fun:
-          y = minimize(self.fun['obj'], x0, method=self.method, bounds=self.bounds, jac=self.fun['grad'], constraints=self.constraints, options=self.solver_options)
+        if 'tol' in self.solver_options:
+          tol = self.solver_options['tol']
+          solver_options = self.solver_options.copy()
+          del solver_options['tol']
         else:
-          y = minimize(self.fun['obj'], x0, method=self.method, bounds=self.bounds, constraints=self.constraints, options=self.solver_options)
+          solver_options = self.solver_options.copy()
+          tol = None
+        if 'grad' in self.fun:
+          y = minimize(self.fun['obj'], x0, method=self.method, bounds=self.bounds, jac=self.fun['grad'], constraints=self.constraints, tol=tol, options=solver_options)
+        else:
+          y = minimize(self.fun['obj'], x0, method=self.method, bounds=self.bounds, constraints=self.constraints, tol=tol, options=solver_options)
         success = y.success
         if not success:
           msg = y.message

@@ -448,11 +448,14 @@ class BnBAlgorithm(BnBAlgorithmBase):
     self.max_bnbtime = 12 * 60 # 12 minutes
     self.BOit = BOit
     self.saveData = saveData
-    self.acqf_UB_ipopt = False
     self.pure_BBS = False  # pure BBS search or hybrid BBS/BFS search
     self.sync_mode = False # synchronous or asynchronous evaluations
     self.verbose_cvx_solver = False # verbose convex optimizer solves
     self.opt_mode = 2
+
+    self.acqf_UB_solver = "SLSQP"
+
+
     # Set options form command 
     self.epsilon_gap = options.get('epsilon_gap', self.epsilon_gap)
     self.epsilon_diam = options.get('epsilon_diam', self.epsilon_diam)
@@ -460,13 +463,13 @@ class BnBAlgorithm(BnBAlgorithmBase):
     self.max_bnbiter = options.get('max_iter', self.max_bnbiter)
     self.max_bnbtime = options.get('max_bnbtime', self.max_bnbtime)
     self.nodes_per_batch = options.get('nodes_per_batch', self.nodes_per_batch)
-    self.acqf_UB_ipopt = options.get('acqf_ub_ipopt', self.acqf_UB_ipopt)
+    self.acqf_UB_solver = options.get('acqf_ub_solver', self.acqf_UB_solver)
     self.pure_BBS = options.get('pure_BBS', self.pure_BBS)
     self.sync_mode =  options.get('sync_mode', self.sync_mode)
     self.verbose_cvx_solver = options.get('verbose_cvx_solver', self.verbose_cvx_solver)
     self.opt_mode = options.get('opt_mode', self.opt_mode)
     assert self.opt_mode in [0, 1, 2, 3, 4], "unknown opt_mode"
-
+    assert self.acqf_UB_solver in ["SLSQP", "IPOPT", "MINEVAL"], "invalid acqf ub solver"
 
     if is_running_with_mpi():
       num_available_workers = MPI.COMM_WORLD.Get_size() - 1
@@ -561,7 +564,8 @@ class BnBAlgorithm(BnBAlgorithmBase):
         # obtain acqf lower-bound 
         # B k >= 0, k = C2 z
         cons = [self.C2 @ self.X >= kL, self.C2 @ self.X <= kU, self.cons2 >= 0, self.en1 @ self.X >= 0]
-        if len(B) > 0: # one or more kernel coupling constraints
+        # TODO: enable additional constraints when problem dim > 1
+        if len(B) > 0 and self.x.shape[1] == 1: # one or more kernel coupling constraints
           B2 = B.dot(self.C2)
           if opt_mode == 0 or opt_mode == 2 or opt_mode == 3:
             cons.append(B2 @ self.X >= 0)
@@ -571,10 +575,12 @@ class BnBAlgorithm(BnBAlgorithmBase):
           cons.append(xvar <= u)
           ntrain = self.x.shape[0]
           rhovar = cp.Variable(ntrain) 
-          dmin = np.maximum(0.0, np.maximum(l - self.x, self.x - u))        # (nt,d)
-          dmax = np.maximum(np.abs(l - self.x), np.abs(u - self.x))         # (nt,d)
-          rhomin = np.linalg.norm(dmin, axis=1)
-          rhomax = np.linalg.norm(dmax, axis=1)
+          dmin = np.maximum(0.0, np.maximum((l - self.x) / self.X_scale, (self.x - u)/ self.X_scale))        # (nt,d)
+          dmax = np.maximum(np.abs((l - self.x) / self.X_scale), np.abs((u - self.x) / self.X_scale))         # (nt,d)
+          rhomin = (dmin**self.p).sum(axis=1)
+          rhomax = (dmax**self.p).sum(axis=1) 
+          #np.linalg.norm(dmin, axis=1)**self.p
+          #rhomax = #np.linalg.norm(dmax, axis=1)**self.p
           #print("l = ", l)
           #print("u = ", u)
           #print("training pts = ", self.x)
@@ -584,14 +590,17 @@ class BnBAlgorithm(BnBAlgorithmBase):
           #print("rhomax = ", rhomax)
           assert len(rhomin) == ntrain
           th  = self.theta.ravel()     # (d,)
+          #print("theta = ", th)
+          #print("opt_mode = ", opt_mode)
+          #print("X_scale = ", self.X_scale)
           # --- constraints ---
           # || x - x_i || <= rho_i
           # k_i => exp(-th * \rho_i / xscale)
           for i in range(ntrain):
-            cons.append(cp.atoms.norm(xvar-self.x[i]) ** self.p <= rhovar[i]) # || x - x_i|| <= \rho_i
-            cons.append((self.C2 @ self.X)[i] >= cp.atoms.exp( -th[0] * rhovar[i] / (np.linalg.norm(self.X_scale)**self.p))) # TODO: what to do with theta for dim(x) > 1? 
-          kMax = np.exp(-th[0] * rhomin / (np.linalg.norm(self.X_scale)**self.p))
-          kMin = np.exp(-th[0] * rhomax / (np.linalg.norm(self.X_scale)**self.p))
+            cons.append(cp.atoms.norm((xvar-self.x[i]) / self.X_scale, p = self.p) ** self.p <= rhovar[i]) # || x - x_i|| <= \rho_i
+            cons.append((self.C2 @ self.X)[i] >= cp.atoms.exp( -th[0] * rhovar[i]))# / (np.linalg.norm(self.X_scale, ord=self.p)**self.p))) # TODO: what to do with theta for dim(x) > 1? 
+          kMax = np.exp(-th[0] * rhomin) #/ (np.linalg.norm(self.X_scale,ord=self.p)**self.p))
+          kMin = np.exp(-th[0] * rhomax) #/ (np.linalg.norm(self.X_scale,ord=self.p)**self.p))
           # --- constraints --- 
           # k_i <= secant of k_i(x) over kMin, kMax
           cons.append(self.C2 @ self.X <= kMax + cp.atoms.multiply((kMin - kMax) / (rhomax - rhomin),  (rhovar  - rhomin)))
@@ -604,7 +613,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
             if opt_mode == 2 or opt_mode == 4:
               for i in range(ntrain):
                 for j in range(i+1, ntrain):
-                  dxij_norm = np.linalg.norm(self.x[i] - self.x[j])
+                  dxij_norm = np.linalg.norm((self.x[i] - self.x[j]) / self.X_scale, ord=self.p)**self.p
                   cons.append(rhovar[i] - rhovar[j] <= dxij_norm)
                   cons.append(rhovar[i] - rhovar[j] >= -1.0 * dxij_norm)
           # --- constraints ---
@@ -647,14 +656,16 @@ class BnBAlgorithm(BnBAlgorithmBase):
         for i in range(ntrain):
           for j in range(ntrain):
             drhoij = abs(rhovar.value[i] - rhovar.value[j])
-            dxij   = np.linalg.norm(self.x[i] - self.x[j]) 
+            dxij   = np.linalg.norm((self.x[i] - self.x[j]) / self.X_scale, ord=self.p) 
             if drhoij > dxij + opt_tol * 10.:
               print("violation of constraint (42)")
               print("|rho_{0:d} - rho_{1:d}| = {2:1.8e}".format(i, j, drhoij))
               print("||x_{0:d} - x_{1:d}|| = {2:1.8e}".format(i, j, dxij))
       # check if k violates the ratio constraints
       kopt = self.C2 @ self.X.value
-      ker_bound_violation = self.ker_bound_violation(l, u, kopt)
+      # deprecated for now!!!
+      #ker_bound_violation = self.ker_bound_violation(l, u, kopt)
+      
       #if ker_bound_violation:
       #  print("kernel bound violation")
       #else:
@@ -675,30 +686,46 @@ class BnBAlgorithm(BnBAlgorithmBase):
       acqf_bounds = self.acqf.evaluate_meansig2(mu, var)
       acqf_L = acqf_bounds[0]
 
-
- 
-    if self.acqf_UB_ipopt:
-      opt_solver = "IPOPT"
-      opt_solver_options = {'max_iter' : 1000, 'tol' : 1.e-5, 'honor_original_bounds' : 'yes', 'print_level' : 2}
+    acqf_solve_success = False 
+    if not self.acqf_UB_solver == "MINEVAL": # local gradient-based optimization method
       constraints = []
-      box_bounds = [[l[i], u[i]] for i in range(len(l))]
+      #box_bounds = [[l[i], u[i]] for i in range(len(l))]
+      box_bounds = np.array([l, u]).T
       acqf_callback = {'obj' : self.acqf.scalar_evaluate}
       if self.acqf.has_gradient:
         acqf_callback['grad'] = self.acqf.scalar_eval_g
-      
       opt_evaluator = Evaluator()
-      acqf_minimizer = minimizer_wrapper(acqf_callback, opt_solver, box_bounds, constraints, opt_solver_options)
-
-      x0 = [[(l[i] + u[i]) / 2. for i in range(len(u))]]
+      if self.acqf_UB_solver == "IPOPT": 
+        opt_solver_options = {'max_iter' : 100, 'tol' : 1.e-5, 'honor_original_bounds' : 'yes', 'print_level' : 2, 'sb' : 'yes'}
+      else: #SLSQP
+        opt_solver_options = {'maxiter' : 100, 'tol' : 1.e-5}
+      acqf_minimizer = minimizer_wrapper(acqf_callback, self.acqf_UB_solver, box_bounds, constraints, opt_solver_options)
+      alpha = 0.05 + 0.9 * np.random.rand(len(u)) # rand numbers in [0.05, 0.95)
+      x0 = [alpha * l + (1. - alpha) * u]
       opt_sol = opt_evaluator.run(acqf_minimizer.minimizer_callback, x0)[0]
       assert (np.all(opt_sol[0] >= l) and np.all(opt_sol[0] <= u)), f"acqf minimizer not within bounds"
-      assert opt_sol[2], "optimizer did not converge"
       msg = opt_sol[3]
-      if not "Algorithm terminated successfully at a locally optimal point, satisfying the convergence tolerances" in msg.decode('utf-8'):
-        print("WARING: IPOPT terminated irregularly")
-        print("IPOPT msg: ", msg.decode('utf-8'))
-      acqf_U = self.acqf.evaluate(np.atleast_2d(opt_sol[0])).flatten()[0]
-    else:
+      acqf_solve_success = opt_sol[2]
+      if not acqf_solve_success:
+        print(self.acqf_UB_solver + " did not converge on BOX: ", l, u, "... trying again with more verbosity and at another initial point")
+        print(self.acqf_UB_solver + " message: ", msg)
+        if self.acqf_UB_solver == "IPOPT":
+          opt_solver_options = {'max_iter' : 200, 'tol' : 1.e-5, 'honor_original_bounds' : 'yes', 'print_level' : 3, 'sb' : 'yes'}
+        else: # SLSQP
+          opt_solver_options = {'maxiter' : 200, 'tol' : 1.e-5, 'disp' : True}
+        acqf_minimizer = minimizer_wrapper(acqf_callback, opt_solver, box_bounds, constraints, opt_solver_options)
+        alpha = 0.05 + 0.9 * np.random.rand(len(u)) # rand numbers in [0.05, 0.95)
+        x0 = [alpha * l + (1. - alpha) * u]
+        opt_sol = opt_evaluator.run(acqf_minimizer.minimizer_callback, x0)[0]
+        acqf_solve_success = opt_sol[2]
+        if not acqf_solve_success:
+          print(self.acqf_UB_solver + "failed a second time. Will y take a the minimum of a small number of acqf function evaluations")
+      if acqf_solve_success:
+        acqf_U = self.acqf.evaluate(np.atleast_2d(opt_sol[0])).flatten()[0]
+    # evaluate the acquisition over a skeleton of the box
+    # and choose the smallest value as the upper bound
+    # of the minimum over the box
+    if (not acqf_solve_success) or (self.acqf_UB_solver == "MINEVAL"):
       s_per_dim = 3
       n_points = s_per_dim ** self.gpsurrogate.ndim
       x_points = np.zeros((n_points, self.gpsurrogate.ndim))
@@ -928,7 +955,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
           bbsnodes.append(node)
 
         # parallel branching and upper/lower bound node compuatations
-        brancher = branching_wrapper(self.acqf, LUB = self.LUB, epsilon_prune=self.epsilon_prune, acqf_UB_ipopt = self.acqf_UB_ipopt)
+        brancher = branching_wrapper(self.acqf, LUB = self.LUB, epsilon_prune=self.epsilon_prune, acqf_UB_solver = self.acqf_UB_solver)
         bbsnodes = np.array(bbsnodes)
         if len(bbsnodes) > 0:
           self.bbsevaluator.submit_tasks(brancher.callback, bbsnodes)
@@ -1015,14 +1042,14 @@ class BnBAlgorithm(BnBAlgorithmBase):
 
 
 class branching_wrapper:
-  def __init__(self, acqf, LUB=np.inf, epsilon_prune=1.e-14, acqf_UB_ipopt=False):
+  def __init__(self, acqf, LUB=np.inf, epsilon_prune=1.e-14, acqf_UB_solver="SLSQP"):
     self.LUB = LUB # least upper bound
     self.epsilon_prune = epsilon_prune
     self.acqf = acqf
     self.gpsurrogate = acqf.gpsurrogate
     self.x = self.gpsurrogate.training_x
     self.y = self.gpsurrogate.training_y
-    self.acqf_UB_ipopt = acqf_UB_ipopt
+    self.acqf_UB_solver = acqf_UB_solver
     if not (isinstance(self.acqf, LCBacquisition) or isinstance(self.acqf, EIacquisition)):
       raise NotImplementedError("Unrecognized acquisition function type")
     self.sync_from_smt()
@@ -1064,9 +1091,6 @@ class branching_wrapper:
     
     self.X_offset, self.X_scale = sm.X_offset, sm.X_scale
     self.Xc = (self.x - self.X_offset) / self.X_scale
-    print("offset shape = ", self.X_offset.shape)
-    print("scale shape = ", self.X_scale.shape)
-
 
     y_mean = getattr(sm, "y_mean", None)
     y_std  = getattr(sm, "y_std",  None)
@@ -1311,24 +1335,46 @@ class branching_wrapper:
       acqf_bounds = self.acqf.evaluate_meansig2(mu, var)
       acqf_L = acqf_bounds[0]
     
-    if self.acqf_UB_ipopt:
-      opt_solver = "IPOPT"
-      opt_solver_options = {'max_iter' : 1000, 'tol' : 1.e-5, 'honor_original_bounds' : 'yes', 'print_level' : 2}
+    acqf_solve_success = False 
+    if not self.acqf_UB_solver == "MINEVAL": # local gradient-based optimization method
       constraints = []
-      box_bounds = [[l[i], u[i]] for i in range(len(l))]
+      #box_bounds = [[l[i], u[i]] for i in range(len(l))]
+      box_bounds = np.array([l, u]).T
       acqf_callback = {'obj' : self.acqf.scalar_evaluate}
       if self.acqf.has_gradient:
         acqf_callback['grad'] = self.acqf.scalar_eval_g
-      
       opt_evaluator = Evaluator()
-      acqf_minimizer = minimizer_wrapper(acqf_callback, opt_solver, box_bounds, constraints, opt_solver_options)
-
-      x0 = [[(l[i] + u[i]) / 2. for i in range(len(u))]]
+      if self.acqf_UB_solver == "IPOPT": 
+        opt_solver_options = {'max_iter' : 100, 'tol' : 1.e-5, 'honor_original_bounds' : 'yes', 'print_level' : 2, 'sb' : 'yes'}
+      else: #SLSQP
+        opt_solver_options = {'maxiter' : 100, 'tol' : 1.e-5}
+      acqf_minimizer = minimizer_wrapper(acqf_callback, self.acqf_UB_solver, box_bounds, constraints, opt_solver_options)
+      alpha = 0.05 + 0.9 * np.random.rand(len(u)) # rand numbers in [0.05, 0.95)
+      x0 = [alpha * l + (1. - alpha) * u]
       opt_sol = opt_evaluator.run(acqf_minimizer.minimizer_callback, x0)[0]
       assert (np.all(opt_sol[0] >= l) and np.all(opt_sol[0] <= u)), f"acqf minimizer not within bounds"
-      assert opt_sol[2], "optimizer did not converge"
-      acqf_U = self.acqf.evaluate(np.atleast_2d(opt_sol[0])).flatten()[0]
-    else:
+      msg = opt_sol[3]
+      acqf_solve_success = opt_sol[2]
+      if not acqf_solve_success:
+        print(self.acqf_UB_solver + " did not converge on BOX: ", l, u, "... trying again with more verbosity and at another initial point")
+        print(self.acqf_UB_solver + " message: ", msg)
+        if self.acqf_UB_solver == "IPOPT":
+          opt_solver_options = {'max_iter' : 200, 'tol' : 1.e-5, 'honor_original_bounds' : 'yes', 'print_level' : 3, 'sb' : 'yes'}
+        else: # SLSQP
+          opt_solver_options = {'maxiter' : 200, 'tol' : 1.e-5, 'disp' : True}
+        acqf_minimizer = minimizer_wrapper(acqf_callback, opt_solver, box_bounds, constraints, opt_solver_options)
+        alpha = 0.05 + 0.9 * np.random.rand(len(u)) # rand numbers in [0.05, 0.95)
+        x0 = [alpha * l + (1. - alpha) * u]
+        opt_sol = opt_evaluator.run(acqf_minimizer.minimizer_callback, x0)[0]
+        acqf_solve_success = opt_sol[2]
+        if not acqf_solve_success:
+          print(self.acqf_UB_solver + "failed a second time. Will y take a the minimum of a small number of acqf function evaluations")
+      if acqf_solve_success:
+        acqf_U = self.acqf.evaluate(np.atleast_2d(opt_sol[0])).flatten()[0]
+    # evaluate the acquisition over a skeleton of the box
+    # and choose the smallest value as the upper bound
+    # of the minimum over the box
+    if (not acqf_solve_success) or (self.acqf_UB_solver == "MINEVAL"):
       s_per_dim = 3
       n_points = s_per_dim ** self.gpsurrogate.ndim
       x_points = np.zeros((n_points, self.gpsurrogate.ndim))
@@ -1337,6 +1383,32 @@ class branching_wrapper:
           x_points[i, j] = l[j] + (u[j] - l[j]) / (s_per_dim - 1.) * float(int(i / s_per_dim**j) % s_per_dim)
       acqf_eval = self.acqf.evaluate(x_points)
       acqf_U = min(acqf_eval.flatten())
+    #if self.acqf_UB_ipopt:
+    #  opt_solver = "IPOPT"
+    #  opt_solver_options = {'max_iter' : 1000, 'tol' : 1.e-5, 'honor_original_bounds' : 'yes', 'print_level' : 2, 'sb' : 'yes'}
+    #  constraints = []
+    #  box_bounds = [[l[i], u[i]] for i in range(len(l))]
+    #  acqf_callback = {'obj' : self.acqf.scalar_evaluate}
+    #  if self.acqf.has_gradient:
+    #    acqf_callback['grad'] = self.acqf.scalar_eval_g
+    #  
+    #  opt_evaluator = Evaluator()
+    #  acqf_minimizer = minimizer_wrapper(acqf_callback, opt_solver, box_bounds, constraints, opt_solver_options)
+
+    #  x0 = [[(l[i] + u[i]) / 2. for i in range(len(u))]]
+    #  opt_sol = opt_evaluator.run(acqf_minimizer.minimizer_callback, x0)[0]
+    #  assert (np.all(opt_sol[0] >= l) and np.all(opt_sol[0] <= u)), f"acqf minimizer not within bounds"
+    #  assert opt_sol[2], "optimizer did not converge"
+    #  acqf_U = self.acqf.evaluate(np.atleast_2d(opt_sol[0])).flatten()[0]
+    #else:
+    #  s_per_dim = 3
+    #  n_points = s_per_dim ** self.gpsurrogate.ndim
+    #  x_points = np.zeros((n_points, self.gpsurrogate.ndim))
+    #  for i in range(n_points):
+    #    for j in range(self.gpsurrogate.ndim):
+    #      x_points[i, j] = l[j] + (u[j] - l[j]) / (s_per_dim - 1.) * float(int(i / s_per_dim**j) % s_per_dim)
+    #  acqf_eval = self.acqf.evaluate(x_points)
+    #  acqf_U = min(acqf_eval.flatten())
 
     assert acqf_L <= acqf_U, "error: computed acquisition function bounds: acqf_U < acqf_L"
     return acqf_L, acqf_U
