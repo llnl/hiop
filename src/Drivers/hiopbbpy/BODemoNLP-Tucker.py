@@ -39,7 +39,7 @@ class PeriodicObjective(Problem):
     ne, _ = x.shape
     y = np.sum(np.sin(4. * np.pi * x), axis=1).reshape(ne, 1)
     #in_range = [x >= 0.25 and x <= 0.75]
-    #in_range = [5./12. <= x[i,0] <= 11./12. for i in range(len(x))]
+    in_range = [5./12. <= x[i,0] <= 11./12. for i in range(len(x))]
     y_update = np.zeros(y.shape)
     for i in range(len(y)):
       y_update[i,0] = y[i, 0]
@@ -85,7 +85,6 @@ if __name__ == "__main__":
   # ---- setup GP
   gp_model = smtKRG(theta0, problem.xlimits, nx, pow_exp_power=1.0, eval_noise=False)
   gp_model.train(x_train, y_train)
-  print("optimal theta = ", gp_model.surrogatesmt.optimal_theta)
    
  
   # ---- acqf
@@ -95,45 +94,54 @@ if __name__ == "__main__":
   l = problem.xlimits[:, 0].astype(float)
   u = problem.xlimits[:, 1].astype(float)
   
-  if make_plts and nx == 1: 
-    # evaluation points for plotting
-    n_plot_pts = 1000
-    X = np.atleast_2d(np.linspace(l[0], u[0], n_plot_pts)).transpose()
-    # ---- evaluate black-box objective
-    Y_true = problem.evaluate(X)
-    # ---- evaluate GP mean and pointwise variance
-    muX = gp_model.mean(X)
-    sigmaX = np.sqrt(gp_model.variance(X))
-    # ---- evaluate aquisition function
-    Y_acqf = acqf.evaluate(X)
-    
-    # ---- plot
-    plt.plot(X, Y_acqf, label=r'$LCB(x)$')
-    plt.plot(X, muX, "-.", label=r'$\mu(x)$')
-    plt.plot(X, sigmaX, label=r'$\sigma(x)$')
-    plt.xlabel("x")
-    plt.ylabel("LCB(x)")
-    plt.legend()
-    plt.title("acquisition function")
-    plt.savefig(save_dir + 'acqf.png')
-    plt.close()
-    import matplotlib.pyplot as plt2
-    plt.plot(X, Y_true, 'k', label=r'$f(x)$')
-    plt.plot(X, muX, 'r--', label=r'$\mu(x)$')
-    plt2.fill_between(X.flatten(), (muX-sigmaX).flatten(), (muX + sigmaX).flatten(),
-                     label=r'$\tilde{f}$ confidence region', alpha=0.25)
-    plt.scatter(x_train, y_train, marker='o', s=30, c='magenta', label='training points')
-    plt.xlabel("x")
-    plt.legend()
-    plt.savefig(save_dir + 'trainingdata.png')
-    plt.close()
-  
+  if make_plts: 
+    if nx == 1: 
+      # evaluation points for plotting
+      n_plot_pts = 1000
+      X = np.atleast_2d(np.linspace(l[0], u[0], n_plot_pts)).transpose()
+      # ---- evaluate black-box objective
+      Y_true = problem.evaluate(X)
+      # ---- evaluate GP mean and pointwise variance
+      muX = gp_model.mean(X)
+      sigmaX = np.sqrt(gp_model.variance(X))
+      # ---- evaluate aquisition function
+      Y_acqf = acqf.evaluate(X)
+      
+      # ---- plot
+      plt.plot(X, Y_acqf, label=r'$LCB(x)$')
+      plt.plot(X, muX, "-.", label=r'$\mu(x)$')
+      plt.plot(X, sigmaX, label=r'$\sigma(x)$')
+      plt.xlabel("x")
+      plt.ylabel("LCB(x)")
+      plt.legend()
+      plt.title("acquisition function")
+      plt.savefig(save_dir + 'acqf.png')
+      plt.close()
+      import matplotlib.pyplot as plt2
+      plt.plot(X, Y_true, 'k', label=r'$f(x)$')
+      plt.plot(X, muX, 'r--', label=r'$\mu(x)$')
+      plt2.fill_between(X.flatten(), (muX-sigmaX).flatten(), (muX + sigmaX).flatten(),
+                       label=r'$\tilde{f}$ confidence region', alpha=0.25)
+      plt.scatter(x_train, y_train, marker='o', s=30, c='magenta', label='training points')
+      plt.xlabel("x")
+      plt.legend()
+      plt.savefig(save_dir + 'trainingdata.png')
+      plt.close()
+    elif nx == 2:
+      X1D = [np.linspace(l[i], u[i],  400) for i in range(nx)]
+      Xx, Xy = np.meshgrid(X1D[0], X1D[1])
+      Z = np.array([[acqf.evaluate(np.atleast_2d([Xx[i, j], Xy[i, j]])).flatten()[0] for j in range(Xx.shape[1])] for i in range(Xx.shape[0])])
+      plt.contourf(Xx, Xy, Z, levels=25, cmap='viridis')
+      plt.colorbar(label='Acquisition function value')
+      plt.savefig(save_dir + 'acqf.png')
+      plt.close()
+      exit() 
   # In[ ]:
   
   
   bnb_options = {
       'opt_mode' : opt_mode,
-      'acqf_ub_ipopt' : True,
+      'acqf_ub_solver' : "SLSQP",
   }
   bnb = BnBAlgorithm(acqf, bnb_options)
   bnb.initialize()
@@ -145,8 +153,12 @@ if __name__ == "__main__":
   
   from hiopbbpy.opt.bnbalgorithm import branch
   nodes = [root]
-  
+ 
   num_divisions = 7
+  if nx == 2: 
+    num_divisions = 4
+  if nx == 3:
+    num_divisions = 4
   num_branches = 1
   LUBgaps = np.zeros(num_divisions)
   min_gaps = np.zeros(num_divisions)
@@ -157,20 +169,21 @@ if __name__ == "__main__":
   all_all_gaps = []
   
   for j in range(num_divisions):
-    children = []
-    for node in nodes:
-      #TODO: dimension dependent splitting!
-      # need to split nx times to take the hypercube
-      # of side length L to 2^(nx) hypercubes, each of
-      # side length L / 2
-      for child_l, child_u in branch(node.l, node.u):
-        acqf_L, acqf_U = bnb.compute_acqf_bounds(child_l, child_u)
-        if acqf_U < acqf_L:
-          acqf_L = acqf_U - 1.e-12
-        child = BnBNode(child_l, child_u, acqf_L, acqf_U)
-        children.append(child)
-    num_branches += len(children)
-  
+    for i in range(nx):
+      children = []
+      for node in nodes:
+        #TODO: dimension dependent splitting!
+        # need to split nx times to take the hypercube
+        # of side length L to 2^(nx) hypercubes, each of
+        # side length L / 2
+        for child_l, child_u in branch(node.l, node.u):
+          acqf_L, acqf_U = bnb.compute_acqf_bounds(child_l, child_u)
+          if acqf_U < acqf_L:
+            acqf_L = acqf_U - 1.e-12
+          child = BnBNode(child_l, child_u, acqf_L, acqf_U)
+          children.append(child)
+      num_branches += len(children)
+      nodes = children
     min_idx = np.argmin([child.aq_U for child in children])        
     LUB = children[min_idx].aq_U
     LUBgap = children[min_idx].aq_U - children[min_idx].aq_L
@@ -228,5 +241,4 @@ if __name__ == "__main__":
   np.savetxt(save_dir + 'opttheta.dat', gp_model.surrogatesmt.optimal_theta) 
   correlation_matrix = gp_model.surrogatesmt.optimal_par["C"] @ gp_model.surrogatesmt.optimal_par["C"]  
   corr_mat_cond = np.linalg.cond(correlation_matrix)
-  print("cond(R) = ", corr_mat_cond)
   np.savetxt(save_dir + 'Rcond.dat', np.array([corr_mat_cond]))
