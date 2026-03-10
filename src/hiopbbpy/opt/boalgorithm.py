@@ -120,7 +120,7 @@ class BOAlgorithm(BOAlgorithmBase):
     elif opt_solver == "IPOPT":
       self.solver_options = {"max_iter": 200, "print_level": 1}
       self.solver_options = options.get('solver_options', self.solver_options)
-      #self.solver_options['sb'] = 'yes'
+      self.solver_options['sb'] = 'yes'
     elif opt_solver == "BnB":
       self.solver_options = {}
       self.solver_options = options.get('solver_options', self.solver_options)
