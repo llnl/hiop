@@ -91,14 +91,12 @@ if __name__ == "__main__":
   parser.add_argument("--bnbtol", type=float, default=0.01, help="tolerance for bnb optimizer")
   parser.add_argument("--bnbmaxiter", type=int, default=1000, help="maximum number of bnb iterations") 
   parser.add_argument("--bnbmaxtime", type=float, default=180., help="maximum time for bnb opt") 
-  parser.add_argument("--nugget", type=float, default=2.220446049250313e-14, help="nugget added to posterior GP for numerical stability")
   args = parser.parse_args()
   nx = args.nx # dimension of the problem
   boiter = args.boiter
   bnbtol = args.bnbtol # tolerance for bnb optimizer
   bnbmaxiter = args.bnbmaxiter
   bnbmaxtime = args.bnbmaxtime
-  nugget = args.nugget
   random.seed(42)
 
   acquisition_type = 'LCB'  
@@ -106,9 +104,13 @@ if __name__ == "__main__":
   ### parameters
   n_samples = 25  # number of the initial samples to train GP
   if nx == 1:
-    n_samples = 20
+    n_samples = 5
+  if nx == 2:
+    n_samples = 8
+  if nx == 3:
+    n_samples = 14
   #n_samples = 10
-  theta = 1.e-2  # hyperparameter for GP kernel
+  theta = 1.e0  # hyperparameter for GP kernel
   c = 0.5 * np.ones(nx) #np.linspace(0.25, 0.75, num=nx)
   
   
@@ -117,20 +119,11 @@ if __name__ == "__main__":
   problem.set_constraints([])  
       
   x_train = problem.sample(n_samples)
-  #train_pts = problem.sample(n_samples)
-  #x_box = np.linspace(0.49, 0.51, num=3)
-  #x_train = [[x, y] for x in x_box for y in x_box] + [X for X in train_pts]
-  #x_train = np.array(x_train)
-  ##for x in x_train:
-  ##  print(x)
-  ##print(x_train.shape)
-  ##exit()
   y_train = problem.evaluate(x_train)
   
-  gp_model = smtKRG(theta, problem.xlimits, nx)
-  gp_model.set_nugget(nugget)
+  gp_model = smtKRG(theta, problem.xlimits, nx, pow_exp_power=1.0, eval_noise=False)
   gp_model.train(x_train, y_train)
-  
+  print("optimal theta = ", gp_model.surrogatesmt.optimal_theta) 
   
   if acquisition_type == 'LCB':
     acqf = LCBacquisition(gp_model)
@@ -147,7 +140,6 @@ if __name__ == "__main__":
       'nodes_per_batch' : 32,
       'pure_BBS' : True,
       'sync_mode' : True,
-      'acqf_UB_opt': True,
   }
 
   batch_size = 1
@@ -167,11 +159,13 @@ if __name__ == "__main__":
     y_train2 = problem.evaluate(x_train2)
     gp_model2 = smtKRG(theta, problem.xlimits, nx)
     gp_model2.train(x_train2, y_train2)
+    print("optimal theta = ", gp_model2.surrogatesmt.optimal_theta)
     if acquisition_type == "LCB":
       acqf2 = LCBacquisition(gp_model2)
     else:
       acqf2 = EIacquisition(gp_model2)
     if nx == 1:
+      X = np.linspace(problem.xlimits[:,0], problem.xlimits[:,1], num=100)
       Y_acqf2 = [acqf2.evaluate(x)[0] for x in X]
       y_star2 = acqf2.evaluate(np.atleast_2d(x_bo[i]))
       plt.plot(X, Y_acqf2,'k--', label=r''+acquisition_type+'$(x)$')
