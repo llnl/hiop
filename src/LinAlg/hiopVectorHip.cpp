@@ -679,7 +679,7 @@ void hiopVectorHip::negate() { hiop::hip::thrust_negate_kernel(n_local_, data_);
 void hiopVectorHip::invert() { hiop::hip::invert_kernel(n_local_, data_); }
 
 /** @brief Sum all selected log(this[i]) */
-double hiopVectorHip::logBarrier_local(const hiopVector& select, const hiopVector& weights) const
+double hiopVectorHip::logBarrierWeighted_local(const hiopVector& select, const hiopVector& weights) const
 {
   assert(n_local_ == select.get_local_size());
   assert(n_local_ == weights.get_local_size());
