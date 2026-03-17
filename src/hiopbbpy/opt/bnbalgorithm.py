@@ -664,9 +664,11 @@ class BnBAlgorithm(BnBAlgorithmBase):
     self.LUB = self.best_node.aq_U
     if queue is not None:
       for _, _, node in queue:
-        acqf_L, acqf_U = self.compute_acqf_bounds(node.l, node.u)
-        if acqf_U < self.LUB:
-          self.LUB = acqf_U
+        acqf_U = self.acqf.evaluate(np.atleast_2d((node.l + node.u)/2.))[0]
+        self.LUB = min(self.LUB, acqf_U)
+      #  acqf_L, acqf_U = self.compute_acqf_bounds(node.l, node.u)
+      #  if acqf_U < self.LUB:
+      #    self.LUB = acqf_U
         
   def bnboptimize(self, l_init, u_init):
     """
