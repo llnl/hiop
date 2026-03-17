@@ -51,6 +51,7 @@ class PeriodicObjective(Problem):
 if __name__ == "__main__":
   parser = argparse.ArgumentParser(prog='myprogram')
   parser.add_argument("--nx", type=int, default=1, help="dimension of problem")
+  parser.add_argument("--p", type=int, default=1, help="exponent hyperparameter of Gaussian process power-exponential kernel")
   parser.add_argument("--ntrain", type=int, default=3, help="number of initial GP training points")
   parser.add_argument("--make_plts", type=int, default=0, help="save plots or not")
   parser.add_argument("--opt_mode", type=int, default=2, help="optimization mode")
@@ -66,6 +67,7 @@ if __name__ == "__main__":
   make_plts = args.make_plts
   ntrain = args.ntrain
   theta0 = args.theta0
+  p = args.p
   lengthscale = args.lengthscale
   
 
@@ -83,9 +85,9 @@ if __name__ == "__main__":
   y_train = problem.evaluate(x_train)
   
   # ---- setup GP
-  gp_model = smtKRG(theta0, problem.xlimits, nx, pow_exp_power=1.0, eval_noise=False)
+  gp_model = smtKRG(theta0, problem.xlimits, nx, pow_exp_power=float(p), eval_noise=False)
   gp_model.train(x_train, y_train)
-   
+  print("optimal theta = ", gp_model.surrogatesmt.optimal_theta) 
  
   # ---- acqf
   beta = 3.0  

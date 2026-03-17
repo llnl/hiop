@@ -110,10 +110,9 @@ if __name__ == "__main__":
   if nx == 3:
     n_samples = 14
   #n_samples = 10
-  theta = 1.e0  # hyperparameter for GP kernel
-  c = 0.5 * np.ones(nx) #np.linspace(0.25, 0.75, num=nx)
   
   
+  #c = 0.5 * np.ones(nx) #np.linspace(0.25, 0.75, num=nx)
   #problem = QuadraticShift(ndim=nx, c=c)
   problem = PeriodicObjective(ndim=nx)
   problem.set_constraints([])  
@@ -121,6 +120,7 @@ if __name__ == "__main__":
   x_train = problem.sample(n_samples)
   y_train = problem.evaluate(x_train)
   
+  theta = 1.e0  # hyperparameter for GP kernel
   gp_model = smtKRG(theta, problem.xlimits, nx, pow_exp_power=1.0, eval_noise=False)
   gp_model.train(x_train, y_train)
   print("optimal theta = ", gp_model.surrogatesmt.optimal_theta) 

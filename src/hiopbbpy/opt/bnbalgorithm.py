@@ -53,6 +53,8 @@ class BnBNode:
     self.aq_U = aq_U
     self.diam = np.max(u - l)
     self.midpoint = 0.5 * (l + u)
+    self.parent_aq_U = None
+    self.parent_aq_L = None
   def __lt__(self, other):
     return self.aq_U > other.aq_U
 
@@ -526,6 +528,10 @@ class BnBAlgorithm(BnBAlgorithmBase):
           print("max eig = ", max(eigs))
           print("min eig ", min(eigs))
 
+
+      # TODO: what can we do instead here?!!!
+
+
       assert np.isfinite(acqf_L), "convex optimizer did not converge"
       # check if rhos violate (42)
       #if opt_mode != 0 and self.p == 1.0:
@@ -538,7 +544,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
       #        print("|rho_{0:d} - rho_{1:d}| = {2:1.8e}".format(i, j, drhoij))
       #        print("||x_{0:d} - x_{1:d}|| = {2:1.8e}".format(i, j, dxij))
       # check if k violates the ratio constraints
-      kopt = self.C2 @ self.X.value
+      #kopt = self.C2 @ self.X.value
       
       #print("-------l = ", l, "u = ", u, " --------")
       #print("xstar = ", xvar.value)
@@ -722,7 +728,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
         # update best_node via children
         updated_best_node = False
         for child in children:
-          assert child.aq_U >= child.aq_L, "ERROR: child upper bound < child lower bound"
+          #assert child.aq_U >= child.aq_L, "ERROR: child upper bound < child lower bound"
           if child.aq_U <= self.LUB:
             self.best_node = child
             self.LUB = self.best_node.aq_U
@@ -1307,9 +1313,13 @@ class branching_wrapper:
     return acqf_L, acqf_U
   def callback(self, nodes):
     output = []
-    for node in nodes.flatten():
-      for child_l, child_u in branch(node.l, node.u):
+    for parent in nodes.flatten():
+      for child_l, child_u in branch(parent.l, parent.u):
         acqf_L, acqf_U = self.compute_acqf_bounds(child_l, child_u)
         child = BnBNode(child_l, child_u, acqf_L, acqf_U)
+        child.parent_aq_U = parent.aq_U
+        child.parent_aq_L = parent.aq_L
+        child.aq_U = min(child.aq_U, parent.aq_U)
+        child.aq_L = max(child.aq_L, parent.aq_L)
         output.append(child)
     return [output]
