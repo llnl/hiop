@@ -154,12 +154,15 @@ if __name__ == "__main__":
   bo.optimize()
   x_bo = bo.getOptimizationHistory()[0]
   x_train_superset = np.concatenate((x_train, x_bo), axis=0)
+
+  optimal_thetas = []
   for i in range(boiter):
     x_train2 = x_train_superset[:-boiter+i]
     y_train2 = problem.evaluate(x_train2)
     gp_model2 = smtKRG(theta, problem.xlimits, nx)
     gp_model2.train(x_train2, y_train2)
     print("optimal theta = ", gp_model2.surrogatesmt.optimal_theta)
+    optimal_thetas.append(gp_model2.surrogatesmt.optimal_theta)
     if acquisition_type == "LCB":
       acqf2 = LCBacquisition(gp_model2)
     else:

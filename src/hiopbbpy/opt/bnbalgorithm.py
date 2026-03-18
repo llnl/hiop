@@ -812,7 +812,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
 
 
         if updated_best_node:
-          if gap  < self.epsilon_gap:
+          if gap  < self.epsilon_gap and self.best_node.diam < self.epsilon_gap:
             print(f"STOP: optimality gap = {gap} < {self.epsilon_gap}")
             break
         if np.linalg.norm(self.best_node.l - self.best_node.u, np.inf) < self.epsilon_diam:
