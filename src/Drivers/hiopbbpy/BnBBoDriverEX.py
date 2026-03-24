@@ -104,13 +104,15 @@ if __name__ == "__main__":
   acquisition_type = 'LCB'  
   plot_acquisition = True
   ### parameters
-  n_samples = 25  # number of the initial samples to train GP
-  if nx == 1:
-    n_samples = 5
-  if nx == 2:
-    n_samples = 8
-  if nx == 3:
-    n_samples = 14
+  
+  n_samples = 5
+  #n_samples = 25  # number of the initial samples to train GP
+  #if nx == 1:
+  #  n_samples = 5
+  #if nx == 2:
+  #  n_samples = 8
+  #if nx == 3:
+  #  n_samples = 14
   #n_samples = 10
   
   
@@ -118,12 +120,16 @@ if __name__ == "__main__":
   #problem = QuadraticShift(ndim=nx, c=c)
   problem = PeriodicObjective(ndim=nx)
   problem.set_constraints([])  
-      
+  
+  problem.set_seed(42)
   x_train = problem.sample(n_samples)
   y_train = problem.evaluate(x_train)
   
   theta = 0.9  # hyperparameter for GP kernel
-  gp_model = smtKRG(theta, problem.xlimits, nx, pow_exp_power=1.0, eval_noise=False, fix_theta=True)
+  fix_theta = True
+  pow_exp_power = 1.0
+  eval_noise = False
+  gp_model = smtKRG(theta, problem.xlimits, nx, pow_exp_power=pow_exp_power, eval_noise=eval_noise, fix_theta=fix_theta)
   gp_model.train(x_train, y_train)
   print("optimal theta = ", gp_model.surrogatesmt.optimal_theta) 
   
@@ -132,7 +138,7 @@ if __name__ == "__main__":
   else:
     acqf = EIacquisition(gp_model)
   
-  save_data_dir = 'data03202026/' 
+  save_data_dir = 'data03242026/' 
   bnb_solver_options = {
       'epsilon_prune' : 1.e-12,
       'epsilon_gap' : bnbtol, 
@@ -164,7 +170,7 @@ if __name__ == "__main__":
   for i in range(boiter):
     x_train2 = x_train_superset[:-boiter+i]
     y_train2 = problem.evaluate(x_train2)
-    gp_model2 = smtKRG(theta, problem.xlimits, nx)
+    gp_model2 = smtKRG(theta, problem.xlimits, nx, pow_exp_power=pow_exp_power, eval_noise=eval_noise, fix_theta=fix_theta)
     gp_model2.train(x_train2, y_train2)
     print("optimal theta = ", gp_model2.surrogatesmt.optimal_theta)
     optimal_thetas.append(gp_model2.surrogatesmt.optimal_theta)
@@ -200,4 +206,6 @@ if __name__ == "__main__":
   print("BnB Branches by BO it = ", bo.bnb_num_branch_hist)
   np.savetxt(save_data_dir + 'optimal_thetas.dat', optimal_thetas)
   np.savetxt(save_data_dir + 'bnb_branches.dat', bo.bnb_num_branch_hist)
+  np.savetxt(save_data_dir + 'bohist_xpts.dat', x_bo)
+  np.savetxt(save_data_dir + 'init_xtrain.dat', x_train)
 

@@ -60,18 +60,26 @@ class BnBNode:
   def __lt__(self, other):
     return self.aq_U > other.aq_U
 
-def branch(l, u):
+
+def dist_to_corner(l, u, x):
+  box = np.array([l, u])
+  return np.linalg.norm(np.min(np.abs(box - x), axis=0))
+
+def inside_box(l, u, xk):
+  return np.all(xk >= l) and np.all(xk <= u) # and not a corner node
+
+def branch(l, u, X = None, corner_tol = 1.e-6):
   # Force to float to avoid truncation issues
   l = l.astype(float)
   u = u.astype(float)
 
   # Pick the dimension with largest length
   d = np.argmax(u - l)
-  mid = 0.5 * (l[d] + u[d])
+  midpt = 0.5 * (l + u)
 
   # If the midpoint is the same as one bound (degenerate split), return nothing
   # shouldn't this issue have been caught?
-  if np.isclose(mid, l[d]) or np.isclose(mid, u[d]):
+  if np.isclose(midpt[d], l[d]) or np.isclose(midpt[d], u[d]):
     return []
 
   # Generate child boxes
@@ -80,8 +88,27 @@ def branch(l, u):
   
   # Split the largest axis
   # along along midpoint of said axis
-  u1[d] = mid
-  l2[d] = mid
+  if X is None:
+    u1[d] = midpt[d]
+    l2[d] = midpt[d]
+  else:
+    # training pts (X) that are internal to box defined by l, u
+    internal_training_pts = []
+    for x in X:
+      if inside_box(l, u, x) and dist_to_corner(l, u, x) > corner_tol:
+        internal_training_pts.append(x)
+    if len(internal_training_pts) > 0:
+      minpt_idx = np.argmin(np.linalg.norm(internal_training_pts - midpt, axis=1))
+      xsplit = internal_training_pts[minpt_idx]
+      # closer to l or u?
+      if np.linalg.norm(xsplit - l, np.inf) >= np.linalg.norm(xsplit - u, np.inf):
+        d = np.argmax(np.abs(xsplit -l))
+      else:
+        d = np.argmax(np.abs(xsplit - u))
+    else:
+      xsplit = midpt
+    u1[d] = xsplit[d]
+    l2[d] = xsplit[d]
   return [(l1, u1), (l2, u2)]
 
 
@@ -586,6 +613,9 @@ class BnBAlgorithm(BnBAlgorithmBase):
       alpha = 0.05 + 0.9 * np.random.rand(len(u)) # rand numbers in [0.05, 0.95)
       x0 = [alpha * l + (1. - alpha) * u]
       opt_sol = opt_evaluator.run(acqf_minimizer.minimizer_callback, x0)[0]
+      if not (np.all(opt_sol[0] >= l) and np.all(opt_sol[0] <= u)):
+        print("not within bounds")
+        print(f"opt sol: {opt_sol[0]}, box: {l}, {u}")
       assert (np.all(opt_sol[0] >= l) and np.all(opt_sol[0] <= u)), f"acqf minimizer not within bounds"
       msg = opt_sol[3]
       acqf_solve_success = opt_sol[2]
@@ -681,7 +711,8 @@ class BnBAlgorithm(BnBAlgorithmBase):
         and update the least upper-bound if appropriate
       """
       # grab training points as well
-      delta = root.diam / 100.
+      #delta = root.diam / 100.
+      eps = 0.05
       for i in range(self.x.shape[0]):
         for j in range(i):
           midpt = np.atleast_2d((self.x[i] + self.x[j]) / 2.)
@@ -689,16 +720,30 @@ class BnBAlgorithm(BnBAlgorithmBase):
           if acqf_midpt < self.LUB:
             print("updating LUB from ", self.LUB, "to ", acqf_midpt)
           self.LUB = min(self.LUB, acqf_midpt)
-          l_midpt = midpt[0] - delta / 2.
-          u_midpt = midpt[0] + delta / 2.
-          l_midpt = np.array([max(l_midpt[i], l_init[i]) for i in range(len(l_init))])
-          u_midpt = np.array([min(u_midpt[i], u_init[i]) for i in range(len(u_init))])
-
-          aq_L_val, aq_U_val = self.compute_acqf_bounds(l_midpt, u_midpt)
+          # determine corner l, u for box where xi and xj are corners
+          Xij = np.array([self.x[i], self.x[j]]).T
+          lij = np.min(Xij, axis=1)
+          uij = np.max(Xij, axis=1)
+          Delta = uij - lij
+          lij = lij + Delta * eps / 2.
+          uij = uij - Delta * eps / 2.
+          aq_L_val, aq_U_val = self.compute_acqf_bounds(lij, uij)
           if aq_U_val < self.LUB:
             print("updating LUB based on midpoint node")
             print("LUB: ", self.LUB, " --> ", aq_U_val)
             self.LUB = min(self.LUB, aq_U_val)
+
+
+          #l_midpt = midpt[0] - delta / 2.
+          #u_midpt = midpt[0] + delta / 2.
+          #l_midpt = np.array([max(l_midpt[i], l_init[i]) for i in range(len(l_init))])
+          #u_midpt = np.array([min(u_midpt[i], u_init[i]) for i in range(len(u_init))])
+
+          #aq_L_val, aq_U_val = self.compute_acqf_bounds(l_midpt, u_midpt)
+          #if aq_U_val < self.LUB:
+          #  print("updating LUB based on midpoint node")
+          #  print("LUB: ", self.LUB, " --> ", aq_U_val)
+          #  self.LUB = min(self.LUB, aq_U_val)
           
 
 
@@ -1331,7 +1376,7 @@ class branching_wrapper:
           opt_solver_options = {'max_iter' : 200, 'tol' : 1.e-5, 'honor_original_bounds' : 'yes', 'print_level' : 3, 'sb' : 'yes'}
         else: # SLSQP
           opt_solver_options = {'maxiter' : 200, 'tol' : 1.e-5, 'disp' : True}
-        acqf_minimizer = minimizer_wrapper(acqf_callback, opt_solver, box_bounds, constraints, opt_solver_options)
+        acqf_minimizer = minimizer_wrapper(acqf_callback, self.acqf_UB_solver, box_bounds, constraints, opt_solver_options)
         alpha = 0.05 + 0.9 * np.random.rand(len(u)) # rand numbers in [0.05, 0.95)
         x0 = [alpha * l + (1. - alpha) * u]
         opt_sol = opt_evaluator.run(acqf_minimizer.minimizer_callback, x0)[0]
