@@ -319,7 +319,7 @@ class BnBAlgorithmBase:
 
 
 class BnBAlgorithm(BnBAlgorithmBase):
-  def __init__(self, acqf, options = {}, BOit=0, saveData=False):
+  def __init__(self, acqf, options = {}, BOit=0):
     self.acqf = acqf
     self.gpsurrogate = acqf.gpsurrogate
     super().__init__(x = self.gpsurrogate.training_x, y = self.gpsurrogate.training_y)
@@ -337,7 +337,8 @@ class BnBAlgorithm(BnBAlgorithmBase):
     self.nodes_per_batch = 1
     self.max_bnbtime = 12 * 60 # 12 minutes
     self.BOit = BOit
-    self.saveData = saveData
+    self.saveData = False #saveData
+    self.saveDataDir = ""
     self.pure_BBS = False  # pure BBS search or hybrid BBS/BFS search
     self.sync_mode = False # synchronous or asynchronous evaluations
     self.verbose_cvx_solver = False # verbose convex optimizer solves
@@ -358,8 +359,12 @@ class BnBAlgorithm(BnBAlgorithmBase):
     self.sync_mode =  options.get('sync_mode', self.sync_mode)
     self.verbose_cvx_solver = options.get('verbose_cvx_solver', self.verbose_cvx_solver)
     self.opt_mode = options.get('opt_mode', self.opt_mode)
+    self.saveDataDir = options.get('save_data_dir', self.saveDataDir)
+    self.saveData = options.get('save_data', self.saveData)
     assert self.opt_mode in [0, 1, 2, 3, 4], "unknown opt_mode"
     assert self.acqf_UB_solver in ["SLSQP", "IPOPT", "MINEVAL"], "invalid acqf ub solver"
+    assert isinstance(self.saveData, bool), "save_data is not of type bool"
+    assert isinstance(self.saveDataDir, str), "save_data_dir is not of type string"
 
     if is_running_with_mpi():
       num_available_workers = MPI.COMM_WORLD.Get_size() - 1
@@ -663,9 +668,43 @@ class BnBAlgorithm(BnBAlgorithmBase):
     self.best_node = root
     self.LUB = self.best_node.aq_U
     if queue is not None:
+      print("root node acqf_L, acqf_U = ", root.aq_L, root.aq_U)
       for _, _, node in queue:
-        acqf_U = self.acqf.evaluate(np.atleast_2d((node.l + node.u)/2.))[0]
+        acqf_U = self.acqf.evaluate(np.atleast_2d((node.l + node.u)/2.))[0, 0]
+        print("LUB, acqf_U = ", self.LUB, acqf_U)
         self.LUB = min(self.LUB, acqf_U)
+        print("node in queue for warm start = ", node.l, node.u)
+      """
+        Here the strategy is to tesselate the domain into
+        hyperrectangles. Each of the hyperrectangles will
+        define a BnBNode which we can then check upper and lower-bounds
+        and update the least upper-bound if appropriate
+      """
+      # grab training points as well
+      delta = root.diam / 100.
+      for i in range(self.x.shape[0]):
+        for j in range(i):
+          midpt = np.atleast_2d((self.x[i] + self.x[j]) / 2.)
+          acqf_midpt = self.acqf.evaluate(midpt)[0,0]
+          if acqf_midpt < self.LUB:
+            print("updating LUB from ", self.LUB, "to ", acqf_midpt)
+          self.LUB = min(self.LUB, acqf_midpt)
+          l_midpt = midpt[0] - delta / 2.
+          u_midpt = midpt[0] + delta / 2.
+          l_midpt = np.array([max(l_midpt[i], l_init[i]) for i in range(len(l_init))])
+          u_midpt = np.array([min(u_midpt[i], u_init[i]) for i in range(len(u_init))])
+
+          aq_L_val, aq_U_val = self.compute_acqf_bounds(l_midpt, u_midpt)
+          if aq_U_val < self.LUB:
+            print("updating LUB based on midpoint node")
+            print("LUB: ", self.LUB, " --> ", aq_U_val)
+            self.LUB = min(self.LUB, aq_U_val)
+          
+
+
+
+      #print(queue)
+      #exit()
       #  acqf_L, acqf_U = self.compute_acqf_bounds(node.l, node.u)
       #  if acqf_U < self.LUB:
       #    self.LUB = acqf_U
@@ -872,19 +911,19 @@ class BnBAlgorithm(BnBAlgorithmBase):
     self.gap_history = gap_history
     self.branch_history = branch_history
     if self.saveData:
-      np.savetxt("branch_history_BOit"+str(self.BOit)+".dat", self.branch_history)
-      np.savetxt("gap_history_BOit"+str(self.BOit)+".dat", self.gap_history)
-      np.savetxt("prunedvol_history_BOit"+str(self.BOit)+".dat", self.prunedvol_history)
-      np.savetxt("pruningratio_history_BOit"+str(self.BOit)+".dat", self.pruningratio_history)
-      np.savetxt("pruned_nodes_ls_BOit"+str(self.BOit)+".dat", np.array([node.l for node in all_prunednodes]))
-      np.savetxt("pruned_nodes_us_BOit"+str(self.BOit)+".dat", np.array([node.u for node in all_prunednodes]))
-      np.savetxt("pruned_nodes_aqU_BOit"+str(self.BOit)+".dat", np.array([node.aq_U for node in all_prunednodes]))
-      np.savetxt("pruned_nodes_aqL_BOit"+str(self.BOit)+".dat", np.array([node.aq_L for node in all_prunednodes]))
-      np.savetxt("nonpruned_nodes_ls_BOit"+str(self.BOit)+".dat", np.array([node.l for node in self.all_nonpruned_nodes]))
-      np.savetxt("nonpruned_nodes_us_BOit"+str(self.BOit)+".dat", np.array([node.u for node in self.all_nonpruned_nodes]))
-      np.savetxt("nonpruned_nodes_aqU_BOit"+str(self.BOit)+".dat", np.array([node.aq_U for node in self.all_nonpruned_nodes]))
-      np.savetxt("nonpruned_nodes_aqL_BOit"+str(self.BOit)+".dat", np.array([node.aq_L for node in self.all_nonpruned_nodes]))
-      np.savetxt("kriging_weights_BOit"+str(self.BOit)+".dat", self.gamma) 
+      np.savetxt(self.saveDataDir + "branch_history_BOit"+str(self.BOit)+".dat", self.branch_history)
+      np.savetxt(self.saveDataDir + "gap_history_BOit"+str(self.BOit)+".dat", self.gap_history)
+      np.savetxt(self.saveDataDir + "prunedvol_history_BOit"+str(self.BOit)+".dat", self.prunedvol_history)
+      np.savetxt(self.saveDataDir + "pruningratio_history_BOit"+str(self.BOit)+".dat", self.pruningratio_history)
+      np.savetxt(self.saveDataDir + "pruned_nodes_ls_BOit"+str(self.BOit)+".dat", np.array([node.l for node in all_prunednodes]))
+      np.savetxt(self.saveDataDir + "pruned_nodes_us_BOit"+str(self.BOit)+".dat", np.array([node.u for node in all_prunednodes]))
+      np.savetxt(self.saveDataDir + "pruned_nodes_aqU_BOit"+str(self.BOit)+".dat", np.array([node.aq_U for node in all_prunednodes]))
+      np.savetxt(self.saveDataDir + "pruned_nodes_aqL_BOit"+str(self.BOit)+".dat", np.array([node.aq_L for node in all_prunednodes]))
+      np.savetxt(self.saveDataDir + "nonpruned_nodes_ls_BOit"+str(self.BOit)+".dat", np.array([node.l for node in self.all_nonpruned_nodes]))
+      np.savetxt(self.saveDataDir + "nonpruned_nodes_us_BOit"+str(self.BOit)+".dat", np.array([node.u for node in self.all_nonpruned_nodes]))
+      np.savetxt(self.saveDataDir + "nonpruned_nodes_aqU_BOit"+str(self.BOit)+".dat", np.array([node.aq_U for node in self.all_nonpruned_nodes]))
+      np.savetxt(self.saveDataDir + "nonpruned_nodes_aqL_BOit"+str(self.BOit)+".dat", np.array([node.aq_L for node in self.all_nonpruned_nodes]))
+      np.savetxt(self.saveDataDir + "kriging_weights_BOit"+str(self.BOit)+".dat", self.gamma) 
 
     ## TODO: sync step and prune
     ##       get final data
@@ -1210,7 +1249,7 @@ class branching_wrapper:
         if i == 1:
           opt_tol *= 1.e2
         print("loosening convex opt tolerance to ", opt_tol)
-        acqf_L = np.inf
+        acqf_L = -np.inf
         continue
       else:
         break # exit loop acqf_L successfully computed :)
@@ -1230,7 +1269,7 @@ class branching_wrapper:
     return acqf_L
     
 
-  def compute_acqf_bounds(self, l, u):
+  def compute_acqf_bounds(self, l, u, skip_LB=False):
     # kernel bounds
     kL, kU = self.ker_bounds(l, u)
     assert self.p == 1.0 or self.p == 2.0, "not supporting p not equal to 1 or 2"
@@ -1242,15 +1281,19 @@ class branching_wrapper:
       # opt_mode = 2 (Most recent relaxation w ratio constraints and affine constraints
       opt_mode = 2 #self.opt_mode
       
-      acqf_L = self.LCB_LB(l, u, kL, kU, opt_mode=opt_mode)
-      for i in range(2):
-        if not np.isfinite(acqf_L):
-          failed_LB_opt = True
-          print("was not able to determine lower-bound in previous mode ", opt_mode, "... switching")
-          opt_mode -= 1
-          acqf_L = self.LCB_LB(l, u, kL, kU, opt_mode=opt_mode)
-        else:
-          failed_LB_opt = False
+      if not skip_LB:
+        acqf_L = self.LCB_LB(l, u, kL, kU, opt_mode=opt_mode)
+        for i in range(2):
+          if not np.isfinite(acqf_L):
+            failed_LB_opt = True
+            print("was not able to determine lower-bound in previous mode ", opt_mode, "... switching")
+            opt_mode -= 1
+            acqf_L = self.LCB_LB(l, u, kL, kU, opt_mode=opt_mode)
+          else:
+            failed_LB_opt = False
+      else:
+        acqf_L = -np.inf 
+        failed_LB_opt = False
     if not isinstance(self.acqf, LCBacquisition) or failed_LB_opt:
       # mean bounds
       mu_L, mu_U = self.mu_bounds(kL, kU)

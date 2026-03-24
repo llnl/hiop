@@ -91,12 +91,14 @@ if __name__ == "__main__":
   parser.add_argument("--bnbtol", type=float, default=0.01, help="tolerance for bnb optimizer")
   parser.add_argument("--bnbmaxiter", type=int, default=1000, help="maximum number of bnb iterations") 
   parser.add_argument("--bnbmaxtime", type=float, default=180., help="maximum time for bnb opt") 
+  parser.add_argument("--bnbwarmstart", action=argparse.BooleanOptionalAction, type=bool, default=True, help="warm start BnBBO")
   args = parser.parse_args()
   nx = args.nx # dimension of the problem
   boiter = args.boiter
   bnbtol = args.bnbtol # tolerance for bnb optimizer
   bnbmaxiter = args.bnbmaxiter
   bnbmaxtime = args.bnbmaxtime
+  bnbwarmstart = args.bnbwarmstart
   random.seed(42)
 
   acquisition_type = 'LCB'  
@@ -120,8 +122,8 @@ if __name__ == "__main__":
   x_train = problem.sample(n_samples)
   y_train = problem.evaluate(x_train)
   
-  theta = 1.e0  # hyperparameter for GP kernel
-  gp_model = smtKRG(theta, problem.xlimits, nx, pow_exp_power=1.0, eval_noise=False)
+  theta = 0.9  # hyperparameter for GP kernel
+  gp_model = smtKRG(theta, problem.xlimits, nx, pow_exp_power=1.0, eval_noise=False, fix_theta=True)
   gp_model.train(x_train, y_train)
   print("optimal theta = ", gp_model.surrogatesmt.optimal_theta) 
   
@@ -130,7 +132,7 @@ if __name__ == "__main__":
   else:
     acqf = EIacquisition(gp_model)
   
-  
+  save_data_dir = 'data03202026/' 
   bnb_solver_options = {
       'epsilon_prune' : 1.e-12,
       'epsilon_gap' : bnbtol, 
@@ -140,14 +142,17 @@ if __name__ == "__main__":
       'nodes_per_batch' : 32,
       'pure_BBS' : True,
       'sync_mode' : True,
+      'save_data' : True,
+      'save_data_dir' : save_data_dir,
   }
 
   batch_size = 1
   options = {
-      'acquisition_type': acquisition_type,
-      'bo_maxiter': boiter, 
-      'batch_size': batch_size,
-      'opt_solver': 'BnB',
+      'acquisition_type' : acquisition_type,
+      'bo_maxiter' : boiter, 
+      'batch_size' : batch_size,
+      'opt_solver' : 'BnB',
+      'BnBWarmStart' : bnbwarmstart,
       'solver_options' : bnb_solver_options,
   }
   bo = BOAlgorithm(problem, gp_model, x_train, y_train, options=options)
@@ -176,7 +181,7 @@ if __name__ == "__main__":
       plt.xlabel("x")
       plt.legend()
       plt.title(r""+acquisition_type+"$(x)$ at BO iteration {0:d}".format(i))
-      plt.savefig("acqf_BOit"+str(i)+".png")
+      plt.savefig(save_data_dir + "acqf_BOit"+str(i)+".png")
       plt.close()
     elif nx == 2:
       l = problem.xlimits[:, 0].astype(float)
@@ -189,5 +194,10 @@ if __name__ == "__main__":
       plt.xlabel(r'$x$')
       plt.ylabel(r'$y$')
       plt.colorbar(label=r'$\varphi(x,y)$, acquisition function')
-      plt.savefig("acqf_BOit"+str(i)+".png")
+      plt.savefig(save_data_dir + "acqf_BOit"+str(i)+".png")
       plt.close()
+  print("optimal_thetas = ", optimal_thetas)
+  print("BnB Branches by BO it = ", bo.bnb_num_branch_hist)
+  np.savetxt(save_data_dir + 'optimal_thetas.dat', optimal_thetas)
+  np.savetxt(save_data_dir + 'bnb_branches.dat', bo.bnb_num_branch_hist)
+
