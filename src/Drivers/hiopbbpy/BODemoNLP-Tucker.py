@@ -71,7 +71,7 @@ if __name__ == "__main__":
   lengthscale = args.lengthscale
   
 
-  save_dir = 'newdata/opt_mode'+str(opt_mode) + '/'
+  save_dir = 'data_bounds_03262026/'
   
   # ---- black-box objective
   xlimits = np.array([[0., 1.]] * nx )
@@ -87,12 +87,13 @@ if __name__ == "__main__":
   # ---- setup GP
   gp_model = smtKRG(theta0, problem.xlimits, nx, pow_exp_power=float(p), eval_noise=False)
   gp_model.train(x_train, y_train)
-  print("optimal theta = ", gp_model.surrogatesmt.optimal_theta) 
  
   # ---- acqf
-  beta = 3.0  
-  acqf = LCBacquisition(gp_model, beta=beta)
-     
+  #beta = 3.0  
+  #acqf = LCBacquisition(gp_model, beta=beta)
+  acqf = EIacquisition(gp_model)  
+
+   
   l = problem.xlimits[:, 0].astype(float)
   u = problem.xlimits[:, 1].astype(float)
   
@@ -114,7 +115,10 @@ if __name__ == "__main__":
       plt.plot(X, muX, "-.", label=r'$\mu(x)$')
       plt.plot(X, sigmaX, label=r'$\sigma(x)$')
       plt.xlabel("x")
-      plt.ylabel("LCB(x)")
+      if isinstance(acqf, LCBacquisition):
+        plt.ylabel("LCB(x)")
+      elif isinstance(acqf, EIacquisition):
+        plt.ylabel("EI(x)")
       plt.legend()
       plt.title("acquisition function")
       plt.savefig(save_dir + 'acqf.png')
@@ -179,7 +183,9 @@ if __name__ == "__main__":
         # of side length L to 2^(nx) hypercubes, each of
         # side length L / 2
         for child_l, child_u in branch(node.l, node.u):
-          acqf_L, acqf_U = bnb.compute_acqf_bounds(child_l, child_u)
+          output = bnb.compute_acqf_bounds(child_l, child_u)
+          acqf_L = output[0]
+          acqf_U = output[1]
           if acqf_U < acqf_L:
             acqf_L = acqf_U - 1.e-12
           child = BnBNode(child_l, child_u, acqf_L, acqf_U)
@@ -240,7 +246,11 @@ if __name__ == "__main__":
          
     nodes = children
     if make_plts and nx == 1:
-      plt.plot(X, Y_acqf, label=r'$LCB(x)$')
+      if isinstance(acqf, LCBacquisition):
+        lbl = r'$LCB(x)$'
+      elif isinstance(acqf, EIacquisition):
+        lbl = r'$EI(x)$'
+      plt.plot(X, Y_acqf, label=lbl)
       plt.title('gap = {0:1.2e}, num_branches = {1:d}, pruning_ratio = {2:1.3f}'.format(
           LUBgap, num_branches, pruning_ratio))
       plt.legend()

@@ -129,9 +129,9 @@ if __name__ == "__main__":
   
   theta = 0.9  # hyperparameter for GP kernel
   fix_theta = False
-  pow_exp_power = 1.0
+  pow_exp_power = 2.0
   eval_noise = False
-  gp_model = smtKRG(theta, problem.xlimits, nx, pow_exp_power=pow_exp_power, eval_noise=eval_noise, fix_theta=fix_theta)
+  gp_model = smtKRG(theta, problem.xlimits, nx, pow_exp_power=pow_exp_power, eval_noise=eval_noise)#, fix_theta=fix_theta)
   gp_model.train(x_train, y_train)
   
   if acquisition_type == 'LCB':
@@ -177,7 +177,7 @@ if __name__ == "__main__":
   for i in range(boiter):
     x_train2 = x_train_superset[:-boiter+i]
     y_train2 = problem.evaluate(x_train2)
-    gp_model2 = smtKRG(theta, problem.xlimits, nx, pow_exp_power=pow_exp_power, eval_noise=eval_noise, fix_theta=fix_theta)
+    gp_model2 = smtKRG(theta, problem.xlimits, nx, pow_exp_power=pow_exp_power, eval_noise=eval_noise)#, fix_theta=fix_theta)
     gp_model2.train(x_train2, y_train2)
     optimal_thetas.append(gp_model2.surrogatesmt.optimal_theta)
     if acquisition_type == "LCB":

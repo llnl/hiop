@@ -325,6 +325,8 @@ class BnBAlgorithmBase:
       Bcon = B.dot(self.C)
       cons = [self.C @ self.z >= kL, self.C @ self.z <= kU, Bcon @ self.z >= 0]
 
+    #TODO: update me, embed in try loop... some other strategy for when the maximization does not work!!!
+
     s2_U_n = cp.Problem(cp.Maximize(self.obj), cons).solve(solver="OSQP",verbose=self.verbose_cvx_solver, eps_abs=1.e-14, eps_rel=1.e-10)
     assert np.isfinite(s2_U_n), "convex optimizer did not converge"
     
@@ -341,8 +343,6 @@ class BnBAlgorithm(BnBAlgorithmBase):
     super().__init__(x = self.gpsurrogate.training_x, y = self.gpsurrogate.training_y)
     if not (isinstance(self.acqf, LCBacquisition) or isinstance(self.acqf, EIacquisition)):
       raise NotImplementedError("Unrecognized acquisition function type")
-    if not (isinstance(self.acqf, LCBacquisition)):
-      raise NotImplementedError("Only supprting LCB right now")
     self.sync_from_smt()
     
     # Stopping criteria parameters (default)    
@@ -439,6 +439,13 @@ class BnBAlgorithm(BnBAlgorithmBase):
     self.obj2 = self.b_obj2.T @ self.X + self.c_obj2
     self.cons2 = 0.5 * cp.quad_form(self.X, self.A_constraint2) + self.b_constraint2 @ self.X + self.c_constraint2
 
+    # set up a third objective function whose value is s wherein we will include a constraint s^2 <= \sig^2(k) 
+    # also in which we will maximize s making s = max sig
+    self.b_obj3 = np.zeros(ntrain + 1)
+    self.c_obj3 = 0.0 # no shift necessary
+    self.b_obj3[-1] = 1.0
+    self.obj3 = self.b_obj3.T @ self.X + self.c_obj3
+
   # For minimization, we find a feasible function value as the upper bound on the minimum value of the acquisition function.
   def compute_acqf_upper_bound(self, l, u):
     # We compute the upper bound of the acquisition function based on bounds of the kernel, mu and sigma.
@@ -457,7 +464,28 @@ class BnBAlgorithm(BnBAlgorithmBase):
     mu_L, mu_U = self.mu_bounds(kL, kU)
     var_L,var_U = self.sigma2_bounds(kL, kU, l=l, u=u)
     return self.acqf.evaluate_meansig2(np.atleast_1d(mu_L), np.atleast_1d(var_U))[0]
+
   def LCB_LB(self, l, u, kL, kU, opt_mode=2):
+    return self.convex_relaxation(l, u, kL, kU, opt_mode=opt_mode)
+  def sig_UB(self, l, u, kL, kU, opt_mode=2):
+    return self.convex_relaxation(l, u, kL, kU, opt_mode=opt_mode, mode=1)
+  def sig_LB(self, kL, kU, l = None, u =None):
+    # lower-bound
+    if l is None or u is None:
+      s2_L = 0.0
+    else:
+      # TODO: replace with local minimizer routine
+      x = np.atleast_2d( (l + u) / 2.)
+      S2 = self.gpsurrogate.variance(x)
+      s2_L = min(S2.flatten())
+    return np.sqrt(s2_L)
+  
+  def convex_relaxation(self, l, u, kL, kU, opt_mode=2, mode=0):
+    """
+       mode: 0 --> convex relaxation for minimum of LCB acquisition function
+       mode: 1 --> convex relaxation for maximum of variance        
+    """
+    assert mode in [0, 1], "mode can only be in 0, 1"
     assert opt_mode in [0, 1, 2], "opt mode can only be 0, 1, or 2"
     # opt_mode = 0 (previous baseline w ratio constraints)
     # opt_mode = 1 (Convex relaxation w no ratio constraints on k and no affine constraints)
@@ -511,8 +539,11 @@ class BnBAlgorithm(BnBAlgorithmBase):
         
     opt_tol = 1.e-12
     for i in range(3):
-      try: 
-        acqf_L = cp.Problem(cp.Minimize(self.obj2), cons).solve(verbose=False, tol_gap_abs=opt_tol)
+      try:
+        if mode == 0: 
+          acqf_L = cp.Problem(cp.Minimize(self.obj2), cons).solve(verbose=False, tol_gap_abs=opt_tol)
+        else:
+          sig_U = cp.Problem(cp.Maximize(self.obj3), cons).solve(verbose=False, tol_gap_abs=opt_tol)
         pass
       except Exception as e:
         print(f"An unexpected error occured: {e}")
@@ -521,24 +552,17 @@ class BnBAlgorithm(BnBAlgorithmBase):
         if i == 1:
           opt_tol *= 1.e2
         print("loosening convex opt tolerance to ", opt_tol)
-        acqf_L = -np.inf
+        if mode == 0:
+          acqf_L = -np.inf
+        else:
+          sig_U = np.inf
         continue
       else:
         break # exit loop acqf_L successfully computed :)
-        #print(f"An unexpected error occured: {e}")
-        ## solve again but verbosely
-        #print("loosening convex opt tolerance to ", opt_tol * 1.e8)
-        #acqf_L = cp.Problem(cp.Minimize(self.obj2), cons).solve(verbose=True, tol_gap_abs=opt_tol * 1.e8)
-        ##assert False, "convex optimizer did not converge"
-    #if not np.isfinite(acqf_L):
-    #  print("loosening convex opt tolerance to ", opt_tol * 1.e8)
-    #  acqf_L = cp.Problem(cp.Minimize(self.obj2), cons).solve(verbose=True, tol_gap_abs=opt_tol * 1.e8)
-    #  if not np.isfinite(acqf_L):
-    #    print("checking eigenvalues...")
-    #    eigs = np.linalg.eigvalsh(self.A_obj)
-    #    print("max eig = ", max(eigs))
-    #    print("min eig ", min(eigs))
-    return acqf_L
+    if mode == 0:
+      return acqf_L
+    else:
+      return sig_U
   def compute_acqf_bounds(self, l, u, skip_LB=False):
     # kernel bounds
     kL, kU = self.ker_bounds(l, u)
@@ -571,7 +595,15 @@ class BnBAlgorithm(BnBAlgorithmBase):
     if not isinstance(self.acqf, LCBacquisition) or failed_LB_opt:
       # mean bounds
       mu_L, mu_U = self.mu_bounds(kL, kU)
-      var_L, var_U = self.sigma2_bounds(kL, kU, l=l, u=u)
+      sig_L = self.sig_LB(kL, kU, l=l, u=u)
+      with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=UserWarning)
+        sig_U = self.sig_UB(l, u, kL, kU)
+      if np.isfinite(sig_U):
+        var_L = sig_L ** 2.
+        var_U = sig_U ** 2.
+      else:
+        var_L, var_U = self.sigma2_bounds(kL, kU, l=l, u=u)
       # evaluate acquisition at (mu_L, var_U) and (mu_U, var_L)
       mu  = np.array([mu_L, mu_U])
       var = np.array([var_U, var_L])
@@ -631,7 +663,6 @@ class BnBAlgorithm(BnBAlgorithmBase):
       min_arg = np.argmin(acqf_eval.flatten())
       acqf_U_x = x_points[min_arg]
       acqf_U = acqf_eval[min_arg]
-      #acqf_U = min(acqf_eval.flatten())
     if acqf_L > acqf_U:
       if abs(acqf_U - acqf_L) / abs(acqf_U) < 1.e-6:
         acqf_L = acqf_U - 1.e-8
@@ -1087,9 +1118,9 @@ class branching_wrapper:
     self.C2[:,:ntrain] = self.C[:,:]
     self.A_constraint2 = np.zeros((ntrain + 1, ntrain+1))
     # regularize A_obj
-    U, s, Vh = np.linalg.svd(self.A_obj)
-    sreg = [min(si, -1.e-15) for si in s]
-    Areg = U @ np.diag(sreg) @ Vh
+    #U, s, Vh = np.linalg.svd(self.A_obj)
+    #sreg = [min(si, -1.e-15) for si in s]
+    #Areg = U @ np.diag(sreg) @ Vh
 
 
     #self.A_constraint2[:ntrain, :ntrain] = self.sigma2 * Areg #self.A_obj
@@ -1103,6 +1134,13 @@ class branching_wrapper:
     self.X = cp.Variable(ntrain+1) # (z, s), z = C * k
     self.obj2 = self.b_obj2.T @ self.X + self.c_obj2
     self.cons2 = 0.5 * cp.quad_form(self.X, self.A_constraint2) + self.b_constraint2 @ self.X + self.c_constraint2
+    
+    # set up a third objective function whose value is s wherein we will include a constraint s^2 <= \sig^2(k) 
+    # also in which we will maximize s making s = max sig
+    self.b_obj3 = np.zeros(ntrain + 1)
+    self.c_obj3 = 0.0 # no shift necessary
+    self.b_obj3[-1] = 1.0
+    self.obj3 = self.b_obj3.T @ self.X + self.c_obj3
   
   def _normalize(self, x):
     return (np.asarray(x, float) - self.X_offset) / self.X_scale
@@ -1172,7 +1210,8 @@ class branching_wrapper:
     mu_L = self.y_mean + self.y_std * mu_L_n
     mu_U = self.y_mean + self.y_std * mu_U_n
     return mu_L, mu_U
-  
+ 
+   
   def sigma2_bounds(self, kL, kU, l = None, u = None):
     """
     Variance bounds over r ∈ [kL,kU] for SMT KRG (poly='constant'),
@@ -1200,9 +1239,27 @@ class branching_wrapper:
     # re-scale
     s2_U = s2_U_n * self.sigma2 
     return s2_L, s2_U
-  
-
   def LCB_LB(self, l, u, kL, kU, opt_mode=2):
+    return self.convex_relaxation(l, u, kL, kU, opt_mode=opt_mode)
+  def sig_UB(self, l, u, kL, kU, opt_mode=2):
+    return self.convex_relaxation(l, u, kL, kU, opt_mode=opt_mode, mode=1)
+  def sig_LB(self, kL, kU, l = None, u =None):
+    # lower-bound
+    if l is None or u is None:
+      s2_L = 0.0
+    else:
+      # TODO: replace with local minimizer routine
+      x = np.atleast_2d( (l + u) / 2.)
+      S2 = self.gpsurrogate.variance(x)
+      s2_L = min(S2.flatten())
+    return np.sqrt(s2_L)
+  
+  def convex_relaxation(self, l, u, kL, kU, opt_mode=2, mode=0):
+    """
+       mode: 0 --> convex relaxation for minimum of LCB acquisition function
+       mode: 1 --> convex relaxation for maximum of variance        
+    """
+    assert mode in [0, 1], "mode can only be in 0, 1"
     assert opt_mode in [0, 1, 2], "opt mode can only be 0, 1, or 2"
     # opt_mode = 0 (previous baseline w ratio constraints)
     # opt_mode = 1 (Convex relaxation w no ratio constraints on k and no affine constraints)
@@ -1256,8 +1313,11 @@ class branching_wrapper:
         
     opt_tol = 1.e-12
     for i in range(3):
-      try: 
-        acqf_L = cp.Problem(cp.Minimize(self.obj2), cons).solve(verbose=False, tol_gap_abs=opt_tol)
+      try:
+        if mode == 0: 
+          acqf_L = cp.Problem(cp.Minimize(self.obj2), cons).solve(verbose=False, tol_gap_abs=opt_tol)
+        else:
+          sig_U = cp.Problem(cp.Maximize(self.obj3), cons).solve(verbose=False, tol_gap_abs=opt_tol)
         pass
       except Exception as e:
         print(f"An unexpected error occured: {e}")
@@ -1266,26 +1326,17 @@ class branching_wrapper:
         if i == 1:
           opt_tol *= 1.e2
         print("loosening convex opt tolerance to ", opt_tol)
-        acqf_L = -np.inf
+        if mode == 0:
+          acqf_L = -np.inf
+        else:
+          sig_U = np.inf
         continue
       else:
         break # exit loop acqf_L successfully computed :)
-        #print(f"An unexpected error occured: {e}")
-        ## solve again but verbosely
-        #print("loosening convex opt tolerance to ", opt_tol * 1.e8)
-        #acqf_L = cp.Problem(cp.Minimize(self.obj2), cons).solve(verbose=True, tol_gap_abs=opt_tol * 1.e8)
-        ##assert False, "convex optimizer did not converge"
-    #if not np.isfinite(acqf_L):
-    #  print("loosening convex opt tolerance to ", opt_tol * 1.e8)
-    #  acqf_L = cp.Problem(cp.Minimize(self.obj2), cons).solve(verbose=True, tol_gap_abs=opt_tol * 1.e8)
-    #  if not np.isfinite(acqf_L):
-    #    print("checking eigenvalues...")
-    #    eigs = np.linalg.eigvalsh(self.A_obj)
-    #    print("max eig = ", max(eigs))
-    #    print("min eig ", min(eigs))
-    return acqf_L
-    
-
+    if mode == 0:
+      return acqf_L
+    else:
+      return sig_U
   def compute_acqf_bounds(self, l, u, skip_LB=False):
     # kernel bounds
     kL, kU = self.ker_bounds(l, u)
@@ -1318,7 +1369,15 @@ class branching_wrapper:
     if not isinstance(self.acqf, LCBacquisition) or failed_LB_opt:
       # mean bounds
       mu_L, mu_U = self.mu_bounds(kL, kU)
-      var_L, var_U = self.sigma2_bounds(kL, kU, l=l, u=u)
+      sig_L = self.sig_LB(kL, kU, l=l, u=u)
+      with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=UserWarning)
+        sig_U = self.sig_UB(l, u, kL, kU)
+      if np.isfinite(sig_U):
+        var_L = sig_L ** 2.
+        var_U = sig_U ** 2.
+      else:
+        var_L, var_U = self.sigma2_bounds(kL, kU, l=l, u=u)
       # evaluate acquisition at (mu_L, var_U) and (mu_U, var_L)
       mu  = np.array([mu_L, mu_U])
       var = np.array([var_U, var_L])
@@ -1342,6 +1401,8 @@ class branching_wrapper:
       alpha = 0.05 + 0.9 * np.random.rand(len(u)) # rand numbers in [0.05, 0.95)
       x0 = [alpha * l + (1. - alpha) * u]
       opt_sol = opt_evaluator.run(acqf_minimizer.minimizer_callback, x0)[0]
+      if not (np.all(opt_sol[0] >= l) and np.all(opt_sol[0] <= u)):
+        print(f"optimizer {opt_sol[0]} not within prescribed bounds: {l}, {u}")
       assert (np.all(opt_sol[0] >= l) and np.all(opt_sol[0] <= u)), f"acqf minimizer not within bounds"
       msg = opt_sol[3]
       acqf_solve_success = opt_sol[2]
@@ -1380,6 +1441,9 @@ class branching_wrapper:
     if acqf_L > acqf_U:
       if abs(acqf_U - acqf_L) / abs(acqf_U) < 1.e-6:
         acqf_L = acqf_U - 1.e-8
+      else:
+        print("issue with upper and lower-bound computations...")
+        print("acqf_L = {0:1.12e}, acqf_U = {1:1.12e}".format(acqf_L, acqf_U))
     assert acqf_L <= acqf_U, "error: computed acquisition function bounds: acqf_U < acqf_L"
     return acqf_L, acqf_U, acqf_U_x
   def callback(self, nodes):
