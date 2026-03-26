@@ -75,6 +75,8 @@ class PeriodicObjective(Problem):
     name = "PeriodicObjective"
     super().__init__(ndim, xlimits, name=name, constraints=constraints)
     # expose known solution for checking later
+    
+    
     self.x_star = np.array([0.375,] * ndim)
     self.f_star = -1.0 * ndim 
 
@@ -126,19 +128,18 @@ if __name__ == "__main__":
   y_train = problem.evaluate(x_train)
   
   theta = 0.9  # hyperparameter for GP kernel
-  fix_theta = True
+  fix_theta = False
   pow_exp_power = 1.0
   eval_noise = False
   gp_model = smtKRG(theta, problem.xlimits, nx, pow_exp_power=pow_exp_power, eval_noise=eval_noise, fix_theta=fix_theta)
   gp_model.train(x_train, y_train)
-  print("optimal theta = ", gp_model.surrogatesmt.optimal_theta) 
   
   if acquisition_type == 'LCB':
     acqf = LCBacquisition(gp_model)
   else:
     acqf = EIacquisition(gp_model)
   
-  save_data_dir = 'data03242026/' 
+  save_data_dir = 'data03262026/' 
   bnb_solver_options = {
       'epsilon_prune' : 1.e-12,
       'epsilon_gap' : bnbtol, 
@@ -167,19 +168,23 @@ if __name__ == "__main__":
   x_train_superset = np.concatenate((x_train, x_bo), axis=0)
 
   optimal_thetas = []
+  
+  if nx == 1:
+    X = np.linspace(problem.xlimits[:,0], problem.xlimits[:,1], num=100)
+    Yobj = problem.evaluate(X) 
+
+  
   for i in range(boiter):
     x_train2 = x_train_superset[:-boiter+i]
     y_train2 = problem.evaluate(x_train2)
     gp_model2 = smtKRG(theta, problem.xlimits, nx, pow_exp_power=pow_exp_power, eval_noise=eval_noise, fix_theta=fix_theta)
     gp_model2.train(x_train2, y_train2)
-    print("optimal theta = ", gp_model2.surrogatesmt.optimal_theta)
     optimal_thetas.append(gp_model2.surrogatesmt.optimal_theta)
     if acquisition_type == "LCB":
       acqf2 = LCBacquisition(gp_model2)
     else:
       acqf2 = EIacquisition(gp_model2)
     if nx == 1:
-      X = np.linspace(problem.xlimits[:,0], problem.xlimits[:,1], num=100)
       Y_acqf2 = [acqf2.evaluate(x)[0] for x in X]
       y_star2 = acqf2.evaluate(np.atleast_2d(x_bo[i]))
       plt.plot(X, Y_acqf2,'k--', label=r''+acquisition_type+'$(x)$')
@@ -189,6 +194,19 @@ if __name__ == "__main__":
       plt.title(r""+acquisition_type+"$(x)$ at BO iteration {0:d}".format(i))
       plt.savefig(save_data_dir + "acqf_BOit"+str(i)+".png")
       plt.close()
+      # plot the GP
+      muX = gp_model2.mean(X)
+      sigmaX = np.sqrt(gp_model2.variance(X))
+      plt.plot(X, Yobj, 'k', label=r'$f(x)$')
+      plt.plot(X, muX, 'r--', label=r'$\mu(x)$')
+      plt.fill_between(X.flatten(), (muX-sigmaX).flatten(), (muX + sigmaX).flatten(),
+                       label=r'$\tilde{f}$ confidence region', alpha=0.25)
+      plt.scatter(x_train2, y_train2, marker='o', s=30, c='magenta', label='training points')
+      plt.xlabel("x")
+      plt.legend()
+      plt.savefig(save_data_dir + "GP_BOit" + str(i) + ".png")
+      plt.close()
+
     elif nx == 2:
       l = problem.xlimits[:, 0].astype(float)
       u = problem.xlimits[:, 1].astype(float)
