@@ -155,7 +155,6 @@ void hiopOptions::load_from_file(const char* filename)
       return;
     }
   }
-  string line;
   string name, value;
   for(std::string line; getline(input, line);) {
     line = ltrim(line);
