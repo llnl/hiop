@@ -303,7 +303,7 @@ int main(int argc, char **argv) {
 
   hiop_size_type ns = 400;
   hiop_size_type nd = 100;
-  int i,j;
+  int i;
 
   // println("ns: $ns, nd: $nd")
 

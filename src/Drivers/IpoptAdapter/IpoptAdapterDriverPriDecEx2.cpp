@@ -38,7 +38,6 @@ int main(int argv, char** argc)
   hiopSolveStatus status0 = solver.run();
   solver.getSolution(x0);
 
-  double x[nx + S * nx];
   PriDecEx2 hiopNlp(nx, S, nS);
   hiopNlp.set_starting_point(x0);
 
