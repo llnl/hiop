@@ -223,7 +223,6 @@ public:
 #endif
   virtual size_type get_local_size_n() const { return n_local_; }
   virtual size_type get_local_size_m() const { return m_local_; }
-  virtual MPI_Comm get_mpi_comm() const { return comm_; }
 
   double* local_data_const() const { return M_[0]; }
   double* local_data() { return M_[0]; }
@@ -233,8 +232,6 @@ protected:
   inline double** get_M() { return M_; }
 
 public:
-  virtual size_type m() const { return m_local_; }
-  virtual size_type n() const { return n_global_; }
 #ifdef HIOP_DEEPCHECKS
   virtual bool assertSymmetry(double tol = 1e-16) const;
 #endif
