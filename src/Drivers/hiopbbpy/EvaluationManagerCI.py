@@ -9,32 +9,28 @@ import logging
 import argparse
 import time
 import sys
+import os
+import socket
+import threading
 from hiopbbpy.utils import EvaluationManager, is_running_with_mpi
 from concurrent.futures import ThreadPoolExecutor
 
-def _fn_for_test(x, sleep_time=0.1, slow_first=False):
-  processing_slow_task = False
+def _fn_for_test(x, sleep_time=0.1, slow_first=False, driver_rank=0):
+    hostname = socket.gethostname()
+    pid = os.getpid()
 
-  # Apply straggler only if enabled
-  if slow_first and x == 0:
-    actual_sleep = 3 * sleep_time   
-    processing_slow_task = True 
-  else:
-    actual_sleep = sleep_time
-  
-  if is_running_with_mpi():
-    from mpi4py import MPI
-    comm = MPI.COMM_WORLD
-    rank = comm.Get_rank()
-    if processing_slow_task:
-      print(f"Rank {rank}: Processing {x} (slow)", flush=True)
+    if slow_first and x == 0:
+        actual_sleep = 3 * sleep_time
     else:
-      print(f"Rank {rank}: Processing {x}", flush=True)
+        actual_sleep = sleep_time
 
-  time.sleep(actual_sleep)
-  return x * x
+    print(
+        f"rank={driver_rank} pid={pid} host={hostname}: processing x={x}",
+        flush=True,
+    )
 
-
+    time.sleep(actual_sleep)
+    return x * x
 
 if __name__ == "__main__":
   # Arguments for command line
@@ -62,8 +58,11 @@ if __name__ == "__main__":
 
   # Choose executor type
   if is_running_with_mpi():
+    from mpi4py import MPI
+    driver_rank = MPI.COMM_WORLD.Get_rank()
     executor_type = "mpi"
   else:
+    driver_rank = 0
     executor_type = "cpu"
 
   # Set up logging
@@ -85,6 +84,7 @@ if __name__ == "__main__":
       execute_at=executor_type,
       sleep_time=args.sleep_time,
       slow_first=args.slow_first,
+      driver_rank=driver_rank,
   )
 
   # Do some other work while tasks are running
