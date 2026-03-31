@@ -72,11 +72,12 @@ user_constraint_dict = {'cons': cons_vec, 'jac': cons_jac_vec, 'cl': cl, 'cu': c
 
 
 if __name__ == "__main__":
+  do_profiling = True
   for prob_type in prob_type_l:
     print()
     # ----- evaluator
-    obj_evaluator = MPIEvaluator()
-    opt_evaluator = MPIEvaluator(function_mode=False)
+    obj_evaluator = MPIEvaluator(profiling=do_profiling, task_name="MPI_OBJ_EVAL")
+    opt_evaluator = MPIEvaluator(function_mode=False, profiling=do_profiling, task_name="MPI_OPT_EVAL")
     if prob_type == "LpNorm":
       problem = LpNormProblem(nx, xlimits)
     else:
