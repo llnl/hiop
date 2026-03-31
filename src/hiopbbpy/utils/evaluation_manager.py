@@ -230,11 +230,6 @@ class EvaluationManager:
           if self._first_submit_time is not None else 0.0
       )
 
-      efficiency = (
-          ideal_walltime / actual_walltime
-          if actual_walltime > 0.0 else 0.0
-      )
-
       print("\n=== Parallel Performance ===")
       print(f"{self.task_name} Workers:                                     {num_workers}")
       print(f"{self.task_name} Total work in seconds:                       {total_work:.6e}")
@@ -243,15 +238,3 @@ class EvaluationManager:
 
     return list(X), list(F)
   
-  
-  ###
-# print
-# work execution apparenet wall clock time
-# ideal wallclock time (workers' side)
-#      total wall time devide by the number of MPI
-# manager wallclock time
-
-
-#. 20. 1 1 
-# mpi rank 1: 20
-# mpi rank 2: 1 1 
