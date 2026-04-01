@@ -724,6 +724,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
     # Least upper bound (LUB)
     self.best_node = root
     self.LUB = self.best_node.aq_U
+    self.LLB = self.best_node.aq_L
     if queue is not None:
       print("root node acqf_L, acqf_U = ", root.aq_L, root.aq_U)
       for _, _, node in queue:
@@ -827,19 +828,23 @@ class BnBAlgorithm(BnBAlgorithmBase):
             print("upper-bound = ", child.aq_U)
           assert child.aq_U >= child.aq_L, "ERROR: child upper bound < child lower bound for child"
           if child.aq_U <= self.LUB:
+            self.LUB = child.aq_U
+          if child.aq_L <= self.LLB:
             self.best_node = child
-            self.LUB = self.best_node.aq_U
+            self.LLB = self.best_node.aq_L
             updated_best_node = True
-        gap_history.append(self.best_node.aq_U - self.best_node.aq_L)
         if not updated_best_node:
           print("best node not updated")
-          print("min |child.aq_U - LUB| = ", min([abs(child.aq_U - self.LUB) for child in children]))
+          print("min |child.aq_L - LLB| = ", min([abs(child.aq_L - self.LLB) for child in children]))
           if self.pure_BBS and self.sync_mode:
-            idx = np.argmin([child.aq_U for child in children])
+            print("forcing best node update")
+            idx = np.argmin([child.aq_L for child in children])
             self.best_node = children[idx]
-            self.LUB = self.best_node.aq_U
+            self.LLB = self.best_node.aq_L
+            updated_best_node = True
         else:
           print("best node updated")
+        gap_history.append(self.best_node.aq_U - self.best_node.aq_L)
         
         # pre-prune
         children_lower_bounds = [child.aq_L for child in children]
@@ -1387,7 +1392,6 @@ class branching_wrapper:
     acqf_solve_success = False 
     if not self.acqf_UB_solver == "MINEVAL": # local gradient-based optimization method
       constraints = []
-      #box_bounds = [[l[i], u[i]] for i in range(len(l))]
       box_bounds = np.array([l, u]).T
       acqf_callback = {'obj' : self.acqf.scalar_evaluate}
       if self.acqf.has_gradient:

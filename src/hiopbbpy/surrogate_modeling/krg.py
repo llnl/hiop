@@ -12,13 +12,16 @@ from smt.design_space import DesignSpace
 
 
 class smtKRG(GaussianProcess):
-  def __init__(self, theta, xlimits, ndim, corr="pow_exp", pow_exp_power=1.0, noise0=0.0, nugget = 100. * np.finfo(np.double).eps, random_state=None, hyper_opt="TNC", eval_noise=False):
+  def __init__(self, theta0, xlimits, ndim, corr="pow_exp", pow_exp_power=1.0, noise0=0.0, nugget = 100. * np.finfo(np.double).eps, random_state=None, hyper_opt="TNC", eval_noise=False, fix_theta = False, theta_bounds=[0.1,10.]):
     super().__init__(ndim, xlimits)
     if random_state is None:
       random_state = 42
     design_space = DesignSpace(xlimits, random_state=random_state)
 
-    theta_bounds = [(10.0e0)**(-1.), 10.0e0]
+    if fix_theta:
+      theta_bounds_ = [theta0-1.e-8, theta0+1.e-8]
+    else:
+      theta_bounds_ = theta_bounds
     self.surrogatesmt = KRG(design_space=design_space,
                             print_global=False,
                             noise0=[noise0],
@@ -26,9 +29,9 @@ class smtKRG(GaussianProcess):
                             corr=corr,
                             pow_exp_power=pow_exp_power,
                             hyper_opt=hyper_opt,
-                            theta0 = [theta],
+                            theta0 = [theta0] * ndim,
                             nugget=nugget,
-                            theta_bounds=theta_bounds,
+                            theta_bounds=theta_bounds_,
                             )
     self.trained = False
 

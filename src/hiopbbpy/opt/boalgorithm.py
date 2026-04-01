@@ -8,12 +8,15 @@ Authors:    Tucker Hartland <hartland1@llnl.gov>
 import numpy as np
 from numpy.random import uniform
 from scipy.stats import qmc
+from scipy.optimize import minimize
 from ..surrogate_modeling.gp import GaussianProcess
 from .acquisition import LCBacquisition, EIacquisition
 from ..problems.problem import Problem
 from ..utils.util import Evaluator, Logger
 from .bnbalgorithm import BnBAlgorithm
 from .opt_utils import minimizer_wrapper
+
+
 
 # A base class defining a general framework for Bayesian Optimization
 class BOAlgorithmBase:

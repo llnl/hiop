@@ -29,7 +29,7 @@ class BraninProblem(Problem):
     ne, nx = x.shape
     assert nx == self.ndim
     
-    y = np.zeros((ne, 1), complex)
+    y = np.zeros((ne, 1))
     b = 5.1 / (4.0 * (np.pi) ** 2)
     c = 5.0 / np.pi
     r = 6.0
