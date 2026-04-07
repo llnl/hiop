@@ -25,8 +25,7 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 import numpy as np
-#from .evaluation_manager import EvaluationManager, is_running_with_mpi
-from .new_eval_manager import EvaluationManager, is_running_with_mpi
+from .evaluation_manager import EvaluationManager, is_running_with_mpi
 import logging
 
 
