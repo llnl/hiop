@@ -74,8 +74,8 @@ class MPIEvaluator(Evaluator):
   We reformat to 
   [eval0, eval1, eval2,...]
   """
-  def __init__(self, function_mode=True,cpu_executor=None, mpi_executor=None):
-    self.manager = EvaluationManager(cpu_executor,mpi_executor)
+  def __init__(self, function_mode=True,cpu_executor=None, mpi_executor=None, profiling=False, task_name="MPITASK"):
+    self.manager = EvaluationManager(cpu_executor,mpi_executor,profiling=profiling, task_name=task_name)
     self.function_mode = function_mode
     if is_running_with_mpi():
       self.executor_type = "mpi"
@@ -83,6 +83,8 @@ class MPIEvaluator(Evaluator):
       self.executor_type = "cpu"
   def __del__(self):
     del self.manager
+  def set_task_name(self, task_name):
+    self.manager.set_task_name(task_name)
   def run(self, fun, Xin):
     nevals = Xin.shape[0]
     self.manager.submit_tasks(fun, [np.atleast_2d(Xin[i]) for i in range(nevals)], execute_at=self.executor_type)

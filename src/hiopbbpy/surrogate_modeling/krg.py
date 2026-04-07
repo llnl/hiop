@@ -16,7 +16,7 @@ class smtKRG(GaussianProcess):
     super().__init__(ndim, xlimits)
     if random_state is None:
       random_state = 42
-    design_space = DesignSpace(xlimits, random_state=random_state)
+    design_space = DesignSpace(xlimits, seed=random_state)
     if noise0 is None:
       self.surrogatesmt = KRG(design_space=design_space,
                        print_global=False,
