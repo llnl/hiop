@@ -6,7 +6,7 @@ from scipy import linalg
 from scipy.stats import qmc
 from .acquisition import EIacquisition, LCBacquisition
 from ..utils.util import Evaluator, MPIEvaluator
-from ..utils.new_eval_manager import is_running_with_mpi
+from ..utils.evaluation_manager import is_running_with_mpi
 from .opt_utils import minimizer_wrapper
 from itertools import count
 try:
@@ -378,7 +378,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
     self.saveDataDir = options.get('save_data_dir', self.saveDataDir)
     self.saveData = options.get('save_data', self.saveData)
     assert self.opt_mode in [0, 1, 2, 3, 4], "unknown opt_mode"
-    assert self.acqf_UB_solver in ["SLSQP", "IPOPT", "MINEVAL"], "invalid acqf ub solver"
+    assert self.acqf_UB_solver in ["SLSQP", "trust-constr", "IPOPT", "MINEVAL"], "invalid acqf ub solver"
     assert isinstance(self.saveData, bool), "save_data is not of type bool"
     assert isinstance(self.saveDataDir, str), "save_data_dir is not of type string"
 
@@ -835,7 +835,6 @@ class BnBAlgorithm(BnBAlgorithmBase):
             updated_best_node = True
         if not updated_best_node:
           print("best node not updated")
-          print("min |child.aq_L - LLB| = ", min([abs(child.aq_L - self.LLB) for child in children]))
           if self.pure_BBS and self.sync_mode:
             print("forcing best node update")
             idx = np.argmin([child.aq_L for child in children])
@@ -1460,14 +1459,5 @@ class branching_wrapper:
         child.parent_aq_L = parent.aq_L
         child.aq_U_x = acqf_U_x
         child.parent_aq_U_x = parent.aq_U_x
-        if False:#parent.aq_U_x is not None:
-          print("child.l = ", child.l)
-          print("parent acqf_U_x = ", parent.aq_U_x)
-          print("child.u = ", child.u)
-          if np.all(child.l <= parent.aq_U_x) and np.all(parent.aq_U_x <= child.u):
-            child.aq_U = min(child.aq_U, parent.aq_U)
-
-        #child.aq_U = min(child.aq_U, parent.aq_U)
-        #child.aq_L = max(child.aq_L, parent.aq_L)
         output.append(child)
     return [output]
