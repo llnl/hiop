@@ -16,12 +16,16 @@ class smtKRG(GaussianProcess):
     super().__init__(ndim, xlimits)
     if random_state is None:
       random_state = 42
-    design_space = DesignSpace(xlimits, random_state=random_state)
-
+    design_space = DesignSpace(xlimits, seed=random_state)
     if fix_theta:
       theta_bounds_ = [theta0-1.e-8, theta0+1.e-8]
     else:
       theta_bounds_ = theta_bounds
+    #if noise0 is None:
+    #  self.surrogatesmt = KRG(design_space=design_space,
+    #                   print_global=False,
+    #                   eval_noise=False,
+    #                   corr=corr)
     self.surrogatesmt = KRG(design_space=design_space,
                             print_global=False,
                             noise0=[noise0],
