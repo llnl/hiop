@@ -438,6 +438,11 @@ class BnBAlgorithm(BnBAlgorithmBase):
     self.en1[ntrain] = 1.
     self.X = cp.Variable(ntrain+1) # (z, s), z = C * k
     self.obj2 = self.b_obj2.T @ self.X + self.c_obj2
+    # ensure that the matrix is negative semi-definite
+    #lam, U = np.linalg.eigh(self.A_constraint2)
+    #lam_pos = np.minimum(lam, -1.e-16 * np.ones(len(lam)))
+    #self.A_constraint2[:,:] = U.dot(np.diag(lam_pos)).dot(U.T)
+    
     self.cons2 = 0.5 * cp.quad_form(self.X, self.A_constraint2) + self.b_constraint2 @ self.X + self.c_constraint2
 
     # set up a third objective function whose value is s wherein we will include a constraint s^2 <= \sig^2(k) 
@@ -540,11 +545,15 @@ class BnBAlgorithm(BnBAlgorithmBase):
         
     opt_tol = 1.e-12
     for i in range(3):
+      if i == 2:
+        verbose = True
+      else:
+        verbose = False
       try:
         if mode == 0: 
-          acqf_L = cp.Problem(cp.Minimize(self.obj2), cons).solve(verbose=False, tol_gap_abs=opt_tol)
+          acqf_L = cp.Problem(cp.Minimize(self.obj2), cons).solve(solver=cp.SCS, verbose=verbose, eps_abs=opt_tol)#, tol_gap_abs=opt_tol)
         else:
-          sig_U = cp.Problem(cp.Maximize(self.obj3), cons).solve(verbose=False, tol_gap_abs=opt_tol)
+          sig_U = cp.Problem(cp.Maximize(self.obj3), cons).solve(solver=cp.SCS, verbose=verbose, eps_abs=opt_tol)#, tol_gap_abs=opt_tol)
         pass
       except Exception as e:
         print(f"An unexpected error occured: {e}")
@@ -1140,10 +1149,13 @@ class branching_wrapper:
     self.en1[ntrain] = 1.
     self.X = cp.Variable(ntrain+1) # (z, s), z = C * k
     self.obj2 = self.b_obj2.T @ self.X + self.c_obj2
-    
-    # changing sign
-    #self.cons2 = 0.5 * cp.quad_form(self.X, self.A_constraint2) + self.b_constraint2 @ self.X + self.c_constraint2
-    self.cons2 = 0.5 * cp.quad_form(self.X, -1. * self.A_constraint2, assume_PSD=True) + (-1.0 *self.b_constraint2) @ self.X + (-1.0*self.c_constraint2)
+   
+    # ensure that the matrix is negative semi-definite
+    #lam, U = np.linalg.eigh(self.A_constraint2)
+    #lam_pos = np.minimum(lam, -1.e-16 * np.ones(len(lam)))
+    #self.A_constraint2[:,:] = U.dot(np.diag(lam_pos)).dot(U.T)
+
+    self.cons2 = 0.5 * cp.quad_form(self.X, self.A_constraint2) + self.b_constraint2 @ self.X + self.c_constraint2
     
 
 
@@ -1276,7 +1288,7 @@ class branching_wrapper:
     # opt_mode = 0 (previous baseline w ratio constraints)
     # opt_mode = 1 (Convex relaxation w no ratio constraints on k and no affine constraints)
     # opt_mode = 2 (Most recent relaxation w ratio constraints and affine constraints
-    cons = [self.C2 @ self.X >= kL, self.C2 @ self.X <= kU, self.cons2 <= 0, self.en1 @ self.X >= 0]
+    cons = [self.C2 @ self.X >= kL, self.C2 @ self.X <= kU, self.cons2 >= 0, self.en1 @ self.X >= 0]
     if opt_mode != 0:
       xvar = cp.Variable(self.x.shape[1])
       cons.append(l <= xvar)
@@ -1325,11 +1337,15 @@ class branching_wrapper:
         
     opt_tol = 1.e-12
     for i in range(3):
+      if i == 2:
+        verbose = True
+      else:
+        verbose = False
       try:
         if mode == 0: 
-          acqf_L = cp.Problem(cp.Minimize(self.obj2), cons).solve(verbose=False, tol_gap_abs=opt_tol)
+          acqf_L = cp.Problem(cp.Minimize(self.obj2), cons).solve(solver = cp.SCS, verbose=verbose, eps_abs=opt_tol)#tol_gap_abs=opt_tol)
         else:
-          sig_U = cp.Problem(cp.Maximize(self.obj3), cons).solve(verbose=False, tol_gap_abs=opt_tol)
+          sig_U = cp.Problem(cp.Maximize(self.obj3), cons).solve(solver = cp.SCS, verbose=verbose, eps_abs=opt_tol)#tol_gap_abs=opt_tol)
         pass
       except Exception as e:
         print(f"An unexpected error occured: {e}")
