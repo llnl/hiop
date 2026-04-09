@@ -82,8 +82,11 @@ class MPIEvaluator(Evaluator):
       self.executor_type = "mpi"
     else:
       self.executor_type = "cpu"
-  def __del__(self):
-    del self.manager
+  #def __del__(self):
+  #  del self.manager
+  def submit_tasks(self, fun, X):
+    self.manager.submit_tasks(fun, [np.atleast_2d(x) for x in X], execute_at=self.executor_type)
+    return
   def set_task_name(self, task_name):
     self.manager.set_task_name(task_name)
   def run(self, fun, Xin):
@@ -110,6 +113,9 @@ class MPIEvaluator(Evaluator):
     return Y
   def num_submitted_tasks(self):
     return self.manager.num_submitted_tasks()
+  def sync(self):
+    self.manager.sync()
+    return
 
 class Logger:
   """

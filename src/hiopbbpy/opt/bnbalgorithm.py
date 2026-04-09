@@ -403,8 +403,9 @@ class BnBAlgorithm(BnBAlgorithmBase):
     else:
       num_bbs_workers = 1
       num_bfs_workers = 1
-    self.bbsevaluator = MPIEvaluator(function_mode=False, max_workers = num_bbs_workers)
-    self.bfsevaluator = MPIEvaluator(function_mode=False, max_workers = num_bfs_workers)  
+    # TODO: re-include max_workers
+    self.bbsevaluator = MPIEvaluator(function_mode=False)#, max_workers = num_bbs_workers)
+    self.bfsevaluator = MPIEvaluator(function_mode=False)#, max_workers = num_bfs_workers)  
     self.num_bbs_workers = num_bbs_workers
     self.num_bfs_workers = num_bfs_workers
     self.max_queue_size = 10 * self.num_bbs_workers
@@ -552,6 +553,9 @@ class BnBAlgorithm(BnBAlgorithmBase):
         if i == 1:
           opt_tol *= 1.e2
         print("loosening convex opt tolerance to ", opt_tol)
+        print("checking spectrum of quadratic terms")
+        eigs = np.linalg.eigvals(self.A_constraint2)
+        print("eigenvalues = ", eigs)
         if mode == 0:
           acqf_L = -np.inf
         else:
@@ -613,7 +617,6 @@ class BnBAlgorithm(BnBAlgorithmBase):
     acqf_solve_success = False 
     if not self.acqf_UB_solver == "MINEVAL": # local gradient-based optimization method
       constraints = []
-      #box_bounds = [[l[i], u[i]] for i in range(len(l))]
       box_bounds = np.array([l, u]).T
       acqf_callback = {'obj' : self.acqf.scalar_evaluate}
       if self.acqf.has_gradient:
@@ -636,16 +639,16 @@ class BnBAlgorithm(BnBAlgorithmBase):
         print(self.acqf_UB_solver + " did not converge on BOX: ", l, u, "... trying again with more verbosity and at another initial point")
         print(self.acqf_UB_solver + " message: ", msg)
         if self.acqf_UB_solver == "IPOPT":
-          opt_solver_options = {'max_iter' : 200, 'tol' : 1.e-5, 'honor_original_bounds' : 'yes', 'print_level' : 3, 'sb' : 'yes'}
+          opt_solver_options = {'max_iter' : 200, 'tol' : 1.e-3, 'honor_original_bounds' : 'yes', 'print_level' : 3, 'sb' : 'yes'}
         else: # SLSQP
-          opt_solver_options = {'maxiter' : 200, 'tol' : 1.e-5, 'disp' : True}
+          opt_solver_options = {'maxiter' : 200, 'tol' : 1.e-3, 'disp' : True}
         acqf_minimizer = minimizer_wrapper(acqf_callback, self.acqf_UB_solver, box_bounds, constraints, opt_solver_options)
         alpha = 0.05 + 0.9 * np.random.rand(len(u)) # rand numbers in [0.05, 0.95)
         x0 = [alpha * l + (1. - alpha) * u]
         opt_sol = opt_evaluator.run(acqf_minimizer.minimizer_callback, x0)[0]
         acqf_solve_success = opt_sol[2]
         if not acqf_solve_success:
-          print(self.acqf_UB_solver + "failed a second time. Will y take a the minimum of a small number of acqf function evaluations")
+          print(self.acqf_UB_solver + "failed a second time. Will take the minimum of a small number of acqf function evaluations")
       if acqf_solve_success:
         acqf_U = self.acqf.evaluate(np.atleast_2d(opt_sol[0])).flatten()[0]
         acqf_U_x = opt_sol[0]
@@ -1137,8 +1140,13 @@ class branching_wrapper:
     self.en1[ntrain] = 1.
     self.X = cp.Variable(ntrain+1) # (z, s), z = C * k
     self.obj2 = self.b_obj2.T @ self.X + self.c_obj2
-    self.cons2 = 0.5 * cp.quad_form(self.X, self.A_constraint2) + self.b_constraint2 @ self.X + self.c_constraint2
     
+    # changing sign
+    #self.cons2 = 0.5 * cp.quad_form(self.X, self.A_constraint2) + self.b_constraint2 @ self.X + self.c_constraint2
+    self.cons2 = 0.5 * cp.quad_form(self.X, -1. * self.A_constraint2, assume_PSD=True) + (-1.0 *self.b_constraint2) @ self.X + (-1.0*self.c_constraint2)
+    
+
+
     # set up a third objective function whose value is s wherein we will include a constraint s^2 <= \sig^2(k) 
     # also in which we will maximize s making s = max sig
     self.b_obj3 = np.zeros(ntrain + 1)
@@ -1268,7 +1276,7 @@ class branching_wrapper:
     # opt_mode = 0 (previous baseline w ratio constraints)
     # opt_mode = 1 (Convex relaxation w no ratio constraints on k and no affine constraints)
     # opt_mode = 2 (Most recent relaxation w ratio constraints and affine constraints
-    cons = [self.C2 @ self.X >= kL, self.C2 @ self.X <= kU, self.cons2 >= 0, self.en1 @ self.X >= 0]
+    cons = [self.C2 @ self.X >= kL, self.C2 @ self.X <= kU, self.cons2 <= 0, self.en1 @ self.X >= 0]
     if opt_mode != 0:
       xvar = cp.Variable(self.x.shape[1])
       cons.append(l <= xvar)
@@ -1330,6 +1338,9 @@ class branching_wrapper:
         if i == 1:
           opt_tol *= 1.e2
         print("loosening convex opt tolerance to ", opt_tol)
+        print("checking spectrum of quadratic terms")
+        eigs = np.linalg.eigvals(self.A_constraint2)
+        print("eigenvalues = ", eigs)
         if mode == 0:
           acqf_L = -np.inf
         else:
@@ -1413,16 +1424,16 @@ class branching_wrapper:
         print(self.acqf_UB_solver + " did not converge on BOX: ", l, u, "... trying again with more verbosity and at another initial point")
         print(self.acqf_UB_solver + " message: ", msg)
         if self.acqf_UB_solver == "IPOPT":
-          opt_solver_options = {'max_iter' : 200, 'tol' : 1.e-5, 'honor_original_bounds' : 'yes', 'print_level' : 3, 'sb' : 'yes'}
+          opt_solver_options = {'max_iter' : 200, 'tol' : 1.e-3, 'honor_original_bounds' : 'yes', 'print_level' : 3, 'sb' : 'yes'}
         else: # SLSQP
-          opt_solver_options = {'maxiter' : 200, 'tol' : 1.e-5, 'disp' : True}
+          opt_solver_options = {'maxiter' : 200, 'tol' : 1.e-3, 'disp' : True}
         acqf_minimizer = minimizer_wrapper(acqf_callback, self.acqf_UB_solver, box_bounds, constraints, opt_solver_options)
         alpha = 0.05 + 0.9 * np.random.rand(len(u)) # rand numbers in [0.05, 0.95)
         x0 = [alpha * l + (1. - alpha) * u]
         opt_sol = opt_evaluator.run(acqf_minimizer.minimizer_callback, x0)[0]
         acqf_solve_success = opt_sol[2]
         if not acqf_solve_success:
-          print(self.acqf_UB_solver + "failed a second time. Will y take a the minimum of a small number of acqf function evaluations")
+          print(self.acqf_UB_solver + "failed a second time. Will take the minimum of a small number of acqf function evaluations")
       if acqf_solve_success:
         acqf_U = self.acqf.evaluate(np.atleast_2d(opt_sol[0])).flatten()[0]
         acqf_U_x = opt_sol[0]
