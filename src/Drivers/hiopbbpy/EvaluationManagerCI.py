@@ -12,7 +12,7 @@ import sys
 import os
 import socket
 import threading
-from hiopbbpy.utils import EvaluationManager, is_running_with_mpi
+from hiopbbpy.utils import EvaluationManager
 from concurrent.futures import ThreadPoolExecutor
 
 def _fn_for_test(x, sleep_time=0.1, slow_first=False, driver_rank=0):
