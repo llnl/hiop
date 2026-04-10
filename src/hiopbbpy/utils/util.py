@@ -25,7 +25,7 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 import numpy as np
-from .evaluation_manager import EvaluationManager, is_running_with_mpi
+from .evaluation_manager import EvaluationManager
 import logging
 
 
@@ -74,20 +74,16 @@ class MPIEvaluator(Evaluator):
   We reformat to 
   [eval0, eval1, eval2,...]
   """
-  def __init__(self, function_mode=True,cpu_executor=None, mpi_executor=None, profiling=False, task_name="MPITASK"):
-    self.manager = EvaluationManager(cpu_executor,mpi_executor,profiling=profiling, task_name=task_name)
+  def __init__(self, function_mode=True,executor=None, profiling=False, task_name="MPITASK"):
+    self.manager = EvaluationManager(executor,profiling=profiling, task_name=task_name)
     self.function_mode = function_mode
-    if is_running_with_mpi():
-      self.executor_type = "mpi"
-    else:
-      self.executor_type = "cpu"
   def __del__(self):
     del self.manager
   def set_task_name(self, task_name):
     self.manager.set_task_name(task_name)
   def run(self, fun, Xin):
     nevals = Xin.shape[0]
-    self.manager.submit_tasks(fun, [np.atleast_2d(Xin[i]) for i in range(nevals)], execute_at=self.executor_type)
+    self.manager.submit_tasks(fun, [np.atleast_2d(Xin[i]) for i in range(nevals)], execute_at="mpi")
     self.manager.sync()
     Xout, Fout = self.manager.retrieve_results()
     if self.function_mode:
