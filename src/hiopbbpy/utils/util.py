@@ -77,13 +77,17 @@ class MPIEvaluator(Evaluator):
   def __init__(self, function_mode=True,executor=None, profiling=False, task_name="MPITASK"):
     self.manager = EvaluationManager(executor,profiling=profiling, task_name=task_name)
     self.function_mode = function_mode
+    print(f"Create Evaluator for task: {task_name}")
   def __del__(self):
     del self.manager
   def set_task_name(self, task_name):
     self.manager.set_task_name(task_name)
   def run(self, fun, Xin):
     nevals = Xin.shape[0]
-    self.manager.submit_tasks(fun, [np.atleast_2d(Xin[i]) for i in range(nevals)], execute_at="mpi")
+    print("in Evaluator::run")
+    for i in range(nevals):
+      self.manager.submit_tasks(fun, [np.atleast_2d(Xin[i])], run_dir=f"./hiop_temp/temp_dir_{i}")
+      print(f"Submitted task {i + 1}", flush=True)
     self.manager.sync()
     Xout, Fout = self.manager.retrieve_results()
     if self.function_mode:
