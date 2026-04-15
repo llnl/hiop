@@ -160,7 +160,9 @@ class xfoilProblem(Problem):
         self.tighter_bounds = tighter_bounds
         self.sampler = XFoilSampler(n=self.n, var_bounds=xlimits, tighter_bounds=self.tighter_bounds, ref_x=ref_x, use_ref=use_ref)
 
-    def airfoil_perf_obj(self, X, run_dir="./temp_output0"):
+    def airfoil_perf_obj(self, X, run_dir=None):
+        if run_dir is None:
+            raise ValueError("run_dir must be provided for XFoil evaluations")
         aoa_for_xfoil = (0.0, 20.0, 1.0)  # (start, stop, step)
         re_values = np.linspace(1e6, 5e6, num=5)
         mach = 0.2
@@ -178,8 +180,9 @@ class xfoilProblem(Problem):
         x = np.asarray(x, dtype=float).ravel()
         return (self._cache_tag, tuple(np.round(x, self._cache_ndigits)))
 
-    def eval_cached(self, x: np.ndarray, run_dir="./temp_output2"):
-        print("in eval_cached")
+    def eval_cached(self, x: np.ndarray, run_dir=None):
+        if run_dir is None:
+            raise ValueError("run_dir must be provided for XFoil evaluations")
         k = self._cache_key(x)
         hit = self._eval_cache.get(k, None)
         if hit is not None:
@@ -194,9 +197,10 @@ class xfoilProblem(Problem):
         self._eval_cache[k] = (f, c)
         return f, c
 
-    def _penalized_obj(self, x: np.ndarray, run_dir="./temp_output3") -> float:
+    def _penalized_obj(self, x: np.ndarray, run_dir=None) -> float:
+        if run_dir is None:
+            raise ValueError("run_dir must be provided for XFoil evaluations")
         #print("use penalty func!")
-        print("in penalized_obj")
         
         f, con_arr = self.eval_cached(x,run_dir=run_dir)
 
@@ -258,13 +262,11 @@ class xfoilProblem(Problem):
         Returns:
             ndarray: The objective values 
         """
-        print("in _evaluate")
         y = [float(self.obj_func(xi,**kwargs)) for xi in x]   # shape (k,)
         return np.asarray(y, dtype=float).reshape(-1, 1)    
 
     def sample(self, nsample: int) -> np.ndarray:
         def is_valid(x, run_dir=None):
-            print("in is_valid")
             f, con_arr = self.eval_cached(x,run_dir=run_dir)
             
             con_arr = np.atleast_1d(np.asarray(con_arr, dtype=float))

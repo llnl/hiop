@@ -15,10 +15,10 @@ import time
 import math
 import copy
 
-def _timed_call(fn, x, kwargs):
-  """Run fn(x, **kwargs) and record worker-side timing."""
+def _timed_call(fn, args, kwargs):
+  """Run fn(*args, **kwargs) and record worker-side timing."""
   start_time = time.perf_counter()
-  fx = fn(x, **kwargs)
+  fx = fn(*args, **kwargs)
   done_time = time.perf_counter()
   return {
       "result": fx,
@@ -26,6 +26,7 @@ def _timed_call(fn, x, kwargs):
       "done_time": done_time,
       "execution_time": done_time - start_time,
   }
+
 
 def _summary_stats(values):
   """Return mean, std_dev, min, max for a sequence."""
@@ -173,23 +174,20 @@ class EvaluationManager:
 
     key = execute_at.lower()
     if key not in self.executors:
-      raise KeyError(
-        f"Executor '{execute_at}' not found. Available: {list(self.executors.keys())}"
-      )
-    
+        raise KeyError(f"Executor '{execute_at}' not found. Available: {list(self.executors.keys())}")
+
     with self._queue_lock:
       for x in X:
         submit_time = time.perf_counter()
         if self._first_submit_time is None:
           self._first_submit_time = submit_time
 
+        args = x if isinstance(x, tuple) else (x,)
+
         if self.profiling:
-          future_obj = self.executors[key].submit(_timed_call, fn, x, kwargs)
+          future_obj = self.executors[key].submit(_timed_call, fn, args, kwargs)
         else:
-          if isinstance(x, tuple):
-            future_obj = self.executors[key].submit(fn, *x, **kwargs)
-          else:
-            future_obj = self.executors[key].submit(fn, x, **kwargs)
+          future_obj = self.executors[key].submit(fn, *args, **kwargs)
 
         self._queue.append([x, future_obj, key, submit_time])
         self.logger.info(f"{self.task_name} Submitted f({x})")
@@ -246,6 +244,7 @@ class EvaluationManager:
       print(f"{self.task_name} Ideal walltime in seconds (perfect balance): {ideal_walltime:.6e}")
       print(f"{self.task_name} Actual walltime in seconds (observed):       {actual_walltime:.6e}")
 
+    self._first_submit_time = None
     return X, F
   
   def _harvest_completed_locked(
