@@ -14,6 +14,7 @@ from .acquisition import LCBacquisition, EIacquisition
 from ..problems.problem import Problem
 from .optproblem import IpoptProb
 from ..utils.util import Evaluator, Logger
+import os
 
 # A base class defining a general framework for Bayesian Optimization
 class BOAlgorithmBase:
@@ -338,6 +339,7 @@ class minimizer_wrapper:
   # Find the minimum of the input objective `fun`, using the minimize function from SciPy. 
   def minimizer_callback(self, x0s):
     output = []
+    print(f"Worker pid={os.getpid()}: doing minimizer_callback ...", flush=True)
     msg = ""
     for x0 in x0s:
       if self.method == "SLSQP":

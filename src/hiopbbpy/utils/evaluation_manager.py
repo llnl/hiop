@@ -2,6 +2,37 @@
 This is a class to manage function evaluations using multiple parallel executors.
 It supports both intra-node and inter-node parallelism.
 
+Supported executors:
+  - concurrent.futures.ThreadPoolExecutor (single-node, multi-threaded)
+  - concurrent.futures.ProcessPoolExecutor (single-node, multi-process)
+  - mpi4py.futures.MPIPoolExecutor (multi-node, MPI-based)
+
+For multi-node execution with MPI:
+  1. Install mpi4py: pip install mpi4py
+  2. Run with: mpiexec -n <N> python your_script.py
+     where N >= 2 (1 master + N-1 workers distributed across nodes)
+  3. Only rank 0 should create the EvaluationManager
+  4. Worker ranks should call MPIPoolExecutor() to enter worker loop
+
+Example multi-node usage:
+  from mpi4py import MPI
+  from mpi4py.futures import MPIPoolExecutor
+
+  comm = MPI.COMM_WORLD
+  rank = comm.Get_rank()
+
+  if rank == 0:
+    # Master: create manager and submit tasks
+    manager = EvaluationManager({"mpi": MPIPoolExecutor()}, profiling=True)
+    manager.submit_tasks(my_func, data_list, execute_at="mpi")
+    manager.sync()
+    X, F = manager.retrieve_results()
+  else:
+    # Workers: enter worker loop
+    MPIPoolExecutor()
+
+See EvaluationManagerMPI.py for a complete example.
+
 Authors:    Tucker Hartland <hartland1@llnl.gov>
             Weslley S Pereira <wdasilv@nrel.gov>
 """
@@ -15,10 +46,10 @@ import time
 import math
 import copy
 
-def _timed_call(fn, x, kwargs):
-  """Run fn(x, **kwargs) and record worker-side timing."""
+def _timed_call(fn, args, kwargs):
+  """Run fn(*args, **kwargs) and record worker-side timing."""
   start_time = time.perf_counter()
-  fx = fn(x, **kwargs)
+  fx = fn(*args, **kwargs)
   done_time = time.perf_counter()
   return {
       "result": fx,
@@ -26,6 +57,7 @@ def _timed_call(fn, x, kwargs):
       "done_time": done_time,
       "execution_time": done_time - start_time,
   }
+
 
 def _summary_stats(values):
   """Return mean, std_dev, min, max for a sequence."""
@@ -100,18 +132,26 @@ class EvaluationManager:
 
   def _get_num_workers(self):
     """Return number of workers."""
-    if "mpi" in self.executors:
-      try:
-        return int(os.environ.get("MPI4PY_FUTURES_MAX_WORKERS", 1))
-      except Exception:
-        pass
-
     # For standard executors like ThreadPoolExecutor / ProcessPoolExecutor
     for ex in self.executors.values():
       try:
         return ex._max_workers
       except AttributeError:
-        continue
+        pass
+
+    # For MPI executors, try to get MPI communicator size
+    if "mpi" in self.executors:
+      try:
+        from mpi4py import MPI
+        comm = MPI.COMM_WORLD
+        # Return size - 1 because rank 0 is the master
+        return comm.Get_size() - 1
+      except Exception:
+        # Fallback to environment variable (legacy single-node mode)
+        try:
+          return int(os.environ.get("MPI4PY_FUTURES_MAX_WORKERS", 1))
+        except Exception:
+          pass
 
     return 1
 
@@ -173,23 +213,20 @@ class EvaluationManager:
 
     key = execute_at.lower()
     if key not in self.executors:
-      raise KeyError(
-        f"Executor '{execute_at}' not found. Available: {list(self.executors.keys())}"
-      )
-    
+        raise KeyError(f"Executor '{execute_at}' not found. Available: {list(self.executors.keys())}")
+
     with self._queue_lock:
       for x in X:
         submit_time = time.perf_counter()
         if self._first_submit_time is None:
           self._first_submit_time = submit_time
 
+        args = x if isinstance(x, tuple) else (x,)
+
         if self.profiling:
-          future_obj = self.executors[key].submit(_timed_call, fn, x, kwargs)
+          future_obj = self.executors[key].submit(_timed_call, fn, args, kwargs)
         else:
-          if isinstance(x, tuple):
-            future_obj = self.executors[key].submit(fn, *x, **kwargs)
-          else:
-            future_obj = self.executors[key].submit(fn, x, **kwargs)
+          future_obj = self.executors[key].submit(fn, *args, **kwargs)
 
         self._queue.append([x, future_obj, key, submit_time])
         self.logger.info(f"{self.task_name} Submitted f({x})")
@@ -246,6 +283,7 @@ class EvaluationManager:
       print(f"{self.task_name} Ideal walltime in seconds (perfect balance): {ideal_walltime:.6e}")
       print(f"{self.task_name} Actual walltime in seconds (observed):       {actual_walltime:.6e}")
 
+    self._first_submit_time = None
     return X, F
   
   def _harvest_completed_locked(
