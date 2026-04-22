@@ -29,6 +29,7 @@ from .evaluation_manager import EvaluationManager
 import logging
 
 import os
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -98,7 +99,7 @@ class MPIEvaluator(Evaluator):
     print("in Evaluator::run")
 
     # unique batch directory so repeated calls do not reuse temp_dir_0, temp_dir_1, ...
-    batch_id = f"{self.manager.task_name}_{os.getpid()}_{time.time_ns()}_{uuid.uuid4().hex[:8]}"
+    batch_id = f"{self.manager.task_name}_{os.getpid()}_{uuid.uuid4().hex[:8]}"
     batch_dir = self.run_root / batch_id
     batch_dir.mkdir(parents=True, exist_ok=False)
 
@@ -176,7 +177,7 @@ class Logger:
 
     # Create a console output handler
     if not self._logger.handlers:     
-      ch = logging.StreamHandler()
+      ch = logging.StreamHandler(sys.stdout)
 
       # Define the output format: logger name, and message
       formatter = logging.Formatter('%(name)s %(message)s')

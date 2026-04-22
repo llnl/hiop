@@ -75,6 +75,9 @@ class EvaluationManager:
     self._completed_X = deque([])
     self._completed_F = deque([])
     self._queue_lock = threading.Lock()
+    self._last_execution_times = []
+    self._last_wait_times = []
+    self._last_turnaround_times = []
 
     if isinstance(executor, dict):
       self.executors = executor
@@ -140,6 +143,10 @@ class EvaluationManager:
     harvests completed items into the internal completion buffers. Harvested
     results can be consumed using :meth:`retrieve_results`.
     """
+    execution_times = []
+    wait_times = []
+    turnaround_times = []
+
     while True:
       with self._queue_lock:
         futures = [queue_obj[1] for queue_obj in self._queue]
@@ -149,7 +156,15 @@ class EvaluationManager:
       wait(futures)
 
       with self._queue_lock:
-        self._harvest_completed_locked()
+        self._harvest_completed_locked(
+            execution_times=execution_times,
+            wait_times=wait_times,
+            turnaround_times=turnaround_times,
+        )
+
+    self._last_execution_times = execution_times
+    self._last_wait_times = wait_times
+    self._last_turnaround_times = turnaround_times
 
   def submit_tasks(self, fn, X, execute_at=None, **kwargs) -> None:
     """Submit tasks to the specified executor.
@@ -219,6 +234,11 @@ class EvaluationManager:
       self._completed_X.clear()
       self._completed_F.clear()
 
+    if not execution_times and self._last_execution_times:
+      execution_times = self._last_execution_times
+      wait_times = self._last_wait_times
+      turnaround_times = self._last_turnaround_times
+
     if self.profiling and execution_times:
       self._print_timing_stats(f"{self.task_name} Execution times", execution_times)
 
@@ -244,6 +264,9 @@ class EvaluationManager:
       print(f"{self.task_name} Ideal walltime in seconds (perfect balance): {ideal_walltime:.6e}")
       print(f"{self.task_name} Actual walltime in seconds (observed):       {actual_walltime:.6e}")
 
+    self._last_execution_times = []
+    self._last_wait_times = []
+    self._last_turnaround_times = []
     self._first_submit_time = None
     return X, F
   
@@ -294,7 +317,8 @@ class EvaluationManager:
         except CancelledError:
           self.logger.warning(f"{self.task_name} The execution of x={x} was cancelled.")
         except Exception as e:
-          self.logger.warning(f"{self.task_name} Task f({x}) raised an exception: {e}")
+          self.logger.exception(f"{self.task_name} Task f({x}) raised an exception")
+#          self.logger.warning(f"{self.task_name} Task f({x}) raised an exception: {e}")
 
       else:
         new_queue.append(item)

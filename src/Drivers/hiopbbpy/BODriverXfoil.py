@@ -1,7 +1,7 @@
 """
-   Allocate 12 wind turbines via FLORIS using Bayesian Optimization (BO).
+   8D Xfoil problem using Bayesian Optimization (BO).
 """
-
+import argparse
 import logging
 import os
 import tempfile
@@ -9,9 +9,6 @@ from pathlib import Path
 import numpy as np
 import sys
 
-from scipy.optimize import NonlinearConstraint
-
-from ds4mems.airfoil import XFoilAirfoilPerformance
 from xfoilProblem import xfoilProblem
 
 from hiopbbpy.surrogate_modeling import smtKRG
@@ -22,13 +19,32 @@ from concurrent.futures import ThreadPoolExecutor
 
 ### Define problem and optimization parameters 
 nx = 8                        # Number of design variables
-use_ref = False
+use_ref = True
 do_parallel = True
 do_profiling = True
-max_worker = 2
+DEFAULT_MAX_WORKER = 2
 
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Run Bayesian optimization for the XFoil problem."
+    )
+    parser.add_argument(
+        "-w", "--max-workers",
+        type=int,
+        default=DEFAULT_MAX_WORKER,
+        help=f"Maximum number of parallel workers (default: {DEFAULT_MAX_WORKER})",
+    )
+    return parser.parse_args()
 
 def main():
+    args = parse_args()
+    max_worker = args.max_workers
+    job_root = os.environ.get("HIOP_XFOIL_JOB_ROOT")
+    if job_root is None:
+        slurm_job_id = os.environ.get("SLURM_JOB_ID", "nojobid")
+        job_root = f"./hiop_temp/job_{slurm_job_id}"
+    print("Job temp root:", job_root)
+
     xlimits_small = np.array(
             [
                 [-0.25, 0.25],
@@ -55,7 +71,7 @@ def main():
             ]
         )
     # FIXME_NY --- use big box  
-    xlimits = xlimits_small
+#    xlimits = xlimits_small
 
     x_nan = np.array([[-1.2269792 , -1.40856   ,  0.56076634, -1.96206043,  1.44158607,
             0.22498941, -0.32848405,  0.04818669],
@@ -96,7 +112,7 @@ def main():
 
 
     ### Mac
-    problem = xfoilProblem(nx, xlimits, tighter_bounds=xlimits_small, ref_x=x_ref, use_ref=use_ref, xfoil_path="/Users/chiang7/project/2025/scidac/other_lab/ornl/xfoil/bin/xfoil")
+    problem = xfoilProblem(nx, xlimits, tighter_bounds=xlimits_small, ref_x=x_ref, use_ref=use_ref, xfoil_path="/p/lustre1/chiang7/xfoil/xfoil/bin/xfoil")
 
     ### LC
     #problem = xfoilProblem(nx, xlimits, tighter_bounds=xlimits_small, ref_x=x_ref, use_ref=use_ref, xfoil_path="/p/lustre1/chiang7/hiopbbpy/xfoil/bin/xfoil")
@@ -105,7 +121,7 @@ def main():
 
 
     ### BO parameters
-    n_samples = 4             # Number of initial design points
+    n_samples = 32             # Number of initial design points
     theta = 1.e-2              # Hyperparameter for the Kriging (GP) model
     acq_type = "EI"            # Acquisition function: "EI" or "LCB"
 
@@ -120,10 +136,10 @@ def main():
     options = {
             'acquisition_type': acq_type,
             'log_level': 'info',
-            'bo_maxiter': 2,
+            'bo_maxiter': 10,
             'opt_solver': opt_solver,
             'batch_size': 1,
-            'n_start': 3,
+            'n_start': 32,
             'solver_options': solver_options,
         }
 
@@ -138,6 +154,7 @@ def main():
                             profiling=do_profiling,
                             task_name="PARALLEL_OBJ_EVAL",
                             use_run_dir=True,
+                            run_root=job_root,
                         )
         opt_evaluator = MPIEvaluator(
                             function_mode=False,
@@ -145,6 +162,7 @@ def main():
                             profiling=do_profiling,
                             task_name="PARALLEL_IPOPT_START",
                             use_run_dir=False,
+                            run_root=job_root,
                         )
         y_train = obj_evaluator.run(problem.evaluate, x_train)
         options['obj_evaluator'] = obj_evaluator
@@ -160,7 +178,7 @@ def main():
     bo = BOAlgorithm(problem, gp_model, x_train, y_train, options = options) #EI or LCB
     bo.optimize()
 
-    problem.obj_func(bo.x_opt, run_dir="final_opt")
+    problem.obj_func(bo.x_opt, run_dir=os.path.join(job_root, "final_opt"))
 
 
 if __name__ == "__main__":

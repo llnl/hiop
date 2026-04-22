@@ -1,8 +1,10 @@
 import numpy as np
 import sys
+import os
 from pathlib import Path
 
 import random
+import traceback
 
 # Import the base optimization problem class.
 from hiopbbpy.problems import Problem
@@ -44,7 +46,7 @@ class XFoilSampler:
 
     def rejection_sampling(self, n_samples, is_valid=None, max_tries=10000):
         n_samples = int(n_samples)
-        print(f"Do rejection sampling! Find {n_samples} samples.")
+        print(f"Worker pid={os.getpid()}: Do rejection sampling! Find {n_samples} samples.")
 
         samples = []
         tries = 0
@@ -59,10 +61,10 @@ class XFoilSampler:
                 x = self.rng.uniform(self.var_lb, self.var_ub)
             else:
                 if self.rng.random() < 0.5:
-                    print("sample from small box: ")
+                    print("Main pid={os.getpid()}: sample from small box: ", flush=True)
                     x = self.rng.uniform(self.tighter_lb, self.tighter_ub)
                 else:
-                    print("sample from big box:   ")
+                    print("Main pid={os.getpid()}: sample from big box:   ", flush=True)
                     x = self.rng.uniform(self.var_lb, self.var_ub)
 
             # --- Check validity ---
@@ -70,11 +72,13 @@ class XFoilSampler:
                 samples.append(x)
             else:
                 try:
-                    if is_valid(x,run_dir=f"temp_sample_{len(samples)}"):
+                    job_root = os.environ.get("HIOP_XFOIL_JOB_ROOT", f"./hiop_temp/job_{os.environ.get('SLURM_JOB_ID', 'nojobid')}")
+                    run_dir=os.path.join(job_root, "serial", f"temp_sample_{len(samples)}")
+                    if is_valid(x,run_dir=run_dir):
                         samples.append(x)
-                        print("")
+                        print(f"Worker pid={os.getpid()}:    --- Sample Accept!")
                     else:
-                        print("---reject!")
+                        print(f"Worker pid={os.getpid()}:    --- Sample Reject!")
                 except Exception:
                     pass  # reject if evaluation crashes
 
@@ -97,13 +101,13 @@ class XFoilSampler:
         samples = np.empty((n_samples, self.n))
 
         # Sample from smaller box
-        print(f"generate {n_small} samples from small box")
+        print(f"Worker pid={os.getpid()}: generate {n_small} samples from small box")
         samples[:n_small] = self.rng.uniform(
             self.tighter_lb, self.tighter_ub, size=(n_small, self.n)
         )
 
         # Sample from full box
-        print(f"generate {n_full} samples from big box")
+        print(f"Worker pid={os.getpid()}: generate {n_full} samples from big box")
         samples[n_small:] = self.rng.uniform(
             self.var_lb, self.var_ub, size=(n_full, self.n)
         )
@@ -173,8 +177,24 @@ class xfoilProblem(Problem):
         for re in re_values:
             F.append(self.airfoil_perf(X, aoa=aoa_for_xfoil, re=re, mach=mach,run_dir=run_dir))
 
-        return -np.mean(np.concat(F))  # Return negative mean performance for minimization
+#        return -np.mean(np.concat(F))  # Return negative mean performance for minimization
         
+        vals = []
+        for fi in F:
+            if fi is None:
+                continue
+            try:
+                arr = np.atleast_1d(np.asarray(fi, dtype=float))
+            except Exception:
+                continue
+            if arr.size > 0 and np.all(np.isfinite(arr)):
+                vals.extend(arr.ravel())
+
+        if len(vals) == 0:
+            print(f"Worker pid={os.getpid()}: invalid XFoil output in {run_dir}; returning inf", flush=True)
+            return np.inf
+
+        return -float(np.mean(vals))
 
     def _cache_key(self, x: np.ndarray):
         x = np.asarray(x, dtype=float).ravel()
@@ -183,6 +203,7 @@ class xfoilProblem(Problem):
     def eval_cached(self, x: np.ndarray, run_dir=None):
         if run_dir is None:
             raise ValueError("run_dir must be provided for XFoil evaluations")
+        print(f"Worker pid={os.getpid()}: using run_dir={run_dir}", flush=True)
         k = self._cache_key(x)
         hit = self._eval_cache.get(k, None)
         if hit is not None:
@@ -193,7 +214,7 @@ class xfoilProblem(Problem):
             f = float(self.base_obj_func(x, run_dir=run_dir))
         else:
             f = np.inf
-        print(f"evaluation: f={f};  c={c}")
+        print(f"Worker pid={os.getpid()}: evaluation: f={f};  c={c}")
         self._eval_cache[k] = (f, c)
         return f, c
 
@@ -205,7 +226,7 @@ class xfoilProblem(Problem):
         f, con_arr = self.eval_cached(x,run_dir=run_dir)
 
         if not np.isfinite(f):
-            print(f"Warning: base_obj_func returned {f} at x = {x}, replacing with 1e3")
+            print(f"Worker pid={os.getpid()}:  Warning: base_obj_func returned {f} at x = {x}, replacing with 1e3")
             f = 1e3
 
         con_arr = np.atleast_1d(np.asarray(con_arr, dtype=float))
@@ -246,7 +267,7 @@ class xfoilProblem(Problem):
         elif v < 1:
             retval = -50
     
-        print(f". penalty obj = {retval}; con_violation = {v}", flush=True)
+        print(f"Worker pid={os.getpid()}: penalty obj = {retval}; con_violation = {v}", flush=True)
         
         
         return retval
@@ -262,7 +283,12 @@ class xfoilProblem(Problem):
         Returns:
             ndarray: The objective values 
         """
-        y = [float(self.obj_func(xi,**kwargs)) for xi in x]   # shape (k,)
+        try:
+            y = [float(self.obj_func(xi,**kwargs)) for xi in x]   # shape (k,)
+        except Exception as e:
+            print(f"Exception in evaluate: {e}", flush=True)
+            print(traceback.format_exc(), flush=True)
+            raise
         return np.asarray(y, dtype=float).reshape(-1, 1)    
 
     def sample(self, nsample: int) -> np.ndarray:
@@ -280,4 +306,6 @@ class xfoilProblem(Problem):
             #isvalid = np.isfinite(f)       # an alt way
             isvalid = (con_f > 0.0) and np.isfinite(f)
             return isvalid
-        return self.sampler.rejection_sampling(nsample, is_valid=is_valid)
+
+#        return self.sampler.rejection_sampling(nsample, is_valid=is_valid)
+        return self.sampler.random(nsample)
