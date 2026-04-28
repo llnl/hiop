@@ -9,13 +9,15 @@ import numpy as np
 from numpy.random import uniform
 from scipy.stats import qmc
 from scipy.optimize import minimize
+from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score
 from ..surrogate_modeling.gp import GaussianProcess
 from .acquisition import LCBacquisition, EIacquisition
 from ..problems.problem import Problem
 from ..utils.util import Evaluator, Logger
 from .bnbalgorithm import BnBAlgorithm
 from .opt_utils import minimizer_wrapper
-
+from .optproblem import IpoptProb
 
 
 # A base class defining a general framework for Bayesian Optimization
@@ -168,62 +170,60 @@ class BOAlgorithm(BOAlgorithmBase):
     else:
       raise NotImplementedError("No implemented acquisition_type associated to"+self.acquisition_type)
 
+    acqf_callback = {'obj' : acqf.scalar_evaluate}
+    if acqf.has_gradient:
+      self.logger.debug(f"  Using gradient information of the acquisition function.")
+      acqf_callback['grad'] = acqf.scalar_eval_g
 
-    if self.opt_solver != "BnB":
-      acqf_callback = {'obj' : acqf.scalar_evaluate}
-      if acqf.has_gradient:
-        self.logger.debug(f"  Using gradient information of the acquisition function.")
-        acqf_callback['grad'] = acqf.scalar_eval_g
+    acqf_minimizer = minimizer_wrapper(acqf_callback, self.opt_solver, self.bounds, self.prob.constraints, self.solver_options)
 
-      acqf_minimizer = minimizer_wrapper(acqf_callback, self.opt_solver, self.bounds, self.prob.constraints, self.solver_options)
-
-      if self.prob is not None:
-        x0_pts = np.array([self.prob.sample(1)[0] for _ in range(self.n_start)])
-      else:
-        x0_pts = np.array([[uniform(b[0], b[1]) for b in self.bounds] for _ in range(self.n_start)])
-
-      opt_output = self.opt_evaluator.run(acqf_minimizer.minimizer_callback, x0_pts)
-      x_all = []
-      y_all = []
-      n_failures = 0
-      for ii in range(self.n_start):
-        success = False
-        xopt, yopt, success, msg = opt_output[ii]
-        if success:
-          x_all.append(xopt)
-          y_all.append(yopt)
-        else:
-          n_failures += 1
-          self.logger.debug(f"Acquisition optimizer failed at start {ii}: {msg}")
-
-      if not x_all:
-        self.logger.error("All acquisition minimizations failed.")
-        raise RuntimeError("Optimization failed for all initial points — no solution found.")
-
-      # Compute some stats
-      y_all = np.array(y_all)
-      best_xopt = x_all[np.argmin(y_all)]
-      y_min, y_max, y_mean = np.min(y_all), np.max(y_all), np.mean(y_all)
-
-      self.logger.scalars(
-          f"  Acquisition optimization finished with {len(y_all)} successes, {n_failures} failures"
-      )
-      self.logger.scalars(
-          f"  Acquisition values: min = {y_min:.4e}, mean = {y_mean:.4e}, max = {y_max:.4e}"
-      )
+    if self.prob is not None:
+      x0_pts = np.array([self.prob.sample(1)[0] for _ in range(self.n_start)])
     else:
-      # Instantiate BnB with GP surrogate and BO callback
-      bnb = BnBAlgorithm(acqf, options=self.solver_options, BOit=BOit)
-     
-      # Initialize BnB (perhaps use old set of boxes if self.bnb_queue is not None)
-      bnb.initialize(queue=self.bnb_queue)
-      
-      # Run BnB optimization
-      best_xopt = bnb.optimize()
-      if self.bnb_warm_start:
-        # Update queue in order to warm-start BnB at next BO step
-        self.bnb_queue = bnb.queue
-      self.bnb_num_branch_hist.append(bnb.num_branches)
+      x0_pts = np.array([[uniform(b[0], b[1]) for b in self.bounds] for _ in range(self.n_start)])
+
+    opt_output = self.opt_evaluator.run(acqf_minimizer.minimizer_callback, x0_pts)
+    x_all = []
+    y_all = []
+    n_failures = 0
+    for ii in range(self.n_start):
+      success = False
+      xopt, yopt, success, msg = opt_output[ii]
+      if success:
+        x_all.append(xopt)
+        y_all.append(yopt)
+      else:
+        n_failures += 1
+        self.logger.debug(f"Acquisition optimizer failed at start {ii}: {msg}")
+
+    if not x_all:
+      self.logger.error("All acquisition minimizations failed.")
+      raise RuntimeError("Optimization failed for all initial points — no solution found.")
+
+    # Compute some stats
+    y_all = np.array(y_all)
+    best_xopt = x_all[np.argmin(y_all)]
+    y_min, y_max, y_mean = np.min(y_all), np.max(y_all), np.mean(y_all)
+
+    self.logger.scalars(
+        f"  Acquisition optimization finished with {len(y_all)} successes, {n_failures} failures"
+    )
+    self.logger.scalars(
+        f"  Acquisition values: min = {y_min:.4e}, mean = {y_mean:.4e}, max = {y_max:.4e}"
+    )
+    #else:
+    #  # Instantiate BnB with GP surrogate and BO callback
+    #  bnb = BnBAlgorithm(acqf, options=self.solver_options, BOit=BOit)
+    # 
+    #  # Initialize BnB (perhaps use old set of boxes if self.bnb_queue is not None)
+    #  bnb.initialize(queue=self.bnb_queue)
+    #  
+    #  # Run BnB optimization
+    #  best_xopt = bnb.optimize()
+    #  if self.bnb_warm_start:
+    #    # Update queue in order to warm-start BnB at next BO step
+    #    self.bnb_queue = bnb.queue
+    #  self.bnb_num_branch_hist.append(bnb.num_branches)
     self.logger.debug(f"Estimated optimal point x: {best_xopt}")
 
     return best_xopt
@@ -274,27 +274,80 @@ class BOAlgorithm(BOAlgorithmBase):
       self.logger.critical(f"Iteration {i+1}/{self.bo_maxiter}")
 
       y_train_virtual = y_train.copy() # old training + batch_size num of virtual points
-      for j in range(self.batch_size):
-        # Get a new sample point
-        self.logger.scalars(f"In batch {j+1}/{self.batch_size}")
-        x_new = self._find_best_point(x_train, y_train_virtual, BOit=i)
+      if self.opt_solver != "BnB":
+        for j in range(self.batch_size):
+          # Get a new sample point
+          self.logger.scalars(f"In batch {j+1}/{self.batch_size}")
+          x_new = self._find_best_point(x_train, y_train_virtual, BOit=i)
+          
+          # Update training sample points
+          x_train = np.vstack([x_train, x_new])
+
+          # if this is not the last point in the current batch
+          # then obtain a virtual point
+          if j < max(range(self.batch_size)):
+            # Get a virtual point
+            y_virtual = self._get_virtual_point(np.atleast_2d(x_new))
+
+            # Update training set with the virtual point
+            y_train_virtual = np.vstack([y_train_virtual, y_virtual])
+
+          mean_val = self.gpsurrogate.mean(np.array([x_new])).item()
+          sd_val = np.sqrt(self.gpsurrogate.variance(np.array([x_new])).item())
+          self.logger.scalars(f"  (mu, sigma) at new sample x: {mean_val}, {sd_val} ")
+      else:
+        if self.acquisition_type == "LCB":
+          acqf = LCBacquisition(self.gpsurrogate)
+        elif self.acquisition_type == "EI":
+          acqf = EIacquisition(self.gpsurrogate)
+        else:
+          raise NotImplementedError("No implemented acquisition_type associated to"+self.acquisition_type)
+        # Instantiate BnB with GP surrogate and BO callback
+        bnb = BnBAlgorithm(acqf, options=self.solver_options, BOit=i)
+     
+        # Initialize BnB (perhaps use old set of boxes if self.bnb_queue is not None)
+        bnb.initialize(queue=self.bnb_queue)
         
-        # Update training sample points
+        # Run BnB optimization
+        best_xopt = bnb.optimize()
+        print("size of BnB queue = ", len(bnb.queue))
+        print("optimal point = ", best_xopt)
+        # experimental, testing clustering of BnB queue----
+        bnb_nodes = [item[2] for item in bnb.queue]
+        node_pts = np.array([node.aq_U_x for node in bnb_nodes])
+        """
+          approach -- 1) split queue into batch_size 
+                         number of clusters
+                      2) from each cluster grab point
+                         with best upper-bound
+        """
+        n_clusters = int(self.batch_size)
+        x_new = []
+        if n_clusters == 1:
+          x_new.append(best_xopt)
+        elif n_clusters > 1:
+          assert len(bnb_nodes) >= n_clusters, "not enough BnB nodes to acquire requested number of batch points"
+          kmeans = KMeans(n_clusters=n_clusters, init='k-means++', n_init='auto', random_state=42)
+          cluster_labels = kmeans.fit_predict(node_pts)
+          clusters = [[node_pts[i] for i, val in enumerate(cluster_labels) if val == lbl] for lbl in range(n_clusters)]
+          UBs_by_cluster = [[bnb_nodes[i].aq_U for i, val in enumerate(cluster_labels) if val == lbl] for lbl in range(n_clusters)]
+          s_score = silhouette_score(node_pts, cluster_labels)
+          print("Silhouette score = ", s_score)
+          for i in range(n_clusters):
+            print("cluster # ", i, " contains ", len(clusters[i]), " pts")
+            arg = np.argmin(UBs_by_cluster[i])
+            print("smallest acqf UB in cluster = ", UBs_by_cluster[i][arg])
+            print(" at x = ", clusters[i][arg])
+            print("-"*40)
+            x_new.append(clusters[i][arg])
+            distances = np.zeros(int((len(clusters[i]) * len(clusters[i]) -1 ) / 2))
+        x_new = np.atleast_2d(x_new)
         x_train = np.vstack([x_train, x_new])
+        if self.bnb_warm_start:
+          # Update queue in order to warm-start BnB at next BO step
+          self.bnb_queue = bnb.queue
+        self.bnb_num_branch_hist.append(bnb.num_branches)
 
-        # if this is not the last point in the current batch
-        # then obtain a virtual point
-        if j < max(range(self.batch_size)):
-          # Get a virtual point
-          y_virtual = self._get_virtual_point(np.atleast_2d(x_new))
-
-          # Update training set with the virtual point
-          y_train_virtual = np.vstack([y_train_virtual, y_virtual])
-
-        mean_val = self.gpsurrogate.mean(np.array([x_new])).item()
-        sd_val = np.sqrt(self.gpsurrogate.variance(np.array([x_new])).item())
-        self.logger.scalars(f"  (mu, sigma) at new sample x: {mean_val}, {sd_val} ")
-      
       y_new = self.obj_evaluator.run(self.prob.evaluate, x_train[-self.batch_size:])
       y_new = np.array(y_new)
       y_train = np.vstack([y_train, y_new])
