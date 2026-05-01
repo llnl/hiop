@@ -1,7 +1,3 @@
-"""
-   Allocate 12 wind turbines via FLORIS using Bayesian Optimization (BO).
-"""
-
 import logging
 import os
 import tempfile
