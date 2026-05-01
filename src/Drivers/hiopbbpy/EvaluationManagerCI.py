@@ -12,7 +12,7 @@ import sys
 import os
 import socket
 import threading
-from hiopbbpy.utils import EvaluationManager, is_running_with_mpi
+from hiopbbpy.utils import EvaluationManager
 from concurrent.futures import ThreadPoolExecutor
 
 def _fn_for_test(x, sleep_time=0.1, slow_first=False, driver_rank=0):
@@ -56,22 +56,13 @@ if __name__ == "__main__":
   )
   args = parser.parse_args()
 
-  # Choose executor type
-  if is_running_with_mpi():
-    from mpi4py import MPI
-    driver_rank = MPI.COMM_WORLD.Get_rank()
-    executor_type = "mpi"
-  else:
-    driver_rank = 0
-    executor_type = "cpu"
-
   # Set up logging
   logging.basicConfig(level=logging.INFO)
 
   # Create manager
   cpu_executor = ThreadPoolExecutor()
   manager = EvaluationManager(
-      cpu_executor=cpu_executor,
+      executor=cpu_executor,
       profiling=args.profile,
       task_name="CI_TASK"
   )
@@ -81,10 +72,8 @@ if __name__ == "__main__":
   manager.submit_tasks(
       _fn_for_test,
       [i for i in range(args.n)],
-      execute_at=executor_type,
       sleep_time=args.sleep_time,
       slow_first=args.slow_first,
-      driver_rank=driver_rank,
   )
 
   # Do some other work while tasks are running

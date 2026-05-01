@@ -25,9 +25,13 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 import numpy as np
-from .evaluation_manager import EvaluationManager, is_running_with_mpi
+from .evaluation_manager import EvaluationManager
 import logging
 
+import os
+import time
+import uuid
+from pathlib import Path
 
 def check_required_keys(user_dict, required_keys):
   for key in required_keys:
@@ -74,28 +78,74 @@ class MPIEvaluator(Evaluator):
   We reformat to 
   [eval0, eval1, eval2,...]
   """
-  def __init__(self, function_mode=True,cpu_executor=None, mpi_executor=None, profiling=False, task_name="MPITASK"):
-    self.manager = EvaluationManager(cpu_executor,mpi_executor,profiling=profiling, task_name=task_name)
+  def __init__(self, function_mode=True, executor=None, profiling=False,
+                 task_name="MPITASK", run_root="./hiop_temp", use_run_dir=False):
+    self.manager = EvaluationManager(executor, profiling=profiling, task_name=task_name)
     self.function_mode = function_mode
-    if is_running_with_mpi():
-      self.executor_type = "mpi"
-    else:
-      self.executor_type = "cpu"
+    self.run_root = Path(run_root)
+    self.run_root.mkdir(parents=True, exist_ok=True)
+    self.use_run_dir = use_run_dir
+    print(f"Create Evaluator for task: {task_name}")
+  
   def __del__(self):
     del self.manager
+  
   def set_task_name(self, task_name):
     self.manager.set_task_name(task_name)
-  def run(self, fun, Xin):
+  
+  def run(self, fun, Xin):  
     nevals = Xin.shape[0]
-    self.manager.submit_tasks(fun, [np.atleast_2d(Xin[i]) for i in range(nevals)], execute_at=self.executor_type)
+    print("in Evaluator::run")
+
+    # unique batch directory so repeated calls do not reuse temp_dir_0, temp_dir_1, ...
+    batch_id = f"{self.manager.task_name}_{os.getpid()}_{time.time_ns()}_{uuid.uuid4().hex[:8]}"
+    batch_dir = self.run_root / batch_id
+    batch_dir.mkdir(parents=True, exist_ok=False)
+
+    for i in range(nevals):
+      xi = np.atleast_2d(Xin[i])
+
+      kwargs = {}
+      if self.use_run_dir:
+        run_dir = batch_dir / f"eval_{i:04d}"
+        run_dir.mkdir(parents=True, exist_ok=False)
+        kwargs["run_dir"] = str(run_dir)
+
+      # submit (index, x) so we can restore original order later
+      self.manager.submit_tasks(
+        _run_indexed_fun,
+        [(fun, i, xi)],
+        **kwargs,
+      )
+      print(f"Submitted task {i + 1}", flush=True)
+
     self.manager.sync()
     Xout, Fout = self.manager.retrieve_results()
+
+    # restore original order using returned indices
+    ordered = [None] * nevals
+    for out in Fout:
+      if out is None:
+        continue
+      idx, val = out
+      ordered[idx] = val
+
+    missing = [i for i, v in enumerate(ordered) if v is None]
+    if missing:
+      raise RuntimeError(f"Missing evaluation results for indices {missing}")
+
     if self.function_mode:
-      Y = np.ndarray((nevals, 1))
-      Y[:,0] = np.array(Fout)[:,0,0]
+      Y = np.empty((nevals, 1), dtype=float)
+      for i, val in enumerate(ordered):
+        arr = np.asarray(val, dtype=float)
+        Y[i, 0] = float(arr.reshape(-1)[0])
     else:
-      Y = [Fi[0] for Fi in Fout]
+      Y = [val[0] for val in ordered]
+
     return Y
+
+def _run_indexed_fun(fun, idx, x, **kwargs):
+    return idx, fun(x, **kwargs)
 
 class Logger:
   """

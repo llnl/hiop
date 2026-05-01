@@ -8,38 +8,17 @@ Authors:    Tucker Hartland <hartland1@llnl.gov>
 
 import threading
 import logging
-import copy
+from concurrent.futures import CancelledError, wait
+from collections import deque
 import os
 import time
 import math
-from concurrent.futures import ProcessPoolExecutor, CancelledError
-from collections import deque
+import copy
 
-
-def is_running_with_mpi():
-  """Returns True if the code is running in an MPI environment."""
-  _MPI_RANK_ENV_VARS = [
-      "OMPI_COMM_WORLD_RANK",  # Open MPI
-      "PMI_RANK",              # MPICH, Intel MPI, Cray MPI
-      "MPI_RANK",              # Intel MPI (sometimes)
-      "MV2_COMM_WORLD_RANK",   # MVAPICH
-  ]
-  return any(var in os.environ for var in _MPI_RANK_ENV_VARS)
-
-
-# Loads MPIPoolExecutor if MPI is available
-if is_running_with_mpi():
-  from mpi4py.futures import MPIPoolExecutor, wait
-  _EVALUATION_MANAGER_USES_MPI4PY = True
-else:
-  _EVALUATION_MANAGER_USES_MPI4PY = False
-  from concurrent.futures import wait
-
-
-def _timed_call(fn, x, kwargs):
-  """Run fn(x, **kwargs) and record worker-side timing."""
+def _timed_call(fn, args, kwargs):
+  """Run fn(*args, **kwargs) and record worker-side timing."""
   start_time = time.perf_counter()
-  fx = fn(x, **kwargs)
+  fx = fn(*args, **kwargs)
   done_time = time.perf_counter()
   return {
       "result": fx,
@@ -69,50 +48,73 @@ def _summary_stats(values):
       "max": max(values),
   }
 
-
 class EvaluationManager:
-  """Class that manages the evaluation of functions using multiple executors."""
+  """Manage asynchronous function evaluations over one or more executors.
 
-  def __init__(
-    self,
-    cpu_executor=None,
-    mpi_executor=None,
-    profiling=False,
-    task_name="TASK") -> None:
+    The manager is executor-agnostic: each configured executor only needs a
+    ``submit(fn, *args, **kwargs)`` method that returns a Future-like object
+    exposing ``done()`` and ``result()``.
+
+    Tasks are submitted asynchronously via :meth:`submit_tasks`. Completed
+    results are collected lazily by :meth:`retrieve_results` and eagerly by
+    :meth:`sync` (which blocks until the running queue is empty).
+
+    Parameters
+    ----------
+    executor:
+        Either a single executor instance or a ``dict[str, executor]`` mapping.
+        When a single executor is provided, it is stored under key ``"0"``.
+    profiling:
+        If True, wrap calls with worker-side timing.
+    task_name:
+        Label used in logging and profiling output.
+  """
+
+  def __init__(self, executor, profiling=False, task_name="TASK") -> None:
     self._queue = deque([])
+    self._completed_X = deque([])
+    self._completed_F = deque([])
     self._queue_lock = threading.Lock()
+
+    if isinstance(executor, dict):
+      self.executors = executor
+    else:
+      self.executors = {"0": executor}
+
     self.logger = logging.getLogger(self.__class__.__name__)
+    self.task_name = task_name
     self.profiling = profiling
     self._first_submit_time = None
-    self.task_name = task_name
 
-    self.executors = {
-        "cpu": ProcessPoolExecutor() if cpu_executor is None else cpu_executor
-    }
-    if _EVALUATION_MANAGER_USES_MPI4PY:
-      self.executors["mpi"] = (
-          MPIPoolExecutor() if mpi_executor is None else mpi_executor
-      )
-    elif mpi_executor is not None:
-      self.executors["mpi"] = mpi_executor
-
-    self.logger.info("EvaluationManager initialized with executors:")
+    self.logger.info(f"{self.task_name} EvaluationManager initialized with executors:")
     for key, executor in self.executors.items():
       self.logger.info(f"  - {key}: {executor}")
 
   def __del__(self) -> None:
+    """Shutdown managed executors during object destruction."""
     for executor in self.executors.values():
-      executor.shutdown(wait=False)
-    self.logger.info(f"{self.task_name} EvaluationManager destroyed and executors shut down.")
+      try:
+        executor.shutdown(wait=False)
+        self.logger.info(f"{self.task_name} EvaluationManager destroyed and executors shut down.")
+      except Exception as e:
+        self.logger.warning(f"{self.task_name} Error shutting down executor: {e}")    
 
   def _get_num_workers(self):
     """Return number of workers."""
-    if "mpi" in self.executors and is_running_with_mpi():
-      return int(os.environ.get("MPI4PY_FUTURES_MAX_WORKERS", 1))
-    try:
-      return self.executors["cpu"]._max_workers
-    except AttributeError:
-      return 1
+    if "mpi" in self.executors:
+      try:
+        return int(os.environ.get("MPI4PY_FUTURES_MAX_WORKERS", 1))
+      except Exception:
+        pass
+
+    # For standard executors like ThreadPoolExecutor / ProcessPoolExecutor
+    for ex in self.executors.values():
+      try:
+        return ex._max_workers
+      except AttributeError:
+        continue
+
+    return 1
 
   def set_task_name(self, task_name):
     self.task_name = task_name
@@ -132,36 +134,72 @@ class EvaluationManager:
     )
 
   def sync(self) -> None:
-    """Wait for all submitted tasks to complete."""
-    future_objs = [queue_obj["future"] for queue_obj in self._queue]
-    wait(future_objs)
+    """Block until all queued tasks finish.
 
-  def submit_tasks(self, fn, X, execute_at="cpu", **kwargs) -> None:
-    """Submits tasks to the specified executor."""
+    This method repeatedly waits on the currently queued futures and then
+    harvests completed items into the internal completion buffers. Harvested
+    results can be consumed using :meth:`retrieve_results`.
+    """
+    while True:
+      with self._queue_lock:
+        futures = [queue_obj[1] for queue_obj in self._queue]
+        if len(futures) == 0:
+          break
+
+      wait(futures)
+
+      with self._queue_lock:
+        self._harvest_completed_locked()
+
+  def submit_tasks(self, fn, X, execute_at=None, **kwargs) -> None:
+    """Submit tasks to the specified executor.
+
+    Parameters
+    ----------
+    fn:
+      The function to be executed.
+    X:
+      Sequence of input data for the function. If an element is a tuple,
+      it is expanded as positional arguments (``fn(*x, **kwargs)``);
+      otherwise it is passed as a single argument (``fn(x, **kwargs)``).
+    execute_at:
+      Executor key to use for task submission. If ``None``, the first key
+      in ``executors`` is used. The key lookup is case-insensitive.
+    kwargs:
+      Additional keyword arguments passed to the function.
+    """
+    
+    if execute_at is None:
+      execute_at = next(iter(self.executors))
+
     key = execute_at.lower()
+    if key not in self.executors:
+        raise KeyError(f"Executor '{execute_at}' not found. Available: {list(self.executors.keys())}")
+
     with self._queue_lock:
       for x in X:
         submit_time = time.perf_counter()
         if self._first_submit_time is None:
           self._first_submit_time = submit_time
 
-        if self.profiling:
-          future_obj = self.executors[key].submit(_timed_call, fn, x, kwargs)
-        else:
-          future_obj = self.executors[key].submit(fn, x, **kwargs)
+        args = x if isinstance(x, tuple) else (x,)
 
-        self._queue.append({
-            "x": copy.deepcopy(x),
-            "future": future_obj,
-            "submit_time": submit_time,
-        })
+        if self.profiling:
+          future_obj = self.executors[key].submit(_timed_call, fn, args, kwargs)
+        else:
+          future_obj = self.executors[key].submit(fn, *args, **kwargs)
+
+        self._queue.append([x, future_obj, key, submit_time])
         self.logger.info(f"{self.task_name} Submitted f({x})")
 
   def retrieve_results(self) -> tuple[list, list]:
-    """Retrieves the results of completed tasks."""
-    X = deque([])
-    F = deque([])
-
+    """Retrieves the results of completed tasks.
+    Returns
+    -------
+    tuple[list, list]
+      Inputs and corresponding results for completed tasks. If a task
+      failed or was cancelled, its result entry is ``None``.
+    """
     execution_times = []
     wait_times = []
     turnaround_times = []
@@ -170,46 +208,16 @@ class EvaluationManager:
     batch_done_time = time.perf_counter()
 
     with self._queue_lock:
-      new_queue = deque([])
+      self._harvest_completed_locked(
+            execution_times=execution_times,
+            wait_times=wait_times,
+            turnaround_times=turnaround_times,
+      )
 
-      for item in self._queue:
-        x = item["x"]
-        future = item["future"]
-        submit_time = item["submit_time"]
-
-        if future.done():
-          try:
-            fx = future.result()
-          except CancelledError:
-            self.logger.warning(f"{self.task_name} The execution of x={x} was cancelled.")
-            continue
-
-          if self.profiling:
-            # These are fine for local inspection, but note:
-            # worker_start_time / worker_done_time are on worker clocks.
-            worker_start_time = fx["start_time"]
-            worker_done_time = fx["done_time"]
-
-            execution_time = fx["execution_time"]
-
-            # These are not robust across different node clocks, but kept here
-            # because you already had them.
-            wait_time = worker_start_time - submit_time
-            turnaround_time = worker_done_time - submit_time
-
-            execution_times.append(execution_time)
-            wait_times.append(wait_time)
-            turnaround_times.append(turnaround_time)
-
-            fx = fx["result"]
-
-          X.append(x)
-          F.append(fx)
-          self.logger.info(f"{self.task_name} Completed: f({x}) = {fx}")
-        else:
-          new_queue.append(item)
-
-      self._queue = new_queue
+      X = list(self._completed_X)
+      F = list(self._completed_F)
+      self._completed_X.clear()
+      self._completed_F.clear()
 
     if self.profiling and execution_times:
       self._print_timing_stats(f"{self.task_name} Execution times", execution_times)
@@ -236,5 +244,73 @@ class EvaluationManager:
       print(f"{self.task_name} Ideal walltime in seconds (perfect balance): {ideal_walltime:.6e}")
       print(f"{self.task_name} Actual walltime in seconds (observed):       {actual_walltime:.6e}")
 
-    return list(X), list(F)
+    self._first_submit_time = None
+    return X, F
+  
+  def _harvest_completed_locked(
+        self,
+        execution_times=None,
+        wait_times=None,
+        turnaround_times=None,
+    ) -> None:
+    """Move completed task results from running queue into completion buffers.
+
+       This method assumes the caller holds ``_queue_lock``.
+    """
+    new_queue = deque([])
+
+    for item in self._queue:
+      x = item[0]
+      future = item[1]
+      submit_time = item[3]
+      if future.done():
+        self._completed_X.append(x)
+        self._completed_F.append(None)
+
+        try:
+          fx = future.result()
+
+          if self.profiling:
+            worker_start_time = fx["start_time"]
+            worker_done_time = fx["done_time"]
+            execution_time = fx["execution_time"]
+
+            # These are OK for local runs, but can be unreliable across nodes
+            wait_time = worker_start_time - submit_time
+            turnaround_time = worker_done_time - submit_time
+
+            if execution_times is not None:
+              execution_times.append(execution_time)
+            if wait_times is not None:
+              wait_times.append(wait_time)
+            if turnaround_times is not None:
+              turnaround_times.append(turnaround_time)
+
+            fx = fx["result"]
+
+          self._completed_F[-1] = fx
+          self.logger.info(f"{self.task_name} Completed: f({x}) = {fx}")
+
+        except CancelledError:
+          self.logger.warning(f"{self.task_name} The execution of x={x} was cancelled.")
+        except Exception as e:
+          self.logger.warning(f"{self.task_name} Task f({x}) raised an exception: {e}")
+
+      else:
+        new_queue.append(item)
+
+    self._queue = new_queue
+
+  def print_status(self) -> None:
+    """Print the current status of the task queue and completion buffers."""
+    with self._queue_lock:
+      futures = [queue_obj[1] for queue_obj in self._queue]
+      n_running_futures = sum(1 for f in futures if not f.done())
+      n_done_futures = len(futures) - n_running_futures
+      self.logger.info(
+          f"Status: {len(self._completed_X)} harvested results, "
+          f"{n_running_futures} running tasks, {n_done_futures} completed tasks still in queue."
+      )
+
+
   
