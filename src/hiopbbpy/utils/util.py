@@ -105,6 +105,14 @@ class MPIEvaluator(Evaluator):
   """
   def __init__(self, function_mode=True, executor=None, profiling=False,
                  task_name="MPITASK", run_root="./hiop_temp", use_run_dir=False):
+    # If no executor provided, create a default ThreadPoolExecutor
+    if executor is None:
+      from concurrent.futures import ThreadPoolExecutor
+      import multiprocessing
+      max_workers = multiprocessing.cpu_count()
+      executor = ThreadPoolExecutor(max_workers=max_workers)
+      print(f"No executor provided for {task_name}, using ThreadPoolExecutor with {max_workers} workers")
+
     self.manager = EvaluationManager(executor, profiling=profiling, task_name=task_name)
     self.function_mode = function_mode
     self.run_root = Path(run_root)

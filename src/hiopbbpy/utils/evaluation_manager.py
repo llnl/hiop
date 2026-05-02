@@ -31,7 +31,7 @@ Example multi-node usage:
     # Workers: enter worker loop
     MPIPoolExecutor()
 
-See EvaluationManagerMPI.py for a complete example.
+See EvaluationManagerCI.py for a complete working example with multi-node MPI.
 
 Authors:    Tucker Hartland <hartland1@llnl.gov>
             Weslley S Pereira <wdasilv@nrel.gov>

@@ -27,13 +27,21 @@ def _fn_for_test(x, sleep_time=0.1, slow_first=False, driver_rank=0):
     hostname = socket.gethostname()
     pid = os.getpid()
 
+    # Try to get the actual MPI rank of the worker executing this function
+    try:
+        from mpi4py import MPI
+        comm = MPI.COMM_WORLD
+        actual_rank = comm.Get_rank()
+    except:
+        actual_rank = driver_rank  # Fallback to passed rank if MPI not available
+
     if slow_first and x == 0:
         actual_sleep = 3 * sleep_time
     else:
         actual_sleep = sleep_time
 
     print(
-        f"rank={driver_rank} pid={pid} host={hostname}: processing x={x}",
+        f"rank={actual_rank} pid={pid} host={hostname}: processing x={x}",
         flush=True,
     )
 
@@ -112,11 +120,12 @@ The script uses rank 0 as master and ranks 1-(N-1) as workers.
         print("Run with: mpiexec -n <N> python EvaluationManagerCI.py -e mpi")
         sys.exit(1)
 
-      # Only rank 0 will run the main logic
+      # Use context manager - this prevents spawning and uses existing processes
+      # Only rank 0 will run the main logic, others will be workers
       if rank != 0:
         # Worker ranks just need to participate in the MPIPoolExecutor
-        # They will block in MPIPoolExecutor() and process tasks
-        MPIPoolExecutor()
+        with MPIPoolExecutor() as executor:
+          pass  # Workers block here until master is done
         sys.exit(0)
 
       cpu_executor = MPIPoolExecutor()
