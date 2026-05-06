@@ -47,19 +47,25 @@ class PeriodicObjective(Problem):
   - Global minimizer: x* = (3/8,) * dim(x) + (1/2) * \mathbb{Z}^{dim(x)}
   - Global minimum:   f* = -dim(x)
   """
-  def __init__(self, ndim=2, xlimits=None, constraints=[]):
+  def __init__(self, ndim=2, xlimits=None, constraints=[], sleep_time=0.0):
     if xlimits is None:
       xlimits = np.array([[0.0, 1.0]] * ndim, dtype=float)
-    name = "PeriodicObjective"
+    name = "Periodic"
     super().__init__(ndim, xlimits, name=name, constraints=constraints)
     # expose known solution for checking later
-    
-    
+        
     self.x_star = np.array([0.375,] * ndim)
-    self.f_star = -1.0 * ndim 
+    self.f_star = -1.0 * ndim
+
+    # artificially increase the compute time required to 
+    # evaluate the "black-box" periodic objective
+    # sleep_time is the per-sample time required to evaluate
+    # the "black-box" objective
+    self.sleep_time = sleep_time
 
   def _evaluate(self, x: np.ndarray) -> np.ndarray:
     ne, _ = x.shape
+    time.sleep(ne * self.sleep_time) # sleep to artifically increase computational time to evaluate 
     y = np.sum(np.sin(4. * np.pi * x), axis=1).reshape(ne, 1)
     return y
 
@@ -68,7 +74,7 @@ class HartmannProblem(Problem):
   """
      Standard 6D Hartmann
   """
-  def __init__(self, xlimits=None, constraints=[]):
+  def __init__(self, xlimits=None, constraints=[], sleep_time=0.0):
     ndim = 6
     if xlimits is None:
       xlimits = np.array([[0.0, 1.0]] * ndim, dtype=float)
@@ -85,6 +91,7 @@ class HartmannProblem(Problem):
                        [4047., 8828., 8732., 5743., 1091., 381.0]])
     self.P = 1.e-4 * self.P
     self.alpha = np.array([1.0, 1.2, 3.0, 3.2])
+    self.sleep_time = sleep_time
 
     
     #self.x_star = np.array([0.375,] * ndim)
@@ -95,6 +102,7 @@ class HartmannProblem(Problem):
     #y = np.sum(np.sin(4. * np.pi * x), axis=1).reshape(ne, 1)
     y = np.zeros(ne)
     for k in range(ne):
+      time.sleep(self.sleep_time)
       for i in range(len(self.alpha)):
         y[k] += -1.0 * self.alpha[i] * np.exp( -1.0 * np.inner(self.A[i,:], (x[k] - self.P[i,:])**2.))
     y = y.reshape(ne, 1)
@@ -226,6 +234,7 @@ if __name__ == "__main__":
   parser = argparse.ArgumentParser(prog='myprogram')
   parser.add_argument("--nx", type=int, default=2, help="dimension of problem")
   parser.add_argument("--boiter", type=int, default=2, help="BO iterations") 
+  parser.add_argument("--batchsize", type=int, default=1, help="BO batch size")
   parser.add_argument("--bnbtol", type=float, default=0.01, help="tolerance for bnb optimizer")
   parser.add_argument("--bnbmaxiter", type=int, default=1000, help="maximum number of bnb iterations") 
   parser.add_argument("--bnbmaxtime", type=float, default=180., help="maximum time for bnb opt") 
@@ -234,6 +243,7 @@ if __name__ == "__main__":
   parser.add_argument("--nsamples", type=int, default=6, help="number of initial samples")
   parser.add_argument("--seed", type=int, default=42, help="random seed")
   parser.add_argument("--problem", type=str, default="Periodic", help="black-box objective") 
+  parser.add_argument("--sleeptime", type=float, default=2.0, help="black-box objective sleep time") 
   
   args = parser.parse_args()
   nx = args.nx # dimension of the problem
@@ -242,10 +252,12 @@ if __name__ == "__main__":
   bnbmaxiter = args.bnbmaxiter
   bnbmaxtime = args.bnbmaxtime
   bnbwarmstart = args.bnbwarmstart
+  batch_size = args.batchsize
   randseed = args.seed
   n_samples = args.nsamples 
   problem_name = args.problem
   random.seed(randseed)
+  sleep_time = args.sleeptime
   #10 + 2 * (nx -1) 
   #if nx == 1:
   #  n_samples = 10
@@ -254,7 +266,7 @@ if __name__ == "__main__":
 
   acquisition_type = 'LCB' 
   BnB = args.bnb
-  #BnB = True
+  #assert not BnB or batch_size == 1, "currently not supporting batched BO-BnB"
   ### parameters
  
   assert problem_name in ["QuadraticShift", "Periodic", "Michalewicz", "Branin", "Hartmann", "HartmannLike", "Shekel", "SparseActive"], "unrecognized problem name"
@@ -271,10 +283,7 @@ if __name__ == "__main__":
   elif problem_name == "HartmannLike":
     problem = HartmannLikeProblem()
   elif problem_name == "Shekel":
-    if True:
-      problem = ShekelProblem(sleep_time=2.0)
-    else:
-      problem = ShekelProblem()
+    problem = ShekelProblem()
   elif problem_name == "SparseActive":
     problem = SparseActiveProblem()
   else:
@@ -296,7 +305,10 @@ if __name__ == "__main__":
   eval_noise = False
   gp_model = smtKRG(theta, problem.xlimits, nx, pow_exp_power=pow_exp_power, eval_noise=eval_noise, fix_theta=fix_theta, theta_bounds=theta_bounds)
   gp_model.train(x_train, y_train)
-  
+  # initial training without sleep time, then include for batched-BO
+  if problem.name in ["Hartmann", "Shekel", "Periodic"]:
+    problem.sleep_time = sleep_time
+
   if acquisition_type == 'LCB':
     beta = 100. * np.mean(np.abs(y_train.flatten())) / np.sqrt(gp_model.surrogatesmt.optimal_par.get("sigma2", 1.0)) 
     acqf = LCBacquisition(gp_model, beta=beta)
@@ -304,12 +316,11 @@ if __name__ == "__main__":
     acqf = EIacquisition(gp_model)
 
   save_data_dir = 'tmp/'
+  # problems with fixed dim or not
   if problem.name in ["Branin", "Hartmann", "HartmannLike", "Shekel", "SparseActive"]:
     save_data_dir = save_data_dir + problem.name + '/'
-  elif problem.name == "Michalewicz":
-    save_data_dir = save_data_dir + problem.name + 'dim' + str(nx) + '/'
   else:
-    save_data_dir = save_data_dir + 'dim'+str(nx)+'/' 
+    save_data_dir = save_data_dir + problem.name + 'dim' + str(nx) + '/'
   bnb_solver_options = {
       'epsilon_prune' : 1.e-12,
       'epsilon_gap' : bnbtol, 
@@ -327,8 +338,7 @@ if __name__ == "__main__":
   if problem.name == "Michalewicz":
     bnb_solver_options['min_diameter'] *= np.pi
 
-  batch_size = 1
-
+  obj_evaluator = MPIEvaluator(profiling=True, task_name="MPI_OBJ_EVAL")
   if BnB:
     options = {
         'acquisition_type' : acquisition_type,
@@ -337,25 +347,17 @@ if __name__ == "__main__":
         'opt_solver' : 'BnB',
         'BnBWarmStart' : bnbwarmstart,
         'solver_options' : bnb_solver_options,
+        'obj_evaluator' : obj_evaluator,
     }
   else:
-    if True:
-      obj_evaluator = MPIEvaluator(profiling=True, task_name="MPI_OBJ_EVAL")
-      batch_size = 16
-      options = {
-        'acquisition_type' : acquisition_type,
-        'bo_maxiter' : boiter, 
-        'batch_size' : batch_size,
-        'opt_solver' : 'SLSQP',
-        'obj_evaluator': obj_evaluator,
-      }
-    else:
-      options = {
-        'acquisition_type' : acquisition_type,
-        'bo_maxiter' : boiter, 
-        'batch_size' : batch_size,
-        'opt_solver' : 'SLSQP',
-      }
+    batch_size = 16
+    options = {
+      'acquisition_type' : acquisition_type,
+      'bo_maxiter' : boiter, 
+      'batch_size' : batch_size,
+      'opt_solver' : 'SLSQP',
+      'obj_evaluator': obj_evaluator,
+    }
   start_time = time.perf_counter()
   bo = BOAlgorithm(problem, gp_model, x_train, y_train, options=options)
   bo.optimize()
@@ -372,9 +374,9 @@ if __name__ == "__main__":
   if not BnB:
     save_data_dir = save_data_dir + 'multistart_'
 
-  acqf_min_vals = np.zeros(boiter) 
+  acqf_min_vals = [] #np.zeros(boiter * batch_size) 
   for i in range(boiter):
-    x_train2 = x_train_superset[:-boiter+i]
+    x_train2 = x_train_superset[:(-boiter+i)*batch_size]
     y_train2 = problem.evaluate(x_train2)
     gp_model2 = smtKRG(theta, problem.xlimits, nx, pow_exp_power=pow_exp_power, eval_noise=eval_noise, fix_theta=fix_theta, theta_bounds=theta_bounds)
     gp_model2.train(x_train2, y_train2)
@@ -383,14 +385,15 @@ if __name__ == "__main__":
       acqf2 = LCBacquisition(gp_model2, beta=beta)
     else:
       acqf2 = EIacquisition(gp_model2)
-    #print("xbo_i = ", x_bo[i])
-    #print(acqf2.evaluate(np.atleast_2d(x_bo[i]))[0][0])
-    acqf_min_vals[i] = acqf2.evaluate(np.atleast_2d(x_bo[i]))[0][0]
+    for k in range(batch_size):
+      acqf_min_vals.append(acqf2.evaluate(np.atleast_2d(x_bo[i*batch_size + k]))[0][0])
     if nx == 1:
       Y_acqf2 = [acqf2.evaluate(x)[0] for x in X]
-      y_star2 = acqf2.evaluate(np.atleast_2d(x_bo[i]))
+      #y_star2 = acqf2.evaluate(np.atleast_2d(x_bo[i]))
+      x_batch = np.array([x_bo[k] for k in range(i*batch_size, (i+1)*batch_size)])
+      y_batch = acqf2.evaluate(np.atleast_2d(x_batch))
       plt.plot(X, Y_acqf2,'k--', label=r''+acquisition_type+'$(x)$')
-      plt.plot(x_bo[i], y_star2, r'r*', markersize=12, label=r'bnb minimizer')
+      plt.plot(x_batch, y_batch, r'r*', markersize=12, label=r'batch minimizer')
       plt.xlabel("x")
       plt.legend()
       plt.title(r""+acquisition_type+"$(x)$ at BO iteration {0:d}".format(i))
@@ -420,14 +423,17 @@ if __name__ == "__main__":
       #plt.xlabel("x")
       #plt.savefig(save_data_dir + "dvariance" + str(i) + ".png")
       #plt.close()
-    elif nx == 2:
+    elif nx == 2: 
       l = problem.xlimits[:, 0].astype(float)
       u = problem.xlimits[:, 1].astype(float)
-      X1D = [np.linspace(l[i], u[i],  100) for i in range(nx)]
+      X1D = [np.linspace(l[k], u[k],  100) for k in range(nx)]
       Xx, Xy = np.meshgrid(X1D[0], X1D[1])
-      Z = np.array([[acqf2.evaluate(np.atleast_2d([Xx[i, j], Xy[i, j]])).flatten()[0] for j in range(Xx.shape[1])] for i in range(Xx.shape[0])])
+      Z = np.array([[acqf2.evaluate(np.atleast_2d([Xx[k, j], Xy[k, j]])).flatten()[0] for j in range(Xx.shape[1])] for k in range(Xx.shape[0])])
       plt.contourf(Xx, Xy, Z, levels=40, cmap='viridis')
-      plt.plot(x_bo[i][0], x_bo[i][1], r'r*', markersize=12)
+      # x, y points from BO batch
+      xpts_batch = np.array([x_bo[j][0] for j in range(i*batch_size, (i+1)*batch_size)])
+      ypts_batch = np.array([x_bo[j][1] for j in range(i*batch_size, (i+1)*batch_size)])
+      plt.plot(xpts_batch, ypts_batch, r'r*', markersize=12)
       plt.xlabel(r'$x$')
       plt.ylabel(r'$y$')
       plt.colorbar(label=r'$\varphi(x,y)$, acquisition function')
