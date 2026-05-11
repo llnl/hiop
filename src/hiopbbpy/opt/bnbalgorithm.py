@@ -730,8 +730,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
       u_init = u0
     # Root bounds
     aq_L_val, aq_U_val, aq_U_x = self.compute_acqf_bounds(l_init, u_init) 
-    print(f"\nInitial acquisition lower bound: {aq_L_val}")
-    print(f"Initial acquisition upper bound: {aq_U_val}")
+    print(f"\nInitial acquisition bounds: lower: {aq_L_val}   upper: {aq_U_val}")
 
     # Init root + heap ordered by aq_L
     root = BnBNode(l_init, u_init, aq_L_val, aq_U_val)
@@ -816,6 +815,8 @@ class BnBAlgorithm(BnBAlgorithmBase):
     max_bfs_node_size = 0
     start_time = time.time()
     while self.num_branches < self.max_bnbiter: # iteration limit
+
+      print(f"\n NEW BNB iteration: branched nodes so far {self.num_branches} !!!!", flush=True)
       
       # -- retrieve submitted tasks -- 
       # asynchronously retrieve results from Evaluator that have been processed
@@ -833,6 +834,10 @@ class BnBAlgorithm(BnBAlgorithmBase):
       bfschildren = [item for sublist in bfschildren for item in sublist]
 
       children = bbschildren + bfschildren # join child lists
+
+      print(f"evaluators elapsed time: {time.time() - start_time}")
+      print(f"evaluators returned {len(children)} children: BFS: {len(bfschildren)}   BBS: {len(bbschildren)}", flush=True)
+
       if len(children) == 0:
         assert True, "trivial check"
         #if len(self.queue) == 0 and len(all_bfsnodes) == 0:
@@ -840,8 +845,6 @@ class BnBAlgorithm(BnBAlgorithmBase):
       else:
         self.num_branches += len(children)
         branch_history.append(self.num_branches)
-        print(f"elapsed time: {time.time() - start_time}")
-        print(f"evaluators returned {len(children)} children")
         # update best_node via children
         updated_best_node = False
         for child in children:
@@ -885,7 +888,6 @@ class BnBAlgorithm(BnBAlgorithmBase):
           children = [children[arg] for arg in args]
 
 
-
         # update smallest diameter
         child_diams = np.array([child.diam for child in children])
         smallest_diam = min(smallest_diam, min(child_diams))
@@ -903,12 +905,13 @@ class BnBAlgorithm(BnBAlgorithmBase):
         self.queue, pruned_bbsnodes = self._prune_queue(self.queue, self.LUB, self.epsilon_prune)
         all_bfsnodes, pruned_bfsnodes = self._prune_node_list(all_bfsnodes, self.LUB, self.epsilon_prune)
         pruned_nodes = pruned_bbsnodes + pruned_bfsnodes
+        print(f"Pruned {len(pruned_nodes)} nodes   BFS: {len(pruned_bfsnodes)} BBS: {len(pruned_bbsnodes)}")
         for node in pruned_nodes:
           all_prunednodes.append(node)
           total_prunedvol += math.prod(node.u - node.l)
         prunedvol_history.append(total_prunedvol)
 
-
+        
         if len(pruningratio_history) == 1:
           pruningratio = 1.
         else:
@@ -928,10 +931,10 @@ class BnBAlgorithm(BnBAlgorithmBase):
         print(f"smallest node diam: {smallest_diam}")
         print(f"size of bbs queue = {len(self.queue)}")
         print(f"size of bfs node list = {len(all_bfsnodes)}")
-        print(f"number of submitted jobs (bbs): {self.bbsevaluator.num_submitted_tasks()}")
-        print(f"number of submitted jobs (bfs): {self.bfsevaluator.num_submitted_tasks()}")
+        print(f"number of submitted/unfinished jobs (bbs): {self.bbsevaluator.num_submitted_tasks()}")
+        print(f"number of submitted/unfinished jobs (bfs): {self.bfsevaluator.num_submitted_tasks()}")
         print(f"total elapsed time: {time.time() - start_time}")
-        print(f"--- ---\n")
+        print(f"--- ---\n", flush=True)
 
 
         if updated_best_node:
@@ -957,9 +960,9 @@ class BnBAlgorithm(BnBAlgorithmBase):
       if time.time() - start_time > self.max_bnbtime: # time limit
         print(f"STOP: maximum time {self.max_bnbtime} seconds has elapsed")
         break
+      #
       # -- submit new tasks --
-
-
+      #
       # if the number of submitted jobs is too large then wait for some jobs to be processed
       #if self.bbsevaluator.num_submitted_tasks() + self.bfsevaluator.num_submitted_tasks() > 10 * (self.num_bbs_workers + self.num_bfs_workers):
       # collect nodes to be branched on in list structure
@@ -969,6 +972,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
       else:
         num_bbs_tasks_to_submit = 10 * self.num_bbs_workers - self.bbsevaluator.num_submitted_tasks()
       if num_bbs_tasks_to_submit > 0:
+        print(f"Tasks (bbs) to submit: {num_bbs_tasks_to_submit}")
         bbsnodes = []
         for i in range(num_bbs_tasks_to_submit):
           if (not self.queue):
@@ -981,13 +985,14 @@ class BnBAlgorithm(BnBAlgorithmBase):
         bbsnodes = np.array(bbsnodes)
         if len(bbsnodes) > 0:
           self.bbsevaluator.submit_tasks(brancher.callback, bbsnodes)
-      
+        print(f"Tasks (bbs) {num_bbs_tasks_to_submit} submitted")
       # only submit additional tasks if there aren't too many in the Evaluators queue
       if self.sync_mode:
         num_bfs_tasks_to_submit = len(all_bfsnodes)
       else:
         num_bfs_tasks_to_submit = 10 * self.num_bfs_workers - self.bfsevaluator.num_submitted_tasks()
       if num_bfs_tasks_to_submit > 0:
+        print(f"Tasks (bfs) to submit: {num_bfs_tasks_to_submit}")
         bfsnodes  = []
         for i in range(num_bfs_tasks_to_submit):
           if len(all_bfsnodes) == 0: 
@@ -997,7 +1002,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
         bfsnodes = np.array(bfsnodes)
         if len(bfsnodes) > 0:
           self.bfsevaluator.submit_tasks(brancher.callback, bfsnodes)
-
+        print(f"Tasks (bfs) {len(bfsnodes)} submitted")
 
     self.all_nonpruned_nodes = all_bfsnodes + [n for (L, c, n) in self.queue]
     self.all_prunednodes = all_prunednodes
@@ -1046,7 +1051,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
    
     max_nodes_for_min_diam = int(1 + 2 * ((2. / smallest_diam) ** len(self.best_node.l) - 1.))
 
-    print("\n=== Optimization Finished ===")
+    print("\n=== BnB Optimization Finished ===")
     print(f"Total number of branches: {self.num_branches}")
     print(f"Max BBS node list size: {max_bbs_node_size}")
     print(f"Max BFS node list size: {max_bfs_node_size}")
@@ -1059,6 +1064,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
     print(f"Initial gap: {initial_gap}")
     print(f"Final gap: {gap}")
     print(f"Total elapsed time: {time.time() - start_time}")
+    print("===-----------------------------===", flush=True)
 
     return self.best_node.l, self.best_node.u, self.LUB, self.best_node.aq_U_x
 
