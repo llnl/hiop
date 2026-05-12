@@ -223,11 +223,11 @@ class EvaluationManager:
           if self._first_submit_time is not None else 0.0
       )
 
-      print("\n=== Parallel Performance ===")
-      print(f"{self.task_name} Workers:                                     {num_workers}")
-      print(f"{self.task_name} Total work in seconds:                       {total_work:.6e}")
-      print(f"{self.task_name} Ideal walltime in seconds (perfect balance): {ideal_walltime:.6e}")
-      print(f"{self.task_name} Actual walltime in seconds (observed):       {actual_walltime:.6e}")
+      #print("\n=== Parallel Performance ===")
+      #print(f"{self.task_name} Workers:                                     {num_workers}")
+      #print(f"{self.task_name} Total work in seconds:                       {total_work:.6e}")
+      #print(f"{self.task_name} Ideal walltime in seconds (perfect balance): {ideal_walltime:.6e}")
+      #print(f"{self.task_name} Actual walltime in seconds (observed):       {actual_walltime:.6e}")
 
     return list(X), list(F)
   def completed_tasks(self) -> bool:

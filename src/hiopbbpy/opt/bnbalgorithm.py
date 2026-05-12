@@ -357,12 +357,13 @@ class BnBAlgorithm(BnBAlgorithmBase):
     self.saveData = False #saveData
     self.saveDataDir = ""
     self.pure_BBS = False  # pure BBS search or hybrid BBS/BFS search
-    self.sync_mode = False # synchronous or asynchronous evaluations
+    self.synchronous = False # synchronous or asynchronous evaluations
     self.verbose_cvx_solver = False # verbose convex optimizer solves
     self.opt_mode = 2
 
     self.acqf_UB_solver = "SLSQP"
 
+    self.early_stopping_heuristics = False
     self.max_queue_size = 2000
 
     # Set options form command 
@@ -374,16 +375,18 @@ class BnBAlgorithm(BnBAlgorithmBase):
     self.nodes_per_batch = options.get('nodes_per_batch', self.nodes_per_batch)
     self.acqf_UB_solver = options.get('acqf_ub_solver', self.acqf_UB_solver)
     self.pure_BBS = options.get('pure_BBS', self.pure_BBS)
-    self.sync_mode =  options.get('sync_mode', self.sync_mode)
+    self.synchronous =  options.get('synchronous', self.synchronous)
     self.verbose_cvx_solver = options.get('verbose_cvx_solver', self.verbose_cvx_solver)
     self.opt_mode = options.get('opt_mode', self.opt_mode)
     self.saveDataDir = options.get('save_data_dir', self.saveDataDir)
     self.saveData = options.get('save_data', self.saveData)
     self.min_diam = options.get('min_diameter', self.min_diam)
+    self.early_stopping_heuristics = options.get('early_stopping_heuristics', self.early_stopping_heuristics)
     assert self.opt_mode in [0, 1, 2, 3, 4], "unknown opt_mode"
     assert self.acqf_UB_solver in ["SLSQP", "trust-constr", "IPOPT", "MINEVAL"], "invalid acqf ub solver"
     assert isinstance(self.saveData, bool), "save_data is not of type bool"
     assert isinstance(self.saveDataDir, str), "save_data_dir is not of type string"
+    assert isinstance(self.early_stopping_heuristics, bool), "early stopping heuristics BnB option was set to non boolean value"
 
     if is_running_with_mpi():
       num_available_workers = MPI.COMM_WORLD.Get_size() - 1
@@ -425,13 +428,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
     self.C2 = np.zeros((ntrain, ntrain+1))
     self.C2[:,:ntrain] = self.C[:,:]
     self.A_constraint2 = np.zeros((ntrain + 1, ntrain+1))
-    ## regularize A_obj
-    #U, s, Vh = np.linalg.svd(self.A_obj)
-    #sreg = [min(si, -1.e-15) for si in s]
-    #Areg = U @ np.diag(sreg) @ Vh
 
-
-    #self.A_constraint2[:ntrain, :ntrain] = self.sigma2 * Areg #self.A_obj
     self.A_constraint2[:ntrain, :ntrain] = self.sigma2 * self.A_obj
     self.A_constraint2[ntrain, ntrain] = -2.
     self.b_constraint2 = np.zeros(ntrain + 1)
@@ -820,7 +817,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
       
       # -- retrieve submitted tasks -- 
       # asynchronously retrieve results from Evaluator that have been processed
-      if self.sync_mode:
+      if self.synchronous:
         self.bbsevaluator.sync()
       bbschildren = self.bbsevaluator.retrieve_results()
 
@@ -828,7 +825,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
       # need to flatten this ragged list
       bbschildren = [item for sublist in bbschildren for item in sublist]
 
-      if self.sync_mode:
+      if self.synchronous:
         self.bfsevaluator.sync()
       bfschildren = self.bfsevaluator.retrieve_results()
       bfschildren = [item for sublist in bfschildren for item in sublist]
@@ -855,21 +852,20 @@ class BnBAlgorithm(BnBAlgorithmBase):
           assert child.aq_U >= child.aq_L, "ERROR: child upper bound < child lower bound for child"
           if child.aq_U <= self.LUB:
             self.LUB = child.aq_U
-          if child.aq_L <= self.LLB:
             self.best_node = child
-            self.LLB = self.best_node.aq_L
+          if child.aq_L <= self.LLB:
+            self.LLB = child.aq_L
             updated_best_node = True
         if not updated_best_node:
           print("best node not updated")
-          if self.pure_BBS and self.sync_mode:
+          if self.pure_BBS and self.synchronous:
             print("forcing best node update")
             idx = np.argmin([child.aq_L for child in children])
-            self.best_node = children[idx]
-            self.LLB = self.best_node.aq_L
+            self.LLB = children[idx].aq_L
             updated_best_node = True
         else:
           print("best node updated")
-        gap_history.append(self.best_node.aq_U - self.best_node.aq_L)
+        gap_history.append(self.best_node.aq_U - self.LLB)
         
         # pre-prune
         children_lower_bounds = [child.aq_L for child in children]
@@ -880,7 +876,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
         args = np.argsort(children_lower_bounds)
         children = [children[arg] for arg in args]
     
-        if len(children) > self.max_queue_size:
+        if self.early_stopping_heuristics and len(children) > self.max_queue_size:
           children_upper_bounds = [child.aq_U for child in children]
           # sort the children in order of increasing acqf upper-bounds
           # and limit size to max_queue_size
@@ -919,12 +915,12 @@ class BnBAlgorithm(BnBAlgorithmBase):
         pruningratio_history.append(pruningratio)
 
         # BnB opt progress report 
-        gap = self.best_node.aq_U - self.best_node.aq_L
+        gap = self.best_node.aq_U - self.LLB
         print(f"\n--- Total number branches  {self.num_branches} ---")
-        print(f"Corners of best node region: l={self.best_node.l}, u={self.best_node.u}")
-        print(f"Node acquisition bounds: L={self.best_node.aq_L}, U={self.best_node.aq_U}")
+        print(f"Corners of best (LUB) node region: l={self.best_node.l}, u={self.best_node.u}")
+        print(f"LUB node aquisition function bounds: L={self.best_node.aq_L}, U={self.best_node.aq_U}")
+        print(f"Least lower-bound (LLB): {self.LLB}")
         print(f"gap = {gap}")
-        #print(f"Current best feasible value (LUB): {self.LUB}")
         print(f"total pruned vol: {total_prunedvol}")
         print(f"domain vol: {initial_vol}")
         print(f"pruning ratio: {pruningratio}")
@@ -938,13 +934,14 @@ class BnBAlgorithm(BnBAlgorithmBase):
 
 
         if updated_best_node:
-          if gap  < self.epsilon_gap: # and self.best_node.diam < self.epsilon_gap:
+          if gap  < self.epsilon_gap:
             print(f"STOP: optimality gap = {gap} < {self.epsilon_gap}")
             break
-        if np.linalg.norm(self.best_node.l - self.best_node.u, np.inf) < self.epsilon_gap / 2.: #self.epsilon_diam:
-          if gap < 0.05 * max(abs(self.best_node.aq_U), abs(self.best_node.aq_L)):
-            print("STOP: gap < 5% function value and best node diameter sufficiently small")
-            break
+        if self.early_stopping_heuristics:
+          if np.linalg.norm(self.best_node.l - self.best_node.u, np.inf) < self.epsilon_gap / 2.:
+            if gap < 0.05 * max(abs(self.best_node.aq_U), abs(self.best_node.aq_L)):
+              print("STOP: gap < 5% function value and best node diameter sufficiently small")
+              break
         if np.linalg.norm(self.best_node.l - self.best_node.u, np.inf) < self.min_diam:
           # choose node with least upper-bound as best node and exit
           print("STOP: diameter sufficiently small")
@@ -967,7 +964,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
       #if self.bbsevaluator.num_submitted_tasks() + self.bfsevaluator.num_submitted_tasks() > 10 * (self.num_bbs_workers + self.num_bfs_workers):
       # collect nodes to be branched on in list structure
       # only submit additional tasks if there aren't too many in the Evaluators queue
-      if self.sync_mode:
+      if self.synchronous:
         num_bbs_tasks_to_submit = len(self.queue)
       else:
         num_bbs_tasks_to_submit = 10 * self.num_bbs_workers - self.bbsevaluator.num_submitted_tasks()
@@ -987,7 +984,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
           self.bbsevaluator.submit_tasks(brancher.callback, bbsnodes)
         print(f"Tasks (bbs) {num_bbs_tasks_to_submit} submitted")
       # only submit additional tasks if there aren't too many in the Evaluators queue
-      if self.sync_mode:
+      if self.synchronous:
         num_bfs_tasks_to_submit = len(all_bfsnodes)
       else:
         num_bfs_tasks_to_submit = 10 * self.num_bfs_workers - self.bfsevaluator.num_submitted_tasks()
@@ -1055,7 +1052,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
     print(f"Total number of branches: {self.num_branches}")
     print(f"Max BBS node list size: {max_bbs_node_size}")
     print(f"Max BFS node list size: {max_bfs_node_size}")
-    print(f"Best bounds: l={self.best_node.l}, u={self.best_node.u}")
+    print(f"Best (LUB) node bounds: l={self.best_node.l}, u={self.best_node.u}")
     print(f"total pruned vol: {total_prunedvol}")
     print(f"domain vol: {initial_vol}")
     print(f"smallest node diam: {smallest_diam}")

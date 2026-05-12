@@ -257,7 +257,8 @@ if __name__ == "__main__":
   n_samples = args.nsamples 
   problem_name = args.problem
   random.seed(randseed)
-  sleep_time = args.sleeptime
+  sleep_time = 0.0
+  #sleep_time = args.sleeptime
   #10 + 2 * (nx -1) 
   #if nx == 1:
   #  n_samples = 10
@@ -310,12 +311,13 @@ if __name__ == "__main__":
     problem.sleep_time = sleep_time
 
   if acquisition_type == 'LCB':
+    #beta = 3.0
     beta = 100. * np.mean(np.abs(y_train.flatten())) / np.sqrt(gp_model.surrogatesmt.optimal_par.get("sigma2", 1.0)) 
     acqf = LCBacquisition(gp_model, beta=beta)
   else:
     acqf = EIacquisition(gp_model)
 
-  save_data_dir = 'tmp/'
+  save_data_dir = 'tmp2/'
   # problems with fixed dim or not
   if problem.name in ["Branin", "Hartmann", "HartmannLike", "Shekel", "SparseActive"]:
     save_data_dir = save_data_dir + problem.name + '/'
@@ -327,9 +329,9 @@ if __name__ == "__main__":
       'epsilon_diam' : bnbtol / 100.,
       'max_iter': bnbmaxiter,
       'max_bnbtime': bnbmaxtime,
-      #'nodes_per_batch' : 32,
       'pure_BBS' : True,
-      'sync_mode' : True,
+      'synchronous' : True,
+      'early_stopping_heuristics' : False,
       'save_data' : False,
       'save_data_dir' : save_data_dir,
       'acqf_ub_solver': 'IPOPT',
@@ -338,7 +340,7 @@ if __name__ == "__main__":
   if problem.name == "Michalewicz":
     bnb_solver_options['min_diameter'] *= np.pi
 
-  obj_evaluator = MPIEvaluator(profiling=True, task_name="MPI_OBJ_EVAL")
+  #obj_evaluator = MPIEvaluator(profiling=False, task_name="MPI_OBJ_EVAL")
   if BnB:
     options = {
         'acquisition_type' : acquisition_type,
@@ -347,7 +349,7 @@ if __name__ == "__main__":
         'opt_solver' : 'BnB',
         'BnBWarmStart' : bnbwarmstart,
         'solver_options' : bnb_solver_options,
-        'obj_evaluator' : obj_evaluator,
+        #'obj_evaluator' : obj_evaluator,
     }
   else:
     batch_size = 16
