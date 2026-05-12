@@ -10,7 +10,8 @@ from hiopbbpy.utils import MPIEvaluator
 import argparse
 import random
 import time as time      
-  
+from pathlib import Path
+
 class QuadraticShift(Problem):
   """
   f(x) = ||x - c||^2
@@ -243,7 +244,7 @@ if __name__ == "__main__":
   parser.add_argument("--nsamples", type=int, default=6, help="number of initial samples")
   parser.add_argument("--seed", type=int, default=42, help="random seed")
   parser.add_argument("--problem", type=str, default="Periodic", help="black-box objective") 
-  parser.add_argument("--sleeptime", type=float, default=2.0, help="black-box objective sleep time") 
+  parser.add_argument("--sleeptime", type=float, default=0.0, help="black-box objective sleep time") # default no sleep
   
   args = parser.parse_args()
   nx = args.nx # dimension of the problem
@@ -257,19 +258,10 @@ if __name__ == "__main__":
   n_samples = args.nsamples 
   problem_name = args.problem
   random.seed(randseed)
-  sleep_time = 0.0
-  #sleep_time = args.sleeptime
-  #10 + 2 * (nx -1) 
-  #if nx == 1:
-  #  n_samples = 10
-  #if nx > 5:
-  #  n_samples = 15
+  sleep_time = args.sleeptime
 
   acquisition_type = 'LCB' 
   BnB = args.bnb
-  #assert not BnB or batch_size == 1, "currently not supporting batched BO-BnB"
-  ### parameters
- 
   assert problem_name in ["QuadraticShift", "Periodic", "Michalewicz", "Branin", "Hartmann", "HartmannLike", "Shekel", "SparseActive"], "unrecognized problem name"
   
   if problem_name == "QuadraticShift":
@@ -310,9 +302,8 @@ if __name__ == "__main__":
   if problem.name in ["Hartmann", "Shekel", "Periodic"]:
     problem.sleep_time = sleep_time
 
+  beta = 3.0
   if acquisition_type == 'LCB':
-    #beta = 3.0
-    beta = 100. * np.mean(np.abs(y_train.flatten())) / np.sqrt(gp_model.surrogatesmt.optimal_par.get("sigma2", 1.0)) 
     acqf = LCBacquisition(gp_model, beta=beta)
   else:
     acqf = EIacquisition(gp_model)
@@ -323,6 +314,7 @@ if __name__ == "__main__":
     save_data_dir = save_data_dir + problem.name + '/'
   else:
     save_data_dir = save_data_dir + problem.name + 'dim' + str(nx) + '/'
+  Path(save_data_dir).mkdir(parents=True, exist_ok=True)
   bnb_solver_options = {
       'epsilon_prune' : 1.e-12,
       'epsilon_gap' : bnbtol, 
@@ -340,26 +332,19 @@ if __name__ == "__main__":
   if problem.name == "Michalewicz":
     bnb_solver_options['min_diameter'] *= np.pi
 
-  #obj_evaluator = MPIEvaluator(profiling=False, task_name="MPI_OBJ_EVAL")
-  if BnB:
-    options = {
-        'acquisition_type' : acquisition_type,
-        'bo_maxiter' : boiter, 
-        'batch_size' : batch_size,
-        'opt_solver' : 'BnB',
-        'BnBWarmStart' : bnbwarmstart,
-        'solver_options' : bnb_solver_options,
-        #'obj_evaluator' : obj_evaluator,
-    }
-  else:
-    batch_size = 16
-    options = {
+
+  options = {
       'acquisition_type' : acquisition_type,
+      'LCB_beta': beta,
       'bo_maxiter' : boiter, 
       'batch_size' : batch_size,
-      'opt_solver' : 'SLSQP',
-      'obj_evaluator': obj_evaluator,
-    }
+      'opt_solver' : 'BnB',
+      'BnBWarmStart' : bnbwarmstart,
+      'solver_options' : bnb_solver_options,
+  }
+  if not BnB:
+    options['opt_solver'] = 'SLSQP'
+
   start_time = time.perf_counter()
   bo = BOAlgorithm(problem, gp_model, x_train, y_train, options=options)
   bo.optimize()
@@ -376,7 +361,7 @@ if __name__ == "__main__":
   if not BnB:
     save_data_dir = save_data_dir + 'multistart_'
 
-  acqf_min_vals = [] #np.zeros(boiter * batch_size) 
+  acqf_min_vals = [] 
   for i in range(boiter):
     x_train2 = x_train_superset[:(-boiter+i)*batch_size]
     y_train2 = problem.evaluate(x_train2)

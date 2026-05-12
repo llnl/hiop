@@ -836,33 +836,32 @@ class BnBAlgorithm(BnBAlgorithmBase):
       print(f"evaluators returned {len(children)} children: BFS: {len(bfschildren)}   BBS: {len(bbschildren)}", flush=True)
 
       if len(children) == 0:
-        assert True, "trivial check"
-        #if len(self.queue) == 0 and len(all_bfsnodes) == 0:
-        #  assert self.bbsevaluator.num_submitted_tasks() + self.bfsevaluator.num_submitted_tasks() > 0, "node lists empty and Evaluators have no tasks submitted"
+        assert True, "Trivial check"
       else:
         self.num_branches += len(children)
         branch_history.append(self.num_branches)
         # update best_node via children
-        updated_best_node = False
+        updated_LUB_node = False
+        updated_LLB_node = False
         for child in children:
           if child.aq_U < child.aq_L:
-            print("ERROR on box ", child.l, child.u)
+            print("ERROR (acqf_UB < acqf_LB) on box with corners ", child.l, child.u)
             print("lower-bound = ", child.aq_L)
             print("upper-bound = ", child.aq_U)
           assert child.aq_U >= child.aq_L, "ERROR: child upper bound < child lower bound for child"
           if child.aq_U <= self.LUB:
             self.LUB = child.aq_U
             self.best_node = child
+            updated_LUB_node = True
           if child.aq_L <= self.LLB:
             self.LLB = child.aq_L
-            updated_best_node = True
-        if not updated_best_node:
+            updated_LLB_node = True
+        if not updated_LLB_node:
           print("best node not updated")
           if self.pure_BBS and self.synchronous:
             print("forcing best node update")
-            idx = np.argmin([child.aq_L for child in children])
-            self.LLB = children[idx].aq_L
-            updated_best_node = True
+            self.LLB = min([child.aq_L for child in children])
+            updated_LLB_node = True
         else:
           print("best node updated")
         gap_history.append(self.best_node.aq_U - self.LLB)
@@ -933,7 +932,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
         print(f"--- ---\n", flush=True)
 
 
-        if updated_best_node:
+        if updated_LLB_node or updated_LUB_node:
           if gap  < self.epsilon_gap:
             print(f"STOP: optimality gap = {gap} < {self.epsilon_gap}")
             break

@@ -24,6 +24,7 @@ from .optproblem import IpoptProb
 class BOAlgorithmBase:
   def __init__(self):
     self.acquisition_type = "LCB" # Type of acquisition function (default = "LCB")
+    self.LCB_beta = 3.0
     self.batch_type = "KB"        # strategy for qEI
     self.xtrain = None            # Training data
     self.ytrain = None            # Training data
@@ -98,6 +99,9 @@ class BOAlgorithm(BOAlgorithmBase):
     acquisition_type = options.get('acquisition_type', "LCB")
     assert acquisition_type in ["LCB", "EI"], f"Invalid acquisition_type: {acquisition_type}"
 
+    self.LCB_beta = options.get('LCB_beta', self.LCB_beta)
+    assert self.LCB_beta > 0., f"Invalid LCB beta (variance penalty): {self.LCB_beta}"
+
     batch_size = options.get('batch_size', 1)
     assert isinstance(batch_size, int), f"batch_size {batch_size} not an integer"
     assert batch_size > 0, f"batch_size {batch_size} is not strictly positive"
@@ -147,7 +151,9 @@ class BOAlgorithm(BOAlgorithmBase):
     self.logger.info(f"Batch type: {self.batch_type}")
     self.logger.info(f"Batch size: {batch_size}")
     self.logger.info(f"Internal optimization solver: {opt_solver}")
-    self.logger.info(f"Internal optimization solver options: {self.solver_options}")
+    self.logger.info(f"Internal optimization solver options")
+    for key, value in self.solver_options.items():
+      self.logger.info(f"  {key} : {value}")
     self.logger.info(f"Initial training set: {xtrain.shape[0]} samples, {xtrain.shape[1]} dimensions")
     self.logger.debug(f"Bounds on optimization variable: {self.bounds}")
     self.logger.info(f"Logger level: {logger_level}")
@@ -164,7 +170,7 @@ class BOAlgorithm(BOAlgorithmBase):
     self.logger.info(f"Start finding the best sampling point:")
     self._train_surrogate(x_train, y_train)
     if self.acquisition_type == "LCB":
-      acqf = LCBacquisition(self.gpsurrogate)
+      acqf = LCBacquisition(self.gpsurrogate, beta=self.LCB_beta)
     elif self.acquisition_type == "EI":
       acqf = EIacquisition(self.gpsurrogate)
     else:
@@ -291,13 +297,14 @@ class BOAlgorithm(BOAlgorithmBase):
 
             # Update training set with the virtual point
             y_train_virtual = np.vstack([y_train_virtual, y_virtual])
+            self.gpsurrogate.train(x_train, y_train_virtual)
 
           mean_val = self.gpsurrogate.mean(np.array([x_new])).item()
           sd_val = np.sqrt(self.gpsurrogate.variance(np.array([x_new])).item())
           self.logger.scalars(f"  (mu, sigma) at new sample x: {mean_val}, {sd_val} ")
       else:
         if self.acquisition_type == "LCB":
-          acqf = LCBacquisition(self.gpsurrogate)
+          acqf = LCBacquisition(self.gpsurrogate, beta=self.LCB_beta)
         elif self.acquisition_type == "EI":
           acqf = EIacquisition(self.gpsurrogate)
         else:
@@ -351,6 +358,7 @@ class BOAlgorithm(BOAlgorithmBase):
       y_new = self.obj_evaluator.run(self.prob.evaluate, x_train[-self.batch_size:])
       y_new = np.array(y_new)
       y_train = np.vstack([y_train, y_new])
+      self.gpsurrogate.train(x_train, y_train)
 
       feas_new = self.prob.if_feasible(x_train[-self.batch_size:])
       self.logger.debug(f"Feasible samples: {np.sum(feas_new)}/{self.batch_size}")
