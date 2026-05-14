@@ -359,7 +359,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
     self.pure_BBS = False  # pure BBS search or hybrid BBS/BFS search
     self.synchronous = False # synchronous or asynchronous evaluations
     self.verbose_cvx_solver = False # verbose convex optimizer solves
-    self.opt_mode = 2
+    self.opt_mode = 3
 
     self.acqf_UB_solver = "SLSQP"
 
@@ -492,40 +492,60 @@ class BnBAlgorithm(BnBAlgorithmBase):
        mode: 1 --> convex relaxation for maximum of variance        
     """
     assert mode in [0, 1], "mode can only be in 0, 1"
-    assert opt_mode in [0, 1, 2], "opt mode can only be 0, 1, or 2"
+    assert opt_mode in [0, 1, 2, 3], "opt mode can only be 0, 1, 2, or 3"
     # opt_mode = 0 (previous baseline w ratio constraints)
     # opt_mode = 1 (Convex relaxation w no ratio constraints on k and no affine constraints)
     # opt_mode = 2 (Most recent relaxation w ratio constraints and affine constraints
     cons = [self.C2 @ self.X >= kL, self.C2 @ self.X <= kU, self.cons2 >= 0, self.en1 @ self.X >= 0]
     if opt_mode != 0:
+      # add x optimization variable constrained to box: l <= x <= u
       xvar = cp.Variable(self.x.shape[1])
       cons.append(l <= xvar)
       cons.append(xvar <= u)
+      # add rho_i = \sum_j \theta_j |(x_j - x_j^(i)) / X_scale|^p variable
       ntrain = self.x.shape[0]
       rhovar = cp.Variable(ntrain) 
+      # determine bounds for rho
       dmin = np.maximum(0.0, np.maximum((l - self.x) / self.X_scale, (self.x - u)/ self.X_scale))        # (nt,d)
       dmax = np.maximum(np.abs((l - self.x) / self.X_scale), np.abs((u - self.x) / self.X_scale))         # (nt,d)
       th  = self.theta.ravel()     # (d,)
       rhomin = (th * (dmin**self.p)).sum(axis=1)
       rhomax = (th * (dmax**self.p)).sum(axis=1) 
       assert len(rhomin) == ntrain
-      # --- constraints ---
-      # \theta_j | x_j - x^{(i)}_j || <= rho_i
+      # \rho_i = max_{x in box} { \rho_i(x) }
+      # no need to include these constraints with equality constraint rho_i = ...
+      if True:#opt_mode != 3:
+        cons.append(rhovar <= rhomax)
+        cons.append(rhomin <= rhovar)    
+      # --- constraints coupling k and rho ---
       # k_i => exp(-\rho_i / xscale)
       for i in range(ntrain):
-        cons.append(cp.atoms.norm((xvar-self.x[i]) / ((th**(-1./self.p)) * self.X_scale), p = self.p)**self.p <= rhovar[i])
-        cons.append((self.C2 @ self.X)[i] >= cp.atoms.exp(-rhovar[i])) 
+        cons.append((self.C2 @ self.X)[i] >= cp.atoms.exp(-rhovar[i]))
       kMax = np.exp(-rhomin)
       kMin = np.exp(-rhomax)
-      # --- constraints --- 
       # k_i <= secant of k_i(x) over kMin, kMax
       cons.append(self.C2 @ self.X <= kMax + cp.atoms.multiply((kMin - kMax) / (rhomax - rhomin),  (rhovar  - rhomin)))
-      # \rho_i = max_{x in box} { \rho_i(x) }
-      cons.append(rhovar <= rhomax)
-    
+      # ---
+      
+
+      # \sum_j theta_j * |(x_j - x_j^(i)) / X_scale|^p <= rho_i
+      # for p = 1 or 2 is convex
+      if True:#opt_mode < 3:
+        for i in range(ntrain):
+          cons.append(cp.atoms.norm((xvar-self.x[i]) / ((th**(-1./self.p)) * self.X_scale), p = self.p)**self.p <= rhovar[i])
+      if opt_mode == 3:
+        assert self.p == 2.0, "opt_mode 3 only supports squared exponential kernel"
+        wvar = cp.Variable(self.x.shape[1])
+        for i in range(self.x.shape[1]):
+          cons.append(wvar[i] >= xvar[i]**2.0)
+          cons.append(wvar[i] <= (l[i] + u[i]) * xvar[i] - l[i] * u[i])
+          cons.append(rhovar[i] == cp.atoms.sum(cp.atoms.multiply(th / self.X_scale**self.p, wvar - 2.0 * cp.atoms.multiply(self.x[i], xvar) + np.linalg.norm(self.x[i], ord=2.0) ** 2.0)))
+
+
       # --- constraints ---
       # affine constraints on \rho_i via reverse triangle inequality
-      if opt_mode == 2:
+      # no need for additional bound constraints when we have equality constraint
+      if opt_mode >= 2:
         if self.p == 1.0:
           for i in range(ntrain):
             for j in range(i+1, ntrain):
@@ -536,28 +556,36 @@ class BnBAlgorithm(BnBAlgorithmBase):
           for i in range(ntrain):
             for j in range(i+1, ntrain):
               dxji = self.x[j] - self.x[i]
-              lo = np.where(dxji >= 0., l, u)
-              hi = np.where(dxji >= 0., u, l)
-              rhoij_ubound = 2. * np.inner((hi / self.X_scale), th * dxji / self.X_scale) + np.inner(self.x[i] / self.X_scale, th * self.x[i] / self.X_scale) - np.inner(self.x[j] / self.X_scale, th * self.x[j] / self.X_scale)
-              rhoij_lbound = 2. * np.inner((lo / self.X_scale), th * dxji / self.X_scale) + np.inner(self.x[i] / self.X_scale, th * self.x[i] / self.X_scale) - np.inner(self.x[j] / self.X_scale, th * self.x[j] / self.X_scale)
-              cons.append(rhovar[i] - rhovar[j] <= rhoij_ubound)
-              cons.append(rhovar[i] - rhovar[j] >= rhoij_lbound)
+              mult = 2. * th * dxji / (self.X_scale ** 2.0)
+              shift = np.inner(self.x[i] / self.X_scale, th * self.x[i] / self.X_scale) - np.inner(self.x[j] / self.X_scale, th * self.x[j] / self.X_scale)
+              cons.append(rhovar[i] - rhovar[j] == mult.T @ xvar + shift) 
+              #lo = np.where(dxji >= 0., l, u)
+              #hi = np.where(dxji >= 0., u, l)
+              #rhoij_ubound = 2. * np.inner((hi / self.X_scale), th * dxji / self.X_scale) + np.inner(self.x[i] / self.X_scale, th * self.x[i] / self.X_scale) - np.inner(self.x[j] / self.X_scale, th * self.x[j] / self.X_scale)
+              #rhoij_lbound = 2. * np.inner((lo / self.X_scale), th * dxji / self.X_scale) + np.inner(self.x[i] / self.X_scale, th * self.x[i] / self.X_scale) - np.inner(self.x[j] / self.X_scale, th * self.x[j] / self.X_scale)
+              #cons.append(rhovar[i] - rhovar[j] <= rhoij_ubound)
+              #cons.append(rhovar[i] - rhovar[j] >= rhoij_lbound)
         
     opt_tol = 1.e-8
+    opt_rel_tol = 1.e-8
     for i in range(3):
+      verbose = False
       if i > 0:
-        verbose = False
         max_iters = 1000
       else:
-        verbose = False
         max_iters = 300
+      if i == 2:
+        opt_rel_tol = 1.e-4
+        verbose = False
       try:
         if mode == 0: 
-          acqf_L = cp.Problem(cp.Minimize(self.obj2), cons).solve(solver=cp.CLARABEL, verbose=verbose, tol_gap_abs=opt_tol)#, tol_gap_abs=opt_tol)
-          #acqf_L = cp.Problem(cp.Minimize(self.obj2), cons).solve(solver=cp.SCS, verbose=verbose, eps_abs=opt_tol, max_iters=max_iters)#, tol_gap_abs=opt_tol)
+          acqf_L = cp.Problem(cp.Minimize(self.obj2), cons).solve(solver=cp.CLARABEL, verbose=verbose, tol_gap_abs=opt_tol, tol_gap_rel=opt_rel_tol)
+          #acqf_L = cp.Problem(cp.Minimize(self.obj2), cons).solve(solver=cp.SCS, verbose=verbose, eps_abs=opt_tol, max_iters=max_iters)
         else:
-          sig_U = cp.Problem(cp.Maximize(self.obj3), cons).solve(solver=cp.CLARABEL, verbose=verbose, tol_gap_abs=opt_tol)#, tol_gap_abs=opt_tol)
-          #sig_U = cp.Problem(cp.Maximize(self.obj3), cons).solve(solver=cp.SCS, verbose=verbose, eps_abs=opt_tol, max_iters=max_iters)#, tol_gap_abs=opt_tol)
+          sig_U = cp.Problem(cp.Maximize(self.obj3), cons).solve(solver=cp.CLARABEL, verbose=verbose, tol_gap_abs=opt_tol, tol_gap_rel=opt_rel_tol)
+          if not (np.all(rhovar.value >= rhomin) and np.all(rho.value <= rhomax)):
+            print("optimal rho not within rho bounds")
+          #sig_U = cp.Problem(cp.Maximize(self.obj3), cons).solve(solver=cp.SCS, verbose=verbose, eps_abs=opt_tol, max_iters=max_iters)
         pass
       except Exception as e:
         print(f"An unexpected error occured: {e}")
@@ -566,9 +594,6 @@ class BnBAlgorithm(BnBAlgorithmBase):
         if i == 1:
           opt_tol *= 1.e2
         print("loosening convex opt tolerance to ", opt_tol)
-        #print("checking spectrum of quadratic terms")
-        #eigs = np.linalg.eigvals(self.A_constraint2)
-        #print("eigenvalues = ", eigs)
         if mode == 0:
           acqf_L = -np.inf
         else:
@@ -590,13 +615,13 @@ class BnBAlgorithm(BnBAlgorithmBase):
       # opt_mode = 0 (previous baseline w ratio constraints)
       # opt_mode = 1 (Convex relaxation w no ratio constraints on k and no affine constraints)
       # opt_mode = 2 (Most recent relaxation w ratio constraints and affine constraints
-      opt_mode = 2 #self.opt_mode
+      opt_mode = self.opt_mode
       
       if not skip_LB:
         with warnings.catch_warnings():
           warnings.simplefilter("ignore", category=UserWarning)
           acqf_L = self.LCB_LB(l, u, kL, kU, opt_mode=opt_mode)
-        for i in range(2):
+        for i in range(self.opt_mode):
           if not np.isfinite(acqf_L):
             failed_LB_opt = True
             print("was not able to determine lower-bound in previous mode ", opt_mode, "... switching")
@@ -680,7 +705,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
       acqf_U_x = x_points[min_arg]
       acqf_U = acqf_eval[min_arg]
     if acqf_L > acqf_U:
-      if abs(acqf_U - acqf_L) / abs(acqf_U) < 1.e-6:
+      if abs(acqf_U - acqf_L) / abs(acqf_U) < 1.e-4:
         acqf_L = acqf_U - 1.e-8
       else:
         print("issue with upper and lower-bound computations...")
@@ -1317,40 +1342,60 @@ class branching_wrapper:
        mode: 1 --> convex relaxation for maximum of variance        
     """
     assert mode in [0, 1], "mode can only be in 0, 1"
-    assert opt_mode in [0, 1, 2], "opt mode can only be 0, 1, or 2"
+    assert opt_mode in [0, 1, 2, 3], "opt mode can only be 0, 1, 2, or 3"
     # opt_mode = 0 (previous baseline w ratio constraints)
     # opt_mode = 1 (Convex relaxation w no ratio constraints on k and no affine constraints)
     # opt_mode = 2 (Most recent relaxation w ratio constraints and affine constraints
     cons = [self.C2 @ self.X >= kL, self.C2 @ self.X <= kU, self.cons2 >= 0, self.en1 @ self.X >= 0]
     if opt_mode != 0:
+      # add x optimization variable constrained to box: l <= x <= u
       xvar = cp.Variable(self.x.shape[1])
       cons.append(l <= xvar)
       cons.append(xvar <= u)
+      # add rho_i = \sum_j \theta_j |(x_j - x_j^(i)) / X_scale|^p variable
       ntrain = self.x.shape[0]
       rhovar = cp.Variable(ntrain) 
+      # determine bounds for rho
       dmin = np.maximum(0.0, np.maximum((l - self.x) / self.X_scale, (self.x - u)/ self.X_scale))        # (nt,d)
       dmax = np.maximum(np.abs((l - self.x) / self.X_scale), np.abs((u - self.x) / self.X_scale))         # (nt,d)
       th  = self.theta.ravel()     # (d,)
       rhomin = (th * (dmin**self.p)).sum(axis=1)
       rhomax = (th * (dmax**self.p)).sum(axis=1) 
       assert len(rhomin) == ntrain
-      # --- constraints ---
-      # \theta_j | x_j - x^{(i)}_j || <= rho_i
+      # \rho_i = max_{x in box} { \rho_i(x) }
+      # no need to include these constraints with equality constraint rho_i = ...
+      if True:#opt_mode != 3:
+        cons.append(rhovar <= rhomax)
+        cons.append(rhomin <= rhovar)    
+      # --- constraints coupling k and rho ---
       # k_i => exp(-\rho_i / xscale)
       for i in range(ntrain):
-        cons.append(cp.atoms.norm((xvar-self.x[i]) / ((th**(-1./self.p)) * self.X_scale), p = self.p)**self.p <= rhovar[i])
-        cons.append((self.C2 @ self.X)[i] >= cp.atoms.exp(-rhovar[i])) 
+        cons.append((self.C2 @ self.X)[i] >= cp.atoms.exp(-rhovar[i]))
       kMax = np.exp(-rhomin)
       kMin = np.exp(-rhomax)
-      # --- constraints --- 
       # k_i <= secant of k_i(x) over kMin, kMax
       cons.append(self.C2 @ self.X <= kMax + cp.atoms.multiply((kMin - kMax) / (rhomax - rhomin),  (rhovar  - rhomin)))
-      # \rho_i = max_{x in box} { \rho_i(x) }
-      cons.append(rhovar <= rhomax)
-    
+      # ---
+      
+
+      # \sum_j theta_j * |(x_j - x_j^(i)) / X_scale|^p <= rho_i
+      # for p = 1 or 2 is convex
+      if True:#opt_mode < 3:
+        for i in range(ntrain):
+          cons.append(cp.atoms.norm((xvar-self.x[i]) / ((th**(-1./self.p)) * self.X_scale), p = self.p)**self.p <= rhovar[i])
+      if opt_mode == 3:
+        assert self.p == 2.0, "opt_mode 3 only supports squared exponential kernel"
+        wvar = cp.Variable(self.x.shape[1])
+        for i in range(self.x.shape[1]):
+          cons.append(wvar[i] >= xvar[i]**2.0)
+          cons.append(wvar[i] <= (l[i] + u[i]) * xvar[i] - l[i] * u[i])
+          cons.append(rhovar[i] == cp.atoms.sum(cp.atoms.multiply(th / self.X_scale**self.p, wvar - 2.0 * cp.atoms.multiply(self.x[i], xvar) + np.linalg.norm(self.x[i], ord=2.0) ** 2.0)))
+
+
       # --- constraints ---
       # affine constraints on \rho_i via reverse triangle inequality
-      if opt_mode == 2:
+      # no need for additional bound constraints when we have equality constraint
+      if opt_mode >= 2:
         if self.p == 1.0:
           for i in range(ntrain):
             for j in range(i+1, ntrain):
@@ -1361,28 +1406,36 @@ class branching_wrapper:
           for i in range(ntrain):
             for j in range(i+1, ntrain):
               dxji = self.x[j] - self.x[i]
-              lo = np.where(dxji >= 0., l, u)
-              hi = np.where(dxji >= 0., u, l)
-              rhoij_ubound = 2. * np.inner((hi / self.X_scale), th * dxji / self.X_scale) + np.inner(self.x[i] / self.X_scale, th * self.x[i] / self.X_scale) - np.inner(self.x[j] / self.X_scale, th * self.x[j] / self.X_scale)
-              rhoij_lbound = 2. * np.inner((lo / self.X_scale), th * dxji / self.X_scale) + np.inner(self.x[i] / self.X_scale, th * self.x[i] / self.X_scale) - np.inner(self.x[j] / self.X_scale, th * self.x[j] / self.X_scale)
-              cons.append(rhovar[i] - rhovar[j] <= rhoij_ubound)
-              cons.append(rhovar[i] - rhovar[j] >= rhoij_lbound)
+              mult = 2. * th * dxji / (self.X_scale ** 2.0)
+              shift = np.inner(self.x[i] / self.X_scale, th * self.x[i] / self.X_scale) - np.inner(self.x[j] / self.X_scale, th * self.x[j] / self.X_scale)
+              cons.append(rhovar[i] - rhovar[j] == mult.T @ xvar + shift) 
+              #lo = np.where(dxji >= 0., l, u)
+              #hi = np.where(dxji >= 0., u, l)
+              #rhoij_ubound = 2. * np.inner((hi / self.X_scale), th * dxji / self.X_scale) + np.inner(self.x[i] / self.X_scale, th * self.x[i] / self.X_scale) - np.inner(self.x[j] / self.X_scale, th * self.x[j] / self.X_scale)
+              #rhoij_lbound = 2. * np.inner((lo / self.X_scale), th * dxji / self.X_scale) + np.inner(self.x[i] / self.X_scale, th * self.x[i] / self.X_scale) - np.inner(self.x[j] / self.X_scale, th * self.x[j] / self.X_scale)
+              #cons.append(rhovar[i] - rhovar[j] <= rhoij_ubound)
+              #cons.append(rhovar[i] - rhovar[j] >= rhoij_lbound)
         
     opt_tol = 1.e-8
+    opt_rel_tol = 1.e-8
     for i in range(3):
+      verbose = False
       if i > 0:
-        verbose = False
-        max_iters=1000
+        max_iters = 1000
       else:
+        max_iters = 300
+      if i == 2:
+        opt_rel_tol = 1.e-4
         verbose = False
-        max_iters=300
       try:
         if mode == 0: 
-          acqf_L = cp.Problem(cp.Minimize(self.obj2), cons).solve(solver = cp.CLARABEL, verbose=verbose, tol_gap_abs=opt_tol)
-          #acqf_L = cp.Problem(cp.Minimize(self.obj2), cons).solve(solver = cp.SCS, verbose=verbose, eps_abs=opt_tol, max_iters=max_iters)
+          acqf_L = cp.Problem(cp.Minimize(self.obj2), cons).solve(solver=cp.CLARABEL, verbose=verbose, tol_gap_abs=opt_tol, tol_gap_rel=opt_rel_tol)
+          #acqf_L = cp.Problem(cp.Minimize(self.obj2), cons).solve(solver=cp.SCS, verbose=verbose, eps_abs=opt_tol, max_iters=max_iters)
         else:
-          sig_U = cp.Problem(cp.Maximize(self.obj3), cons).solve(solver = cp.CLARABEL, verbose=verbose, tol_gap_abs=opt_tol)
-          #sig_U = cp.Problem(cp.Maximize(self.obj3), cons).solve(solver = cp.SCS, verbose=verbose, eps_abs=opt_tol, max_iters=max_iters)
+          sig_U = cp.Problem(cp.Maximize(self.obj3), cons).solve(solver=cp.CLARABEL, verbose=verbose, tol_gap_abs=opt_tol, tol_gap_rel=opt_rel_tol)
+          if not (np.all(rhovar.value >= rhomin) and np.all(rho.value <= rhomax)):
+            print("optimal rho not within rho bounds")
+          #sig_U = cp.Problem(cp.Maximize(self.obj3), cons).solve(solver=cp.SCS, verbose=verbose, eps_abs=opt_tol, max_iters=max_iters)
         pass
       except Exception as e:
         print(f"An unexpected error occured: {e}")
@@ -1391,9 +1444,6 @@ class branching_wrapper:
         if i == 1:
           opt_tol *= 1.e2
         print("loosening convex opt tolerance to ", opt_tol)
-        #print("checking spectrum of quadratic terms")
-        #eigs = np.linalg.eigvals(self.A_constraint2)
-        #print("eigenvalues = ", eigs)
         if mode == 0:
           acqf_L = -np.inf
         else:
@@ -1416,7 +1466,7 @@ class branching_wrapper:
       # opt_mode = 0 (previous baseline w ratio constraints)
       # opt_mode = 1 (Convex relaxation w no ratio constraints on k and no affine constraints)
       # opt_mode = 2 (Most recent relaxation w ratio constraints and affine constraints
-      opt_mode = 2 #self.opt_mode
+      opt_mode = self.opt_mode
       
       if not skip_LB:
         with warnings.catch_warnings():
@@ -1425,7 +1475,7 @@ class branching_wrapper:
           acqf_L = self.LCB_LB(l, u, kL, kU, opt_mode=opt_mode)
           LBi_end_time = time.time()
           #print("lower-bound comp attempt time = ", LBi_end_time - LBi_start_time)
-        for i in range(2):
+        for i in range(self.opt_mode):
           if not np.isfinite(acqf_L):
             failed_LB_opt = True
             print("was not able to determine lower-bound in previous mode ", opt_mode, "... switching")
