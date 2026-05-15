@@ -539,7 +539,8 @@ class BnBAlgorithm(BnBAlgorithmBase):
         for i in range(self.x.shape[1]):
           cons.append(wvar[i] >= xvar[i]**2.0)
           cons.append(wvar[i] <= (l[i] + u[i]) * xvar[i] - l[i] * u[i])
-          cons.append(rhovar[i] == cp.atoms.sum(cp.atoms.multiply(th / self.X_scale**self.p, wvar - 2.0 * cp.atoms.multiply(self.x[i], xvar) + np.linalg.norm(self.x[i], ord=2.0) ** 2.0)))
+          cons.append(rhovar[i] == cp.atoms.sum(cp.atoms.multiply(th / self.X_scale**self.p, wvar - 2.0 * cp.atoms.multiply(self.x[i], xvar) + self.x[i] * self.x[i]))) 
+          #cons.append(rhovar[i] == cp.atoms.sum(cp.atoms.multiply(th / self.X_scale**self.p, wvar - 2.0 * cp.atoms.multiply(self.x[i], xvar) + np.linalg.norm(self.x[i], ord=2.0) ** 2.0)))
 
 
       # --- constraints ---
@@ -1389,7 +1390,8 @@ class branching_wrapper:
         for i in range(self.x.shape[1]):
           cons.append(wvar[i] >= xvar[i]**2.0)
           cons.append(wvar[i] <= (l[i] + u[i]) * xvar[i] - l[i] * u[i])
-          cons.append(rhovar[i] == cp.atoms.sum(cp.atoms.multiply(th / self.X_scale**self.p, wvar - 2.0 * cp.atoms.multiply(self.x[i], xvar) + np.linalg.norm(self.x[i], ord=2.0) ** 2.0)))
+          cons.append(rhovar[i] == cp.atoms.sum(cp.atoms.multiply(th / self.X_scale**self.p, wvar - 2.0 * cp.atoms.multiply(self.x[i], xvar) + self.x[i] * self.x[i]))) 
+          #cons.append(rhovar[i] == cp.atoms.sum(cp.atoms.multiply(th / self.X_scale**self.p, wvar - 2.0 * cp.atoms.multiply(self.x[i], xvar) + np.linalg.norm(self.x[i], ord=2.0) ** 2.0)))
 
 
       # --- constraints ---
