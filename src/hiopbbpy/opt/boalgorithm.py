@@ -317,6 +317,7 @@ class BOAlgorithm(BOAlgorithmBase):
         
         # Run BnB optimization
         best_xopt = bnb.optimize()
+        self.logger.info(f"BnB nodes explored: {bnb.num_branches}")
         print("size of BnB queue = ", len(bnb.queue))
         print("optimal point = ", best_xopt)
         # experimental, testing clustering of BnB queue----
