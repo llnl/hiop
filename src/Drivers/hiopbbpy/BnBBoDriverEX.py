@@ -292,9 +292,9 @@ if __name__ == "__main__":
   x_train = problem.sample(n_samples)
   y_train = problem.evaluate(x_train)
   
-  theta = 10  # hyperparameter for GP kernel
+  theta = 5  # hyperparameter for GP kernel
   fix_theta = True
-  theta_bounds = [10, 10.]
+  theta_bounds = [0.3, 10.]
   pow_exp_power = 2.0
   eval_noise = False
   gp_model = smtKRG(theta, problem.xlimits, nx, pow_exp_power=pow_exp_power, eval_noise=eval_noise, fix_theta=fix_theta, theta_bounds=theta_bounds, hyper_opt="NoOp")
