@@ -1023,7 +1023,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
           bbsnodes.append(node)
 
         # parallel branching and upper/lower bound node compuatations
-        brancher = branching_wrapper(self.acqf, LUB = self.LUB, epsilon_prune=self.epsilon_prune, acqf_UB_solver = self.acqf_UB_solver, random_seed=self.random_seed if self.random_seed is not None else None,)
+        brancher = branching_wrapper(self.acqf, LUB = self.LUB, epsilon_prune=self.epsilon_prune, acqf_UB_solver = self.acqf_UB_solver, random_seed=self.random_seed if self.random_seed is not None else None, opt_mode=self.opt_mode,)
         bbsnodes = np.array(bbsnodes)
         if len(bbsnodes) > 0:
           self.bbsevaluator.submit_tasks(brancher.callback, bbsnodes)
@@ -1112,7 +1112,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
 
 
 class branching_wrapper:
-  def __init__(self, acqf, LUB=np.inf, epsilon_prune=1.e-14, acqf_UB_solver="SLSQP", random_seed=None):
+  def __init__(self, acqf, LUB=np.inf, epsilon_prune=1.e-14, acqf_UB_solver="SLSQP", random_seed=None, opt_mode=3):
     self.LUB = LUB # least upper bound
     self.epsilon_prune = epsilon_prune
     self.acqf = acqf
@@ -1131,6 +1131,8 @@ class branching_wrapper:
       raise NotImplementedError("Unrecognized acquisition function type")
     self.sync_from_smt()
     self.cvxpy_problem = None
+
+    self.opt_mode = opt_mode
   
   def sync_from_smt(self):
     sm = self.gpsurrogate.surrogatesmt
