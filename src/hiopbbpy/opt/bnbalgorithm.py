@@ -17,6 +17,7 @@ except ImportError:
 import time
 import math
 import warnings
+import sys
 
 # define the variance upper bound problem
 # these problems are in the form
@@ -382,6 +383,13 @@ class BnBAlgorithm(BnBAlgorithmBase):
     self.saveData = options.get('save_data', self.saveData)
     self.min_diam = options.get('min_diameter', self.min_diam)
     self.early_stopping_heuristics = options.get('early_stopping_heuristics', self.early_stopping_heuristics)
+    self.random_seed = options.get("random_seed", None)
+    if self.random_seed is None:
+      self.rng = np.random.default_rng()
+    else:
+      # Different deterministic stream for each BO iteration
+      self.rng = np.random.default_rng(int(self.random_seed) + 1000003 * int(self.BOit))
+    
     assert self.opt_mode in [0, 1, 2, 3, 4], "unknown opt_mode"
     assert self.acqf_UB_solver in ["SLSQP", "trust-constr", "IPOPT", "MINEVAL"], "invalid acqf ub solver"
     assert isinstance(self.saveData, bool), "save_data is not of type bool"
@@ -510,7 +518,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
       rhomax = (th * (dmax**self.p)).sum(axis=1) 
       assert len(rhomin) == ntrain
       # --- constraints ---
-      # \theta_j | x_j - x^{(i)}_j || <= rho_i
+      # \theta_j || x_j - x^{(i)}_j || <= rho_i
       # k_i => exp(-\rho_i / xscale)
       for i in range(ntrain):
         cons.append(cp.atoms.norm((xvar-self.x[i]) / ((th**(-1./self.p)) * self.X_scale), p = self.p)**self.p <= rhovar[i])
@@ -560,12 +568,12 @@ class BnBAlgorithm(BnBAlgorithmBase):
           #sig_U = cp.Problem(cp.Maximize(self.obj3), cons).solve(solver=cp.SCS, verbose=verbose, eps_abs=opt_tol, max_iters=max_iters)#, tol_gap_abs=opt_tol)
         pass
       except Exception as e:
-        print(f"An unexpected error occured: {e}")
+        print(f"An unexpected error occured: {e}", flush=True)
         if i == 0:
           opt_tol *= 1.e4
         if i == 1:
           opt_tol *= 1.e2
-        print("loosening convex opt tolerance to ", opt_tol)
+        print("loosening convex opt tolerance to ", opt_tol, flush=True)
         #print("checking spectrum of quadratic terms")
         #eigs = np.linalg.eigvals(self.A_constraint2)
         #print("eigenvalues = ", eigs)
@@ -599,7 +607,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
         for i in range(2):
           if not np.isfinite(acqf_L):
             failed_LB_opt = True
-            print("was not able to determine lower-bound in previous mode ", opt_mode, "... switching")
+            print("Warning: was not able to determine lower-bound in previous mode ", opt_mode, "... switching", flush=True)
             opt_mode -= 1
             with warnings.catch_warnings():
               warnings.simplefilter("ignore", category=UserWarning)
@@ -640,7 +648,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
       else: #SLSQP
         opt_solver_options = {'maxiter' : 100, 'tol' : 1.e-5}
       acqf_minimizer = minimizer_wrapper(acqf_callback, self.acqf_UB_solver, box_bounds, constraints, opt_solver_options)
-      alpha = 0.05 + 0.9 * np.random.rand(len(u)) # rand numbers in [0.05, 0.95)
+      alpha = 0.5 #0.05 + 0.9 * self.rng.random(len(u)) # rand numbers in [0.05, 0.95)
       x0 = [alpha * l + (1. - alpha) * u]
       opt_sol = opt_evaluator.run(acqf_minimizer.minimizer_callback, x0)[0]
       if not (np.all(opt_sol[0] >= l) and np.all(opt_sol[0] <= u)):
@@ -649,19 +657,19 @@ class BnBAlgorithm(BnBAlgorithmBase):
       msg = opt_sol[3]
       acqf_solve_success = opt_sol[2]
       if not acqf_solve_success:
-        print(self.acqf_UB_solver + " did not converge on BOX: ", l, u, "... trying again with more verbosity and at another initial point")
-        print(self.acqf_UB_solver + " message: ", msg)
+        print(self.acqf_UB_solver + " did not converge on BOX: ", l, u, "... trying again with more verbosity and at another initial point", flush=True)
+        print(self.acqf_UB_solver + " message: ", msg, flush=True)
         if self.acqf_UB_solver == "IPOPT":
           opt_solver_options = {'max_iter' : 200, 'tol' : 1.e-3, 'honor_original_bounds' : 'yes', 'print_level' : 0, 'sb' : 'yes'}
         else: # SLSQP
           opt_solver_options = {'maxiter' : 200, 'tol' : 1.e-3, 'disp' : True}
         acqf_minimizer = minimizer_wrapper(acqf_callback, self.acqf_UB_solver, box_bounds, constraints, opt_solver_options)
-        alpha = 0.05 + 0.9 * np.random.rand(len(u)) # rand numbers in [0.05, 0.95)
+        alpha = 0.5# 0.05 + 0.9 * self.rng.random(len(u)) # rand numbers in [0.05, 0.95)
         x0 = [alpha * l + (1. - alpha) * u]
         opt_sol = opt_evaluator.run(acqf_minimizer.minimizer_callback, x0)[0]
         acqf_solve_success = opt_sol[2]
         if not acqf_solve_success:
-          print(self.acqf_UB_solver + "failed a second time. Will take the minimum of a small number of acqf function evaluations")
+          print(self.acqf_UB_solver + "failed a second time. Will take the minimum of a small number of acqf function evaluations", flush=True)
       if acqf_solve_success:
         acqf_U = self.acqf.evaluate(np.atleast_2d(opt_sol[0])).flatten()[0]
         acqf_U_x = opt_sol[0]
@@ -683,8 +691,11 @@ class BnBAlgorithm(BnBAlgorithmBase):
       if abs(acqf_U - acqf_L) / abs(acqf_U) < 1.e-6:
         acqf_L = acqf_U - 1.e-8
       else:
-        print("issue with upper and lower-bound computations...")
-        print("acqf_L = {0:1.12e}, acqf_U = {1:1.12e}".format(acqf_L, acqf_U))
+        print("issue with upper and lower-bound computations...", flush=True)
+        print("acqf_L = {0:1.12e}, acqf_U = {1:1.12e}".format(acqf_L, acqf_U), flush=True)
+    #make sure output is flush out to get all the info in case code asserts
+    sys.stdout.flush()
+    sys.stderr.flush()
     assert acqf_L <= acqf_U, "error: computed acquisition function bounds: acqf_U < acqf_L"
     if isinstance(acqf_L, (list, np.ndarray)):
       acqf_L = acqf_L[0]
@@ -843,6 +854,9 @@ class BnBAlgorithm(BnBAlgorithmBase):
         # update best_node via children
         updated_LUB_node = False
         updated_LLB_node = False
+
+        self.LUB = 1e+20#= min([child.aq_L for child in children])
+        
         for child in children:
           if child.aq_U < child.aq_L:
             print("ERROR (acqf_UB < acqf_LB) on box with corners ", child.l, child.u)
@@ -850,20 +864,26 @@ class BnBAlgorithm(BnBAlgorithmBase):
             print("upper-bound = ", child.aq_U)
           assert child.aq_U >= child.aq_L, "ERROR: child upper bound < child lower bound for child"
           if child.aq_U <= self.LUB:
+            print(f"LUB / best node updated: previous {self.LUB}   new {child.aq_U}   LB prev {self.best_node.aq_L}   new{child.aq_L}")
+
             self.LUB = child.aq_U
             self.best_node = child
-            updated_LUB_node = True
+            updated_LUB_node = True            
           if child.aq_L <= self.LLB:
+            print(f"LLB updated: previous {self.LLB}   new {child.aq_L}  child/new UB {child.aq_U}")
             self.LLB = child.aq_L
             updated_LLB_node = True
         if not updated_LLB_node:
-          print("best node not updated")
+          print("LLB not updated")
           if self.pure_BBS and self.synchronous:
-            print("forcing best node update")
+            LLBprev = self.LLB
             self.LLB = min([child.aq_L for child in children])
+            print(f"forcing LLB update previous {LLBprev}  new {self.LLB}")
             updated_LLB_node = True
         else:
-          print("best node updated")
+          print("LLB updated from children")
+          
+        assert self.LUB == self.best_node.aq_U, "ERROR: LUB and best node U got disconnected somehow"
         gap_history.append(self.best_node.aq_U - self.LLB)
         
         # pre-prune
@@ -977,7 +997,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
           bbsnodes.append(node)
 
         # parallel branching and upper/lower bound node compuatations
-        brancher = branching_wrapper(self.acqf, LUB = self.LUB, epsilon_prune=self.epsilon_prune, acqf_UB_solver = self.acqf_UB_solver)
+        brancher = branching_wrapper(self.acqf, LUB = self.LUB, epsilon_prune=self.epsilon_prune, acqf_UB_solver = self.acqf_UB_solver, random_seed=self.random_seed if self.random_seed is not None else None,)
         bbsnodes = np.array(bbsnodes)
         if len(bbsnodes) > 0:
           self.bbsevaluator.submit_tasks(brancher.callback, bbsnodes)
@@ -1066,7 +1086,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
 
 
 class branching_wrapper:
-  def __init__(self, acqf, LUB=np.inf, epsilon_prune=1.e-14, acqf_UB_solver="SLSQP"):
+  def __init__(self, acqf, LUB=np.inf, epsilon_prune=1.e-14, acqf_UB_solver="SLSQP", random_seed=None):
     self.LUB = LUB # least upper bound
     self.epsilon_prune = epsilon_prune
     self.acqf = acqf
@@ -1074,6 +1094,13 @@ class branching_wrapper:
     self.x = self.gpsurrogate.training_x
     self.y = self.gpsurrogate.training_y
     self.acqf_UB_solver = acqf_UB_solver
+
+    self.random_seed = random_seed
+    if random_seed is None:
+      self.rng = np.random.default_rng()
+    else:
+      self.rng = np.random.default_rng(int(random_seed))
+    
     if not (isinstance(self.acqf, LCBacquisition) or isinstance(self.acqf, EIacquisition)):
       raise NotImplementedError("Unrecognized acquisition function type")
     self.sync_from_smt()
@@ -1385,12 +1412,12 @@ class branching_wrapper:
           #sig_U = cp.Problem(cp.Maximize(self.obj3), cons).solve(solver = cp.SCS, verbose=verbose, eps_abs=opt_tol, max_iters=max_iters)
         pass
       except Exception as e:
-        print(f"An unexpected error occured: {e}")
+        print(f"WARNING: convex solver error at attempt {i+1}: {e}", flush=True)
         if i == 0:
           opt_tol *= 1.e4
         if i == 1:
           opt_tol *= 1.e2
-        print("loosening convex opt tolerance to ", opt_tol)
+        print("WARNING: Loosening convex opt tolerance to ", opt_tol, flush=True)
         #print("checking spectrum of quadratic terms")
         #eigs = np.linalg.eigvals(self.A_constraint2)
         #print("eigenvalues = ", eigs)
@@ -1428,7 +1455,7 @@ class branching_wrapper:
         for i in range(2):
           if not np.isfinite(acqf_L):
             failed_LB_opt = True
-            print("was not able to determine lower-bound in previous mode ", opt_mode, "... switching")
+            print("WARNING: was not able to determine lower-bound in previous mode ", opt_mode, "... switching", flush=True)
             opt_mode -= 1
             with warnings.catch_warnings():
               warnings.simplefilter("ignore", category=UserWarning)
@@ -1441,9 +1468,10 @@ class branching_wrapper:
       else:
         acqf_L = -np.inf 
         failed_LB_opt = False
+
     if not isinstance(self.acqf, LCBacquisition) or failed_LB_opt:
       # mean bounds
-      print("acqf LB via sig UB")
+      print("acqf LB via sig UB", flush=True)
       mu_L, mu_U = self.mu_bounds(kL, kU)
       sig_L = self.sig_LB(kL, kU, l=l, u=u)
       with warnings.catch_warnings():
@@ -1463,6 +1491,7 @@ class branching_wrapper:
       acqf_bounds = self.acqf.evaluate_meansig2(mu, var)
       acqf_L = acqf_bounds[0]
     LB_end_time = time.time()
+
     #print("lower-bound compute cumulative time = ", LB_end_time - LB_start_time)
     acqf_solve_success = False 
     UB_start_time = time.time()
@@ -1474,30 +1503,30 @@ class branching_wrapper:
         acqf_callback['grad'] = self.acqf.scalar_eval_g
       opt_evaluator = Evaluator()
       if self.acqf_UB_solver == "IPOPT": 
-        opt_solver_options = {'max_iter' : 100, 'tol' : 1.e-5, 'honor_original_bounds' : 'yes', 'print_level' : 0, 'sb' : 'yes'}
+        opt_solver_options = {'max_iter' : 100, 'tol' : 1.e-6, 'honor_original_bounds' : 'yes', 'print_level' : 0, 'sb' : 'yes'}
       else: #SLSQP
         opt_solver_options = {'maxiter' : 100, 'tol' : 1.e-5}
       acqf_minimizer = minimizer_wrapper(acqf_callback, self.acqf_UB_solver, box_bounds, constraints, opt_solver_options)
-      alpha = 0.05 + 0.9 * np.random.rand(len(u)) # rand numbers in [0.05, 0.95)
+      alpha = 0.5 #0.05 + 0.9 * self.rng.random(len(u)) # rand numbers in [0.05, 0.95)
       x0 = [alpha * l + (1. - alpha) * u]
       UBi_start_time = time.time()
       opt_sol = opt_evaluator.run(acqf_minimizer.minimizer_callback, x0)[0]
       UBi_end_time = time.time()
       #print("upper-bound comp attempt time = ", UBi_end_time - UBi_start_time)
       if not (np.all(opt_sol[0] >= l) and np.all(opt_sol[0] <= u)):
-        print(f"optimizer {opt_sol[0]} not within prescribed bounds: {l}, {u}")
+        print(f"WARNING: optimizer {opt_sol[0]} not within prescribed bounds: {l}, {u}")
       assert (np.all(opt_sol[0] >= l) and np.all(opt_sol[0] <= u)), f"acqf minimizer not within bounds"
       msg = opt_sol[3]
       acqf_solve_success = opt_sol[2]
       if not acqf_solve_success:
-        print(self.acqf_UB_solver + " did not converge on BOX: ", l, u, "... trying again with more verbosity and at another initial point")
-        print(self.acqf_UB_solver + " message: ", msg)
+        print("WARNING: " + self.acqf_UB_solver + " did not converge on BOX: ", l, u, "... trying again with more verbosity and relaxed tol", flush=True)
+        print("WARNING: " + self.acqf_UB_solver + " message: ", msg, flush=True)
         if self.acqf_UB_solver == "IPOPT":
           opt_solver_options = {'max_iter' : 200, 'tol' : 1.e-3, 'honor_original_bounds' : 'yes', 'print_level' : 0, 'sb' : 'yes'}
         else: # SLSQP
           opt_solver_options = {'maxiter' : 200, 'tol' : 1.e-3, 'disp' : True}
         acqf_minimizer = minimizer_wrapper(acqf_callback, self.acqf_UB_solver, box_bounds, constraints, opt_solver_options)
-        alpha = 0.05 + 0.9 * np.random.rand(len(u)) # rand numbers in [0.05, 0.95)
+        alpha = 0.5 #0.05 + 0.9 * self.rng.random(len(u)) # rand numbers in [0.05, 0.95)
         x0 = [alpha * l + (1. - alpha) * u]
         UBi_start_time = time.time()
         opt_sol = opt_evaluator.run(acqf_minimizer.minimizer_callback, x0)[0]
@@ -1505,10 +1534,15 @@ class branching_wrapper:
         #print("upper-bound comp attempt time = ", UBi_end_time - UBi_start_time)
         acqf_solve_success = opt_sol[2]
         if not acqf_solve_success:
-          print(self.acqf_UB_solver + "failed a second time. Will take the minimum of a small number of acqf function evaluations")
+          print("WARNING: "+ self.acqf_UB_solver + "failed a second time. Will take the minimum of a small number of acqf function evaluations", flush=True)
       if acqf_solve_success:
         acqf_U = self.acqf.evaluate(np.atleast_2d(opt_sol[0])).flatten()[0]
+        #print(f"Upper bound from evaluator {acqf_U} from ipopt {opt_sol[1]}")
+        #print("   optimal x:", opt_sol[0])
+        #print("   l:", l)
+        #print("   u:", u, flush=True)
         acqf_U_x = opt_sol[0]
+
     # evaluate the acquisition over a skeleton of the box
     # and choose the smallest value as the upper bound
     # of the minimum over the box
@@ -1525,12 +1559,17 @@ class branching_wrapper:
       min_arg = np.argmin(acqf_eval.flatten())
       acqf_U_x = x_points[min_arg]
       acqf_U = acqf_eval[min_arg]
+
+
     if acqf_L > acqf_U:
-      if abs(acqf_U - acqf_L) / abs(acqf_U) < 1.e-6:
-        acqf_L = acqf_U - 1.e-8
+      if abs(acqf_U - acqf_L) / (1+abs(acqf_U)) < 1.e-4:
+        acqf_L = acqf_U - 1.e-4
+        #acqf_U = acqf_L + 1.e-8
+        print("WARNING: small error in between lower and upper bounds, keeping U")
       else:
-        print("issue with upper and lower-bound computations...")
-        print("acqf_L = {0:1.12e}, acqf_U = {1:1.12e}".format(acqf_L, acqf_U))
+        print("WARNING: issue with upper and lower-bound computations...", flush=True)
+        print("WARNING: acqf_L = {0:1.16e}, acqf_U = {1:1.16e}".format(acqf_L, acqf_U), flush=True)
+        
     assert acqf_L <= acqf_U, "error: computed acquisition function bounds: acqf_U < acqf_L"
     if isinstance(acqf_L, (list, np.ndarray)):
       acqf_L = acqf_L[0]
