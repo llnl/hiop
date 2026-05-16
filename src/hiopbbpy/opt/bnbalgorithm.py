@@ -447,6 +447,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
     self.X = cp.Variable(ntrain+1) # (z, s), z = C * k
     self.obj2 = self.b_obj2.T @ self.X + self.c_obj2
     # ensure that the matrix is negative semi-definite
+    # //!
     lam, U = np.linalg.eigh(self.A_constraint2)
     lam_neg = np.minimum(lam, -1.e-16 * np.ones(len(lam)))
     self.A_constraint2[:,:] = U.dot(np.diag(lam_neg)).dot(U.T)
@@ -539,10 +540,10 @@ class BnBAlgorithm(BnBAlgorithmBase):
 
       # \sum_j theta_j * |(x_j - x_j^(i)) / X_scale|^p <= rho_i
       # for p = 1 or 2 is convex
-      if True:#opt_mode < 3:
-        for i in range(ntrain):
-          # //!: this is redundant
-          cons.append(cp.atoms.norm((xvar-self.x[i]) / ((th**(-1./self.p)) * self.X_scale), p = self.p)**self.p <= rhovar[i])
+      #if True:#opt_mode < 3:
+        #for i in range(ntrain):
+        #  # //!: this is redundant
+        #  cons.append(cp.atoms.norm((xvar-self.x[i]) / ((th**(-1./self.p)) * self.X_scale), p = self.p)**self.p <= rhovar[i])
       if opt_mode == 3:
         assert self.p == 2.0, "opt_mode 3 only supports squared exponential kernel"
         wvar = cp.Variable(self.x.shape[1])
@@ -571,7 +572,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
               mult = 2. * th * dxji / (self.X_scale ** 2.0)
               shift = np.inner(self.x[i] / self.X_scale, th * self.x[i] / self.X_scale) - np.inner(self.x[j] / self.X_scale, th * self.x[j] / self.X_scale)
               # //!: this is redundant
-              cons.append(rhovar[i] - rhovar[j] == mult.T @ xvar + shift) 
+              #cons.append(rhovar[i] - rhovar[j] == mult.T @ xvar + shift) 
               #lo = np.where(dxji >= 0., l, u)
               #hi = np.where(dxji >= 0., u, l)
               #rhoij_ubound = 2. * np.inner((hi / self.X_scale), th * dxji / self.X_scale) + np.inner(self.x[i] / self.X_scale, th * self.x[i] / self.X_scale) - np.inner(self.x[j] / self.X_scale, th * self.x[j] / self.X_scale)
@@ -582,14 +583,14 @@ class BnBAlgorithm(BnBAlgorithmBase):
     opt_tol = 1.e-8
     opt_rel_tol = 1.e-8
     for i in range(3):
-      verbose = True#False
+      verbose = False
       if i > 0:
         max_iters = 1000
       else:
         max_iters = 300
       if i == 2:
         opt_rel_tol = 1.e-4
-        verbose = True#False
+        verbose = False
       try:
         if mode == 0: 
           acqf_L = cp.Problem(cp.Minimize(self.obj2), cons).solve(solver=cp.CLARABEL, verbose=verbose, tol_gap_abs=opt_tol, tol_gap_rel=opt_rel_tol)
@@ -1244,6 +1245,7 @@ class branching_wrapper:
     self.X = cp.Variable(ntrain+1) # (z, s), z = C * k
     self.obj2 = self.b_obj2.T @ self.X + self.c_obj2
     # ensure that the matrix is negative semi-definite
+    # //! 
     lam, U = np.linalg.eigh(self.A_constraint2)
     lam_neg = np.minimum(lam, -1.e-16 * np.ones(len(lam)))
     self.A_constraint2[:,:] = U.dot(np.diag(lam_neg)).dot(U.T)
@@ -1416,10 +1418,10 @@ class branching_wrapper:
 
       # \sum_j theta_j * |(x_j - x_j^(i)) / X_scale|^p <= rho_i
       # for p = 1 or 2 is convex
-      if True:#opt_mode < 3:
-        for i in range(ntrain):
+      #if True:#opt_mode < 3:
+      #  for i in range(ntrain):
           # //!: this is redundant
-          cons.append(cp.atoms.norm((xvar-self.x[i]) / ((th**(-1./self.p)) * self.X_scale), p = self.p)**self.p <= rhovar[i])
+      #    cons.append(cp.atoms.norm((xvar-self.x[i]) / ((th**(-1./self.p)) * self.X_scale), p = self.p)**self.p <= rhovar[i])
       if opt_mode == 3:
         assert self.p == 2.0, "opt_mode 3 only supports squared exponential kernel"
         wvar = cp.Variable(self.x.shape[1])
@@ -1448,7 +1450,7 @@ class branching_wrapper:
               mult = 2. * th * dxji / (self.X_scale ** 2.0)
               shift = np.inner(self.x[i] / self.X_scale, th * self.x[i] / self.X_scale) - np.inner(self.x[j] / self.X_scale, th * self.x[j] / self.X_scale)
               # //!: this is redundant
-              cons.append(rhovar[i] - rhovar[j] == mult.T @ xvar + shift) 
+              #cons.append(rhovar[i] - rhovar[j] == mult.T @ xvar + shift) 
               #lo = np.where(dxji >= 0., l, u)
               #hi = np.where(dxji >= 0., u, l)
               #rhoij_ubound = 2. * np.inner((hi / self.X_scale), th * dxji / self.X_scale) + np.inner(self.x[i] / self.X_scale, th * self.x[i] / self.X_scale) - np.inner(self.x[j] / self.X_scale, th * self.x[j] / self.X_scale)
