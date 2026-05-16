@@ -532,6 +532,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
       kMax = np.exp(-rhomin)
       kMin = np.exp(-rhomax)
       # k_i <= secant of k_i(x) over kMin, kMax
+      # //!: I suggest we check and handle small |rhomax-rhomin| 
       cons.append(self.C2 @ self.X <= kMax + cp.atoms.multiply((kMin - kMax) / (rhomax - rhomin),  (rhovar  - rhomin)))
       # ---
       
@@ -540,6 +541,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
       # for p = 1 or 2 is convex
       if True:#opt_mode < 3:
         for i in range(ntrain):
+          # //!: this is redundant
           cons.append(cp.atoms.norm((xvar-self.x[i]) / ((th**(-1./self.p)) * self.X_scale), p = self.p)**self.p <= rhovar[i])
       if opt_mode == 3:
         assert self.p == 2.0, "opt_mode 3 only supports squared exponential kernel"
@@ -547,6 +549,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
         for i in range(self.x.shape[1]):
           cons.append(wvar[i] >= xvar[i]**2.0)
           cons.append(wvar[i] <= (l[i] + u[i]) * xvar[i] - l[i] * u[i])
+        for i in range(ntrain):
           cons.append(rhovar[i] == cp.atoms.sum(cp.atoms.multiply(th / self.X_scale**self.p, wvar - 2.0 * cp.atoms.multiply(self.x[i], xvar) + self.x[i] * self.x[i]))) 
           #cons.append(rhovar[i] == cp.atoms.sum(cp.atoms.multiply(th / self.X_scale**self.p, wvar - 2.0 * cp.atoms.multiply(self.x[i], xvar) + np.linalg.norm(self.x[i], ord=2.0) ** 2.0)))
 
@@ -567,6 +570,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
               dxji = self.x[j] - self.x[i]
               mult = 2. * th * dxji / (self.X_scale ** 2.0)
               shift = np.inner(self.x[i] / self.X_scale, th * self.x[i] / self.X_scale) - np.inner(self.x[j] / self.X_scale, th * self.x[j] / self.X_scale)
+              # //!: this is redundant
               cons.append(rhovar[i] - rhovar[j] == mult.T @ xvar + shift) 
               #lo = np.where(dxji >= 0., l, u)
               #hi = np.where(dxji >= 0., u, l)
@@ -1405,6 +1409,7 @@ class branching_wrapper:
       kMax = np.exp(-rhomin)
       kMin = np.exp(-rhomax)
       # k_i <= secant of k_i(x) over kMin, kMax
+      # //!: I suggest we check and handle small |rhomax-rhomin| 
       cons.append(self.C2 @ self.X <= kMax + cp.atoms.multiply((kMin - kMax) / (rhomax - rhomin),  (rhovar  - rhomin)))
       # ---
       
@@ -1413,6 +1418,7 @@ class branching_wrapper:
       # for p = 1 or 2 is convex
       if True:#opt_mode < 3:
         for i in range(ntrain):
+          # //!: this is redundant
           cons.append(cp.atoms.norm((xvar-self.x[i]) / ((th**(-1./self.p)) * self.X_scale), p = self.p)**self.p <= rhovar[i])
       if opt_mode == 3:
         assert self.p == 2.0, "opt_mode 3 only supports squared exponential kernel"
@@ -1420,6 +1426,7 @@ class branching_wrapper:
         for i in range(self.x.shape[1]):
           cons.append(wvar[i] >= xvar[i]**2.0)
           cons.append(wvar[i] <= (l[i] + u[i]) * xvar[i] - l[i] * u[i])
+        for i in range(ntrain):
           cons.append(rhovar[i] == cp.atoms.sum(cp.atoms.multiply(th / self.X_scale**self.p, wvar - 2.0 * cp.atoms.multiply(self.x[i], xvar) + self.x[i] * self.x[i]))) 
           #cons.append(rhovar[i] == cp.atoms.sum(cp.atoms.multiply(th / self.X_scale**self.p, wvar - 2.0 * cp.atoms.multiply(self.x[i], xvar) + np.linalg.norm(self.x[i], ord=2.0) ** 2.0)))
 
@@ -1440,6 +1447,7 @@ class branching_wrapper:
               dxji = self.x[j] - self.x[i]
               mult = 2. * th * dxji / (self.X_scale ** 2.0)
               shift = np.inner(self.x[i] / self.X_scale, th * self.x[i] / self.X_scale) - np.inner(self.x[j] / self.X_scale, th * self.x[j] / self.X_scale)
+              # //!: this is redundant
               cons.append(rhovar[i] - rhovar[j] == mult.T @ xvar + shift) 
               #lo = np.where(dxji >= 0., l, u)
               #hi = np.where(dxji >= 0., u, l)
