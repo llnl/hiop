@@ -582,14 +582,14 @@ class BnBAlgorithm(BnBAlgorithmBase):
     opt_tol = 1.e-8
     opt_rel_tol = 1.e-8
     for i in range(3):
-      verbose = False
+      verbose = True#False
       if i > 0:
         max_iters = 1000
       else:
         max_iters = 300
       if i == 2:
         opt_rel_tol = 1.e-4
-        verbose = False
+        verbose = True#False
       try:
         if mode == 0: 
           acqf_L = cp.Problem(cp.Minimize(self.obj2), cons).solve(solver=cp.CLARABEL, verbose=verbose, tol_gap_abs=opt_tol, tol_gap_rel=opt_rel_tol)
@@ -601,12 +601,12 @@ class BnBAlgorithm(BnBAlgorithmBase):
           #sig_U = cp.Problem(cp.Maximize(self.obj3), cons).solve(solver=cp.SCS, verbose=verbose, eps_abs=opt_tol, max_iters=max_iters)
         pass
       except Exception as e:
-        print(f"An unexpected error occured: {e}", flush=True)
+        print(f"WARNING: convex solver at attempt {i+1} returned error: {e}", flush=True)
         if i == 0:
           opt_tol *= 1.e4
         if i == 1:
           opt_tol *= 1.e2
-        print("loosening convex opt tolerance to ", opt_tol, flush=True)
+        print("WARNING: Loosening convex opt tolerance to ", opt_tol, flush=True)
 
         if mode == 0:
           acqf_L = -np.inf
@@ -1478,7 +1478,7 @@ class branching_wrapper:
           #sig_U = cp.Problem(cp.Maximize(self.obj3), cons).solve(solver=cp.SCS, verbose=verbose, eps_abs=opt_tol, max_iters=max_iters)
         pass
       except Exception as e:
-        print(f"WARNING: convex solver error at attempt {i+1}: {e}", flush=True)
+        print(f"WARNING: convex solver at attempt {i+1} returned error: {e}", flush=True)
         if i == 0:
           opt_tol *= 1.e4
         if i == 1:
