@@ -293,17 +293,24 @@ if __name__ == "__main__":
   y_train = problem.evaluate(x_train)
   
   theta = 5  # hyperparameter for GP kernel
-  fix_theta = True
+  fix_theta = False
   theta_bounds = [0.3, 10.]
   pow_exp_power = 2.0
   eval_noise = False
-  gp_model = smtKRG(theta, problem.xlimits, nx, pow_exp_power=pow_exp_power, eval_noise=eval_noise, fix_theta=fix_theta, theta_bounds=theta_bounds, hyper_opt="NoOp")
+
+  hyper_opt="Cobyla" #More robust, derivative-free hyperparameter optimization
+  #hyper_opt="TNC" # Faster/default, but more sensitive
+  # hyper_opt="NoOp" # Freeze theta at theta0, useful for debugging BnB/Clarabel issues
+  if fix_theta:
+    hyper_opt="NoOp"
+  
+  gp_model = smtKRG(theta, problem.xlimits, nx, pow_exp_power=pow_exp_power, eval_noise=eval_noise, fix_theta=fix_theta, theta_bounds=theta_bounds, hyper_opt=hyper_opt)
   gp_model.train(x_train, y_train)
   # initial training without sleep time, then include for batched-BO
   if problem.name in ["Hartmann", "Shekel", "Periodic"]:
     problem.sleep_time = sleep_time
 
-  beta = 10
+  beta = 3
   if acquisition_type == 'LCB':
     acqf = LCBacquisition(gp_model, beta=beta)
   else:
@@ -367,7 +374,7 @@ if __name__ == "__main__":
   for i in range(boiter):
     x_train2 = x_train_superset[:(-boiter+i)*batch_size]
     y_train2 = problem.evaluate(x_train2)
-    gp_model2 = smtKRG(theta, problem.xlimits, nx, pow_exp_power=pow_exp_power, eval_noise=eval_noise, fix_theta=fix_theta, theta_bounds=theta_bounds, hyper_opt="NoOp")
+    gp_model2 = smtKRG(theta, problem.xlimits, nx, pow_exp_power=pow_exp_power, eval_noise=eval_noise, fix_theta=fix_theta, theta_bounds=theta_bounds, hyper_opt=hyper_opt)
     gp_model2.train(x_train2, y_train2)
     optimal_thetas.append(gp_model2.surrogatesmt.optimal_theta)
     if acquisition_type == "LCB":
