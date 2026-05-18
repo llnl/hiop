@@ -316,7 +316,7 @@ if __name__ == "__main__":
   else:
     acqf = EIacquisition(gp_model)
 
-  save_data_dir = 'tmp2/'
+  save_data_dir = 'data05182026/'
   # problems with fixed dim or not
   if problem.name in ["Branin", "Hartmann", "HartmannLike", "Shekel", "SparseActive"]:
     save_data_dir = save_data_dir + problem.name + '/'
@@ -347,12 +347,12 @@ if __name__ == "__main__":
       'LCB_beta': beta,
       'bo_maxiter' : boiter, 
       'batch_size' : batch_size,
-      'opt_solver' : 'BnB',
+      'opt_solver' : 'SLSQP',
       'BnBWarmStart' : bnbwarmstart,
-      'solver_options' : bnb_solver_options,
   }
-  if not BnB:
-    options['opt_solver'] = 'SLSQP'
+  if BnB:
+    options['opt_solver'] = 'BnB'
+    options['solver_options'] = bnb_solver_options 
 
   start_time = time.perf_counter()
   bo = BOAlgorithm(problem, gp_model, x_train, y_train, options=options)
