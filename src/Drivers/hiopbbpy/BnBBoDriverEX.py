@@ -245,6 +245,7 @@ if __name__ == "__main__":
   parser.add_argument("--seed", type=int, default=42, help="random seed")
   parser.add_argument("--problem", type=str, default="Periodic", help="black-box objective") 
   parser.add_argument("--sleeptime", type=float, default=0.0, help="black-box objective sleep time") # default no sleep
+  parser.add_argument("--make_plts", action=argparse.BooleanOptionalAction, type=bool, default=False, help="create plots or not")
   
   args = parser.parse_args()
   nx = args.nx # dimension of the problem
@@ -257,6 +258,7 @@ if __name__ == "__main__":
   randseed = args.seed
   n_samples = args.nsamples 
   problem_name = args.problem
+  make_plts = args.make_plts
   random.seed(randseed)
   np.random.seed(randseed)
   sleep_time = args.sleeptime
@@ -293,7 +295,7 @@ if __name__ == "__main__":
   y_train = problem.evaluate(x_train)
   
   theta = 5  # hyperparameter for GP kernel
-  fix_theta = False
+  fix_theta = True
   theta_bounds = [0.3, 10.]
   pow_exp_power = 2.0
   eval_noise = False
@@ -370,7 +372,7 @@ if __name__ == "__main__":
   if not BnB:
     save_data_dir = save_data_dir + 'multistart_'
 
-  acqf_min_vals = [] 
+  acqf_min_vals = []
   for i in range(boiter):
     x_train2 = x_train_superset[:(-boiter+i)*batch_size]
     y_train2 = problem.evaluate(x_train2)
@@ -383,9 +385,10 @@ if __name__ == "__main__":
       acqf2 = EIacquisition(gp_model2)
     for k in range(batch_size):
       acqf_min_vals.append(acqf2.evaluate(np.atleast_2d(x_bo[i*batch_size + k]))[0][0])
+    if not make_plts:
+      continue
     if nx == 1:
       Y_acqf2 = [acqf2.evaluate(x)[0] for x in X]
-      #y_star2 = acqf2.evaluate(np.atleast_2d(x_bo[i]))
       x_batch = np.array([x_bo[k] for k in range(i*batch_size, (i+1)*batch_size)])
       y_batch = acqf2.evaluate(np.atleast_2d(x_batch))
       plt.plot(X, Y_acqf2,'k--', label=r''+acquisition_type+'$(x)$')
@@ -414,11 +417,6 @@ if __name__ == "__main__":
       plt.xlabel("x")
       plt.savefig(save_data_dir + "dmean" + str(i) + ".png")
       plt.close()
-      #plt.plot(X.flatten(), dvarianceX.flatten())
-      #plt.scatter(x_train2, y_train2, marker='o', s=30, c='magenta', label='training points')
-      #plt.xlabel("x")
-      #plt.savefig(save_data_dir + "dvariance" + str(i) + ".png")
-      #plt.close()
     elif nx == 2: 
       l = problem.xlimits[:, 0].astype(float)
       u = problem.xlimits[:, 1].astype(float)
@@ -435,8 +433,6 @@ if __name__ == "__main__":
       plt.colorbar(label=r'$\varphi(x,y)$, acquisition function')
       plt.savefig(save_data_dir + "acqf_BOit"+str(i)+".png")
       plt.close()
-  print("optimal_thetas = ", optimal_thetas)
-  print("BnB Branches by BO it = ", bo.bnb_num_branch_hist)
   np.savetxt(save_data_dir + 'optimal_thetas.dat', optimal_thetas)
   np.savetxt(save_data_dir + 'bnb_branches.dat', bo.bnb_num_branch_hist)
   np.savetxt(save_data_dir + 'bohist_xpts.dat', x_bo)
@@ -444,7 +440,7 @@ if __name__ == "__main__":
   np.savetxt(save_data_dir + 'init_obj.dat', y_train)
   np.savetxt(save_data_dir + 'bohist_obj.dat', problem.evaluate(x_bo))
   np.savetxt(save_data_dir + 'acqf_min_vals.dat', acqf_min_vals)
-  if nx == 2:
+  if nx == 2 and make_plts:
     l = problem.xlimits[:, 0].astype(float)
     u = problem.xlimits[:, 1].astype(float)
     X1D = [np.linspace(l[i], u[i], 100) for i in range(nx)]
