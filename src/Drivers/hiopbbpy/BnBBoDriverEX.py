@@ -236,7 +236,8 @@ if __name__ == "__main__":
   parser.add_argument("--nx", type=int, default=2, help="dimension of problem")
   parser.add_argument("--boiter", type=int, default=2, help="BO iterations") 
   parser.add_argument("--batchsize", type=int, default=1, help="BO batch size")
-  parser.add_argument("--bnbtol", type=float, default=0.01, help="tolerance for bnb optimizer")
+  parser.add_argument("--bnbtol", type=float, default=0.01, help="abs tolerance for bnb optimizer")
+  parser.add_argument("--relbnbtol", type=float, default=0.01, help="rel tolerance for bnb optimizer")
   parser.add_argument("--bnbmaxiter", type=int, default=1000, help="maximum number of bnb iterations") 
   parser.add_argument("--bnbmaxtime", type=float, default=180., help="maximum time for bnb opt") 
   parser.add_argument("--bnbwarmstart", action=argparse.BooleanOptionalAction, type=bool, default=False, help="warm start BnBBO")
@@ -251,6 +252,7 @@ if __name__ == "__main__":
   nx = args.nx # dimension of the problem
   boiter = args.boiter
   bnbtol = args.bnbtol # tolerance for bnb optimizer
+  relbnbtol = args.relbnbtol
   bnbmaxiter = args.bnbmaxiter
   bnbmaxtime = args.bnbmaxtime
   bnbwarmstart = args.bnbwarmstart
@@ -327,7 +329,8 @@ if __name__ == "__main__":
   Path(save_data_dir).mkdir(parents=True, exist_ok=True)
   bnb_solver_options = {
       'epsilon_prune' : 1.e-12,
-      'epsilon_gap' : bnbtol, 
+      'abs_tol' : bnbtol,
+      'rel_tol' : relbnbtol,
       'epsilon_diam' : bnbtol / 100.,
       'max_iter': bnbmaxiter,
       'max_bnbtime': bnbmaxtime,

@@ -349,6 +349,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
     # Stopping criteria parameters (default)    
     self.epsilon_gap = 1e-3
     self.epsilon_diam = 1e-2
+    self.epsilon_rel_gap = 1.e-2
     self.min_diam = 0.125
     self.epsilon_prune = 1.e-14
     self.max_bnbiter = 2000
@@ -365,10 +366,11 @@ class BnBAlgorithm(BnBAlgorithmBase):
     self.acqf_UB_solver = "SLSQP"
 
     self.early_stopping_heuristics = False
-    self.max_queue_size = 2000
+    self.max_queue_size = 10000
 
     # Set options form command 
-    self.epsilon_gap = options.get('epsilon_gap', self.epsilon_gap)
+    self.epsilon_gap = options.get('abs_tol', self.epsilon_gap)
+    self.epsilon_rel_gap = options.get('rel_tol', self.epsilon_rel_gap)
     self.epsilon_diam = options.get('epsilon_diam', self.epsilon_diam)
     self.epsilon_prune = options.get('epsilon_prune', self.epsilon_prune)
     self.max_bnbiter = options.get('max_iter', self.max_bnbiter)
@@ -523,7 +525,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
       assert len(rhomin) == ntrain
       # \rho_i = max_{x in box} { \rho_i(x) }
       # no need to include these constraints with equality constraint rho_i = ...
-      if True:#opt_mode != 3:
+      if opt_mode != 3:
         cons.append(rhovar <= rhomax)
         cons.append(rhomin <= rhovar)    
       # --- constraints coupling k and rho ---
@@ -997,12 +999,15 @@ class BnBAlgorithm(BnBAlgorithmBase):
 
 
         if updated_LLB_node or updated_LUB_node:
+          f_scale = max(abs(self.best_node.aq_U), abs(self.best_node.aq_L))
           if gap  < self.epsilon_gap:
             print(f"STOP: optimality gap = {gap} < {self.epsilon_gap}")
             break
+          if gap / f_scale < self.epsilon_rel_gap:
+            print(f"STOP: relative optimality gap / max(|node.LB|, |node.UB|) = {gap / f_scale} < {self.epsilon_gap}")
         if self.early_stopping_heuristics:
           if np.linalg.norm(self.best_node.l - self.best_node.u, np.inf) < self.epsilon_gap / 2.:
-            if gap < 0.05 * max(abs(self.best_node.aq_U), abs(self.best_node.aq_L)):
+            if gap < 0.05 * f_scale:
               print("STOP: gap < 5% function value and best node diameter sufficiently small")
               break
         if np.linalg.norm(self.best_node.l - self.best_node.u, np.inf) < self.min_diam:
@@ -1413,7 +1418,7 @@ class branching_wrapper:
       assert len(rhomin) == ntrain
       # \rho_i = max_{x in box} { \rho_i(x) }
       # no need to include these constraints with equality constraint rho_i = ...
-      if True:#opt_mode != 3:
+      if opt_mode != 3:
         cons.append(rhovar <= rhomax)
         cons.append(rhomin <= rhovar)    
       # --- constraints coupling k and rho ---
