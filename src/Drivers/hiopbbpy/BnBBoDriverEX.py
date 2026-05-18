@@ -44,8 +44,8 @@ class QuadraticShift(Problem):
 
 class PeriodicObjective(Problem):
   """
-  f(x) = \sum_{i in dim(x)} \sin(2\pi * x_i)
-  - Global minimizer: x* = (3/8,) * dim(x) + (1/2) * \mathbb{Z}^{dim(x)}
+  f(x) = sum_{i in dim(x)} sin(2*pi * x_i)
+  - Global minimizer: x* = (3/8,) * dim(x) + (1/2) * Z^{dim(x)}
   - Global minimum:   f* = -dim(x)
   """
   def __init__(self, ndim=2, xlimits=None, constraints=[], sleep_time=0.0):
@@ -149,7 +149,7 @@ global minimum -0.981497 at 1.754763 for mode # 8
 """
 class MichalewiczObjective(Problem):
   """
-  f(x) = \sum_{i in dim(x)} \sin(x_i) * [\sin( i * x_{i}^2 / pi)]
+  f(x) = sum_{i in dim(x)} sin(x_i) * [sin( i * x_{i}^2 / pi)]
   """
   def __init__(self, ndim=2, xlimits=None, m=10, constraints=[]):
     if xlimits is None:
@@ -258,6 +258,7 @@ if __name__ == "__main__":
   n_samples = args.nsamples 
   problem_name = args.problem
   random.seed(randseed)
+  np.random.seed(randseed)
   sleep_time = args.sleeptime
 
   acquisition_type = 'LCB' 
@@ -291,18 +292,25 @@ if __name__ == "__main__":
   x_train = problem.sample(n_samples)
   y_train = problem.evaluate(x_train)
   
-  theta = 5.0  # hyperparameter for GP kernel
-  fix_theta = True
+  theta = 5  # hyperparameter for GP kernel
+  fix_theta = False
   theta_bounds = [0.3, 10.]
   pow_exp_power = 2.0
   eval_noise = False
-  gp_model = smtKRG(theta, problem.xlimits, nx, pow_exp_power=pow_exp_power, eval_noise=eval_noise, fix_theta=fix_theta, theta_bounds=theta_bounds)
+
+  hyper_opt="Cobyla" #More robust, derivative-free hyperparameter optimization
+  #hyper_opt="TNC" # Faster/default, but more sensitive
+  # hyper_opt="NoOp" # Freeze theta at theta0, useful for debugging BnB/Clarabel issues
+  if fix_theta:
+    hyper_opt="NoOp"
+  
+  gp_model = smtKRG(theta, problem.xlimits, nx, pow_exp_power=pow_exp_power, eval_noise=eval_noise, fix_theta=fix_theta, theta_bounds=theta_bounds, hyper_opt=hyper_opt)
   gp_model.train(x_train, y_train)
   # initial training without sleep time, then include for batched-BO
   if problem.name in ["Hartmann", "Shekel", "Periodic"]:
     problem.sleep_time = sleep_time
 
-  beta = 3.0
+  beta = 3
   if acquisition_type == 'LCB':
     acqf = LCBacquisition(gp_model, beta=beta)
   else:
@@ -328,6 +336,7 @@ if __name__ == "__main__":
       'save_data_dir' : save_data_dir,
       'acqf_ub_solver': 'IPOPT',
       'min_diameter': 0.001,
+      'random_seed': randseed,
   }
   if problem.name == "Michalewicz":
     bnb_solver_options['min_diameter'] *= np.pi
@@ -365,7 +374,7 @@ if __name__ == "__main__":
   for i in range(boiter):
     x_train2 = x_train_superset[:(-boiter+i)*batch_size]
     y_train2 = problem.evaluate(x_train2)
-    gp_model2 = smtKRG(theta, problem.xlimits, nx, pow_exp_power=pow_exp_power, eval_noise=eval_noise, fix_theta=fix_theta, theta_bounds=theta_bounds)
+    gp_model2 = smtKRG(theta, problem.xlimits, nx, pow_exp_power=pow_exp_power, eval_noise=eval_noise, fix_theta=fix_theta, theta_bounds=theta_bounds, hyper_opt=hyper_opt)
     gp_model2.train(x_train2, y_train2)
     optimal_thetas.append(gp_model2.surrogatesmt.optimal_theta)
     if acquisition_type == "LCB":

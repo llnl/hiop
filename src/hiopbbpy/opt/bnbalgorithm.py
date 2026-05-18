@@ -17,6 +17,7 @@ except ImportError:
 import time
 import math
 import warnings
+import sys
 
 # define the variance upper bound problem
 # these problems are in the form
@@ -382,6 +383,13 @@ class BnBAlgorithm(BnBAlgorithmBase):
     self.saveData = options.get('save_data', self.saveData)
     self.min_diam = options.get('min_diameter', self.min_diam)
     self.early_stopping_heuristics = options.get('early_stopping_heuristics', self.early_stopping_heuristics)
+    self.random_seed = options.get("random_seed", None)
+    if self.random_seed is None:
+      self.rng = np.random.default_rng()
+    else:
+      # Different deterministic stream for each BO iteration
+      self.rng = np.random.default_rng(int(self.random_seed) + 1000003 * int(self.BOit))
+    
     assert self.opt_mode in [0, 1, 2, 3, 4], "unknown opt_mode"
     assert self.acqf_UB_solver in ["SLSQP", "trust-constr", "IPOPT", "MINEVAL"], "invalid acqf ub solver"
     assert isinstance(self.saveData, bool), "save_data is not of type bool"
@@ -439,6 +447,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
     self.X = cp.Variable(ntrain+1) # (z, s), z = C * k
     self.obj2 = self.b_obj2.T @ self.X + self.c_obj2
     # ensure that the matrix is negative semi-definite
+    # //!
     lam, U = np.linalg.eigh(self.A_constraint2)
     lam_neg = np.minimum(lam, -1.e-16 * np.ones(len(lam)))
     self.A_constraint2[:,:] = U.dot(np.diag(lam_neg)).dot(U.T)
@@ -524,14 +533,16 @@ class BnBAlgorithm(BnBAlgorithmBase):
       kMax = np.exp(-rhomin)
       kMin = np.exp(-rhomax)
       # k_i <= secant of k_i(x) over kMin, kMax
+      # //!: I suggest we check and handle small |rhomax-rhomin| 
       cons.append(self.C2 @ self.X <= kMax + cp.atoms.multiply((kMin - kMax) / (rhomax - rhomin),  (rhovar  - rhomin)))
       # ---
       
 
       # \sum_j theta_j * |(x_j - x_j^(i)) / X_scale|^p <= rho_i
       # for p = 1 or 2 is convex
-      if True:#opt_mode < 3:
+      if opt_mode < 3:
         for i in range(ntrain):
+          # Note that this is redundant when opt_mode is 3, being implied by the eq. constraint on rhovar
           cons.append(cp.atoms.norm((xvar-self.x[i]) / ((th**(-1./self.p)) * self.X_scale), p = self.p)**self.p <= rhovar[i])
       if opt_mode == 3:
         assert self.p == 2.0, "opt_mode 3 only supports squared exponential kernel"
@@ -539,6 +550,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
         for i in range(self.x.shape[1]):
           cons.append(wvar[i] >= xvar[i]**2.0)
           cons.append(wvar[i] <= (l[i] + u[i]) * xvar[i] - l[i] * u[i])
+        for i in range(ntrain):
           cons.append(rhovar[i] == cp.atoms.sum(cp.atoms.multiply(th / self.X_scale**self.p, wvar - 2.0 * cp.atoms.multiply(self.x[i], xvar) + self.x[i] * self.x[i]))) 
           #cons.append(rhovar[i] == cp.atoms.sum(cp.atoms.multiply(th / self.X_scale**self.p, wvar - 2.0 * cp.atoms.multiply(self.x[i], xvar) + np.linalg.norm(self.x[i], ord=2.0) ** 2.0)))
 
@@ -554,18 +566,20 @@ class BnBAlgorithm(BnBAlgorithmBase):
               cons.append(rhovar[i] - rhovar[j] <= rhoij_bound)
               cons.append(rhovar[i] - rhovar[j] >= -1.0 * rhoij_bound)
         elif self.p == 2.0:
-          for i in range(ntrain):
-            for j in range(i+1, ntrain):
-              dxji = self.x[j] - self.x[i]
-              mult = 2. * th * dxji / (self.X_scale ** 2.0)
-              shift = np.inner(self.x[i] / self.X_scale, th * self.x[i] / self.X_scale) - np.inner(self.x[j] / self.X_scale, th * self.x[j] / self.X_scale)
-              cons.append(rhovar[i] - rhovar[j] == mult.T @ xvar + shift) 
-              #lo = np.where(dxji >= 0., l, u)
-              #hi = np.where(dxji >= 0., u, l)
-              #rhoij_ubound = 2. * np.inner((hi / self.X_scale), th * dxji / self.X_scale) + np.inner(self.x[i] / self.X_scale, th * self.x[i] / self.X_scale) - np.inner(self.x[j] / self.X_scale, th * self.x[j] / self.X_scale)
-              #rhoij_lbound = 2. * np.inner((lo / self.X_scale), th * dxji / self.X_scale) + np.inner(self.x[i] / self.X_scale, th * self.x[i] / self.X_scale) - np.inner(self.x[j] / self.X_scale, th * self.x[j] / self.X_scale)
-              #cons.append(rhovar[i] - rhovar[j] <= rhoij_ubound)
-              #cons.append(rhovar[i] - rhovar[j] >= rhoij_lbound)
+          if opt_mode<3:
+            for i in range(ntrain):
+              for j in range(i+1, ntrain):
+                dxji = self.x[j] - self.x[i]
+                mult = 2. * th * dxji / (self.X_scale ** 2.0)
+                shift = np.inner(self.x[i] / self.X_scale, th * self.x[i] / self.X_scale) - np.inner(self.x[j] / self.X_scale, th * self.x[j] / self.X_scale)
+                assert opt_mode!=3, " constraint is redundant when opt_mode==3, being implied by the eq. constraint on rhovar"
+                cons.append(rhovar[i] - rhovar[j] == mult.T @ xvar + shift)
+                #lo = np.where(dxji >= 0., l, u)
+                #hi = np.where(dxji >= 0., u, l)
+                #rhoij_ubound = 2. * np.inner((hi / self.X_scale), th * dxji / self.X_scale) + np.inner(self.x[i] / self.X_scale, th * self.x[i] / self.X_scale) - np.inner(self.x[j] / self.X_scale, th * self.x[j] / self.X_scale)
+                #rhoij_lbound = 2. * np.inner((lo / self.X_scale), th * dxji / self.X_scale) + np.inner(self.x[i] / self.X_scale, th * self.x[i] / self.X_scale) - np.inner(self.x[j] / self.X_scale, th * self.x[j] / self.X_scale)
+                #cons.append(rhovar[i] - rhovar[j] <= rhoij_ubound)
+                #cons.append(rhovar[i] - rhovar[j] >= rhoij_lbound)
         
     opt_tol = 1.e-8
     opt_rel_tol = 1.e-8
@@ -579,22 +593,34 @@ class BnBAlgorithm(BnBAlgorithmBase):
         opt_rel_tol = 1.e-4
         verbose = False
       try:
-        if mode == 0: 
-          acqf_L = cp.Problem(cp.Minimize(self.obj2), cons).solve(solver=cp.CLARABEL, verbose=verbose, tol_gap_abs=opt_tol, tol_gap_rel=opt_rel_tol)
+        if mode == 0:
+          prob = cp.Problem(cp.Minimize(self.obj2), cons)
+          if not prob.is_dcp():
+            raise RuntimeError("LCB relaxation is not DCP")
+          
+          acqf_L = prob.solve(solver=cp.CLARABEL, verbose=verbose, tol_gap_abs=opt_tol, tol_gap_rel=opt_rel_tol, max_iter=max_iters)
           #acqf_L = cp.Problem(cp.Minimize(self.obj2), cons).solve(solver=cp.SCS, verbose=verbose, eps_abs=opt_tol, max_iters=max_iters)
+
+          if prob.status != cp.OPTIMAL:
+            if prob.status == cp.OPTIMAL_INACCURATE:
+              # be conservative
+              acqf_L -= 10*opt_tol
+            else:
+              raise RuntimeError("LCB relaxation solver did not return an optimal solution")
         else:
-          sig_U = cp.Problem(cp.Maximize(self.obj3), cons).solve(solver=cp.CLARABEL, verbose=verbose, tol_gap_abs=opt_tol, tol_gap_rel=opt_rel_tol)
-          if not (np.all(rhovar.value >= rhomin) and np.all(rho.value <= rhomax)):
+          sig_U = cp.Problem(cp.Maximize(self.obj3), cons).solve(solver=cp.CLARABEL, verbose=verbose, tol_gap_abs=opt_tol, tol_gap_rel=opt_rel_tol, max_iter=max_iters)
+          if not (np.all(rhovar.value >= rhomin) and np.all(rhovar.value <= rhomax)):
             print("optimal rho not within rho bounds")
           #sig_U = cp.Problem(cp.Maximize(self.obj3), cons).solve(solver=cp.SCS, verbose=verbose, eps_abs=opt_tol, max_iters=max_iters)
         pass
       except Exception as e:
-        print(f"An unexpected error occured: {e}")
+        print(f"WARNING: convex solver at attempt {i+1} returned error: {e}", flush=True)
         if i == 0:
           opt_tol *= 1.e4
         if i == 1:
           opt_tol *= 1.e2
-        print("loosening convex opt tolerance to ", opt_tol)
+        print("WARNING: Loosening convex opt tolerance to ", opt_tol, flush=True)
+
         if mode == 0:
           acqf_L = -np.inf
         else:
@@ -625,7 +651,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
         for i in range(self.opt_mode):
           if not np.isfinite(acqf_L):
             failed_LB_opt = True
-            print("was not able to determine lower-bound in previous mode ", opt_mode, "... switching")
+            print("Warning: was not able to determine lower-bound in previous mode ", opt_mode, "... switching", flush=True)
             opt_mode -= 1
             with warnings.catch_warnings():
               warnings.simplefilter("ignore", category=UserWarning)
@@ -666,7 +692,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
       else: #SLSQP
         opt_solver_options = {'maxiter' : 100, 'tol' : 1.e-5}
       acqf_minimizer = minimizer_wrapper(acqf_callback, self.acqf_UB_solver, box_bounds, constraints, opt_solver_options)
-      alpha = 0.05 + 0.9 * np.random.rand(len(u)) # rand numbers in [0.05, 0.95)
+      alpha = 0.5 #0.05 + 0.9 * self.rng.random(len(u)) # rand numbers in [0.05, 0.95)
       x0 = [alpha * l + (1. - alpha) * u]
       opt_sol = opt_evaluator.run(acqf_minimizer.minimizer_callback, x0)[0]
       if not (np.all(opt_sol[0] >= l) and np.all(opt_sol[0] <= u)):
@@ -675,19 +701,19 @@ class BnBAlgorithm(BnBAlgorithmBase):
       msg = opt_sol[3]
       acqf_solve_success = opt_sol[2]
       if not acqf_solve_success:
-        print(self.acqf_UB_solver + " did not converge on BOX: ", l, u, "... trying again with more verbosity and at another initial point")
-        print(self.acqf_UB_solver + " message: ", msg)
+        print(self.acqf_UB_solver + " did not converge on BOX: ", l, u, "... trying again with more verbosity and at another initial point", flush=True)
+        print(self.acqf_UB_solver + " message: ", msg, flush=True)
         if self.acqf_UB_solver == "IPOPT":
           opt_solver_options = {'max_iter' : 200, 'tol' : 1.e-3, 'honor_original_bounds' : 'yes', 'print_level' : 0, 'sb' : 'yes'}
         else: # SLSQP
           opt_solver_options = {'maxiter' : 200, 'tol' : 1.e-3, 'disp' : True}
         acqf_minimizer = minimizer_wrapper(acqf_callback, self.acqf_UB_solver, box_bounds, constraints, opt_solver_options)
-        alpha = 0.05 + 0.9 * np.random.rand(len(u)) # rand numbers in [0.05, 0.95)
+        alpha = 0.5# 0.05 + 0.9 * self.rng.random(len(u)) # rand numbers in [0.05, 0.95)
         x0 = [alpha * l + (1. - alpha) * u]
         opt_sol = opt_evaluator.run(acqf_minimizer.minimizer_callback, x0)[0]
         acqf_solve_success = opt_sol[2]
         if not acqf_solve_success:
-          print(self.acqf_UB_solver + "failed a second time. Will take the minimum of a small number of acqf function evaluations")
+          print(self.acqf_UB_solver + "failed a second time. Will take the minimum of a small number of acqf function evaluations", flush=True)
       if acqf_solve_success:
         acqf_U = self.acqf.evaluate(np.atleast_2d(opt_sol[0])).flatten()[0]
         acqf_U_x = opt_sol[0]
@@ -709,8 +735,11 @@ class BnBAlgorithm(BnBAlgorithmBase):
       if abs(acqf_U - acqf_L) / abs(acqf_U) < 1.e-4:
         acqf_L = acqf_U - 1.e-8
       else:
-        print("issue with upper and lower-bound computations...")
-        print("acqf_L = {0:1.12e}, acqf_U = {1:1.12e}".format(acqf_L, acqf_U))
+        print("issue with upper and lower-bound computations...", flush=True)
+        print("acqf_L = {0:1.12e}, acqf_U = {1:1.12e}".format(acqf_L, acqf_U), flush=True)
+    #make sure output is flush out to get all the info in case code asserts
+    sys.stdout.flush()
+    sys.stderr.flush()
     assert acqf_L <= acqf_U, "error: computed acquisition function bounds: acqf_U < acqf_L"
     if isinstance(acqf_L, (list, np.ndarray)):
       acqf_L = acqf_L[0]
@@ -869,6 +898,9 @@ class BnBAlgorithm(BnBAlgorithmBase):
         # update best_node via children
         updated_LUB_node = False
         updated_LLB_node = False
+
+        self.LUB = 1e+20#= min([child.aq_L for child in children])
+        
         for child in children:
           if child.aq_U < child.aq_L:
             print("ERROR (acqf_UB < acqf_LB) on box with corners ", child.l, child.u)
@@ -876,20 +908,26 @@ class BnBAlgorithm(BnBAlgorithmBase):
             print("upper-bound = ", child.aq_U)
           assert child.aq_U >= child.aq_L, "ERROR: child upper bound < child lower bound for child"
           if child.aq_U <= self.LUB:
+            print(f"LUB / best node updated: previous {self.LUB}   new {child.aq_U}   LB prev {self.best_node.aq_L}   new{child.aq_L}")
+
             self.LUB = child.aq_U
             self.best_node = child
-            updated_LUB_node = True
+            updated_LUB_node = True            
           if child.aq_L <= self.LLB:
+            print(f"LLB updated: previous {self.LLB}   new {child.aq_L}  child/new UB {child.aq_U}")
             self.LLB = child.aq_L
             updated_LLB_node = True
         if not updated_LLB_node:
-          print("best node not updated")
+          print("LLB not updated")
           if self.pure_BBS and self.synchronous:
-            print("forcing best node update")
+            LLBprev = self.LLB
             self.LLB = min([child.aq_L for child in children])
+            print(f"forcing LLB update previous {LLBprev}  new {self.LLB}")
             updated_LLB_node = True
         else:
-          print("best node updated")
+          print("LLB updated from children")
+          
+        assert self.LUB == self.best_node.aq_U, "ERROR: LUB and best node U got disconnected somehow"
         gap_history.append(self.best_node.aq_U - self.LLB)
         
         # pre-prune
@@ -1003,7 +1041,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
           bbsnodes.append(node)
 
         # parallel branching and upper/lower bound node compuatations
-        brancher = branching_wrapper(self.acqf, LUB = self.LUB, epsilon_prune=self.epsilon_prune, acqf_UB_solver = self.acqf_UB_solver)
+        brancher = branching_wrapper(self.acqf, LUB = self.LUB, epsilon_prune=self.epsilon_prune, acqf_UB_solver = self.acqf_UB_solver, random_seed=self.random_seed if self.random_seed is not None else None, opt_mode=self.opt_mode,)
         bbsnodes = np.array(bbsnodes)
         if len(bbsnodes) > 0:
           self.bbsevaluator.submit_tasks(brancher.callback, bbsnodes)
@@ -1092,7 +1130,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
 
 
 class branching_wrapper:
-  def __init__(self, acqf, LUB=np.inf, epsilon_prune=1.e-14, acqf_UB_solver="SLSQP"):
+  def __init__(self, acqf, LUB=np.inf, epsilon_prune=1.e-14, acqf_UB_solver="SLSQP", random_seed=None, opt_mode=3):
     self.LUB = LUB # least upper bound
     self.epsilon_prune = epsilon_prune
     self.acqf = acqf
@@ -1100,10 +1138,19 @@ class branching_wrapper:
     self.x = self.gpsurrogate.training_x
     self.y = self.gpsurrogate.training_y
     self.acqf_UB_solver = acqf_UB_solver
+
+    self.random_seed = random_seed
+    if random_seed is None:
+      self.rng = np.random.default_rng()
+    else:
+      self.rng = np.random.default_rng(int(random_seed))
+    
     if not (isinstance(self.acqf, LCBacquisition) or isinstance(self.acqf, EIacquisition)):
       raise NotImplementedError("Unrecognized acquisition function type")
     self.sync_from_smt()
     self.cvxpy_problem = None
+
+    self.opt_mode = opt_mode
   
   def sync_from_smt(self):
     sm = self.gpsurrogate.surrogatesmt
@@ -1210,6 +1257,7 @@ class branching_wrapper:
     self.X = cp.Variable(ntrain+1) # (z, s), z = C * k
     self.obj2 = self.b_obj2.T @ self.X + self.c_obj2
     # ensure that the matrix is negative semi-definite
+    # //! 
     lam, U = np.linalg.eigh(self.A_constraint2)
     lam_neg = np.minimum(lam, -1.e-16 * np.ones(len(lam)))
     self.A_constraint2[:,:] = U.dot(np.diag(lam_neg)).dot(U.T)
@@ -1375,14 +1423,16 @@ class branching_wrapper:
       kMax = np.exp(-rhomin)
       kMin = np.exp(-rhomax)
       # k_i <= secant of k_i(x) over kMin, kMax
+      # //!: I suggest we check and handle small |rhomax-rhomin| 
       cons.append(self.C2 @ self.X <= kMax + cp.atoms.multiply((kMin - kMax) / (rhomax - rhomin),  (rhovar  - rhomin)))
       # ---
       
 
       # \sum_j theta_j * |(x_j - x_j^(i)) / X_scale|^p <= rho_i
       # for p = 1 or 2 is convex
-      if True:#opt_mode < 3:
+      if opt_mode < 3:
         for i in range(ntrain):
+          # Note that this is redundant when opt_mode is 3, being implied by the eq. constraint on rhovar
           cons.append(cp.atoms.norm((xvar-self.x[i]) / ((th**(-1./self.p)) * self.X_scale), p = self.p)**self.p <= rhovar[i])
       if opt_mode == 3:
         assert self.p == 2.0, "opt_mode 3 only supports squared exponential kernel"
@@ -1390,6 +1440,7 @@ class branching_wrapper:
         for i in range(self.x.shape[1]):
           cons.append(wvar[i] >= xvar[i]**2.0)
           cons.append(wvar[i] <= (l[i] + u[i]) * xvar[i] - l[i] * u[i])
+        for i in range(ntrain):
           cons.append(rhovar[i] == cp.atoms.sum(cp.atoms.multiply(th / self.X_scale**self.p, wvar - 2.0 * cp.atoms.multiply(self.x[i], xvar) + self.x[i] * self.x[i]))) 
           #cons.append(rhovar[i] == cp.atoms.sum(cp.atoms.multiply(th / self.X_scale**self.p, wvar - 2.0 * cp.atoms.multiply(self.x[i], xvar) + np.linalg.norm(self.x[i], ord=2.0) ** 2.0)))
 
@@ -1405,18 +1456,20 @@ class branching_wrapper:
               cons.append(rhovar[i] - rhovar[j] <= rhoij_bound)
               cons.append(rhovar[i] - rhovar[j] >= -1.0 * rhoij_bound)
         elif self.p == 2.0:
-          for i in range(ntrain):
-            for j in range(i+1, ntrain):
-              dxji = self.x[j] - self.x[i]
-              mult = 2. * th * dxji / (self.X_scale ** 2.0)
-              shift = np.inner(self.x[i] / self.X_scale, th * self.x[i] / self.X_scale) - np.inner(self.x[j] / self.X_scale, th * self.x[j] / self.X_scale)
-              cons.append(rhovar[i] - rhovar[j] == mult.T @ xvar + shift) 
-              #lo = np.where(dxji >= 0., l, u)
-              #hi = np.where(dxji >= 0., u, l)
-              #rhoij_ubound = 2. * np.inner((hi / self.X_scale), th * dxji / self.X_scale) + np.inner(self.x[i] / self.X_scale, th * self.x[i] / self.X_scale) - np.inner(self.x[j] / self.X_scale, th * self.x[j] / self.X_scale)
-              #rhoij_lbound = 2. * np.inner((lo / self.X_scale), th * dxji / self.X_scale) + np.inner(self.x[i] / self.X_scale, th * self.x[i] / self.X_scale) - np.inner(self.x[j] / self.X_scale, th * self.x[j] / self.X_scale)
-              #cons.append(rhovar[i] - rhovar[j] <= rhoij_ubound)
-              #cons.append(rhovar[i] - rhovar[j] >= rhoij_lbound)
+          if opt_mode<3:
+            for i in range(ntrain):
+              for j in range(i+1, ntrain):
+                dxji = self.x[j] - self.x[i]
+                mult = 2. * th * dxji / (self.X_scale ** 2.0)
+                shift = np.inner(self.x[i] / self.X_scale, th * self.x[i] / self.X_scale) - np.inner(self.x[j] / self.X_scale, th * self.x[j] / self.X_scale)
+                assert opt_mode!=3, " constraint is redundant when opt_mode==3, being implied by the eq. constraint on rhovar"
+                cons.append(rhovar[i] - rhovar[j] == mult.T @ xvar + shift)
+                #lo = np.where(dxji >= 0., l, u)
+                #hi = np.where(dxji >= 0., u, l)
+                #rhoij_ubound = 2. * np.inner((hi / self.X_scale), th * dxji / self.X_scale) + np.inner(self.x[i] / self.X_scale, th * self.x[i] / self.X_scale) - np.inner(self.x[j] / self.X_scale, th * self.x[j] / self.X_scale)
+                #rhoij_lbound = 2. * np.inner((lo / self.X_scale), th * dxji / self.X_scale) + np.inner(self.x[i] / self.X_scale, th * self.x[i] / self.X_scale) - np.inner(self.x[j] / self.X_scale, th * self.x[j] / self.X_scale)
+                #cons.append(rhovar[i] - rhovar[j] <= rhoij_ubound)
+                #cons.append(rhovar[i] - rhovar[j] >= rhoij_lbound)
         
     opt_tol = 1.e-8
     opt_rel_tol = 1.e-8
@@ -1430,22 +1483,33 @@ class branching_wrapper:
         opt_rel_tol = 1.e-4
         verbose = False
       try:
-        if mode == 0: 
-          acqf_L = cp.Problem(cp.Minimize(self.obj2), cons).solve(solver=cp.CLARABEL, verbose=verbose, tol_gap_abs=opt_tol, tol_gap_rel=opt_rel_tol)
+        if mode == 0:
+          prob = cp.Problem(cp.Minimize(self.obj2), cons)
+          if not prob.is_dcp():
+            raise RuntimeError("LCB relaxation is not DCP")
+          
+          acqf_L = prob.solve(solver=cp.CLARABEL, verbose=verbose, tol_gap_abs=opt_tol, tol_gap_rel=opt_rel_tol, max_iter=max_iters)
           #acqf_L = cp.Problem(cp.Minimize(self.obj2), cons).solve(solver=cp.SCS, verbose=verbose, eps_abs=opt_tol, max_iters=max_iters)
+
+          if prob.status != cp.OPTIMAL:
+            if prob.status == cp.OPTIMAL_INACCURATE:
+              # be conservative
+              acqf_L -= 10*opt_tol
+            else:
+              raise RuntimeError("LCB relaxation solver did not return an optimal solution")
         else:
-          sig_U = cp.Problem(cp.Maximize(self.obj3), cons).solve(solver=cp.CLARABEL, verbose=verbose, tol_gap_abs=opt_tol, tol_gap_rel=opt_rel_tol)
-          if not (np.all(rhovar.value >= rhomin) and np.all(rho.value <= rhomax)):
+          sig_U = cp.Problem(cp.Maximize(self.obj3), cons).solve(solver=cp.CLARABEL, verbose=verbose, tol_gap_abs=opt_tol, tol_gap_rel=opt_rel_tol, max_iter=max_iters)
+          if not (np.all(rhovar.value >= rhomin) and np.all(rhovar.value <= rhomax)):
             print("optimal rho not within rho bounds")
           #sig_U = cp.Problem(cp.Maximize(self.obj3), cons).solve(solver=cp.SCS, verbose=verbose, eps_abs=opt_tol, max_iters=max_iters)
         pass
       except Exception as e:
-        print(f"An unexpected error occured: {e}")
+        print(f"WARNING: convex solver at attempt {i+1} returned error: {e}", flush=True)
         if i == 0:
           opt_tol *= 1.e4
         if i == 1:
           opt_tol *= 1.e2
-        print("loosening convex opt tolerance to ", opt_tol)
+        print("WARNING: Loosening convex opt tolerance to ", opt_tol, flush=True)
         if mode == 0:
           acqf_L = -np.inf
         else:
@@ -1480,7 +1544,7 @@ class branching_wrapper:
         for i in range(self.opt_mode):
           if not np.isfinite(acqf_L):
             failed_LB_opt = True
-            print("was not able to determine lower-bound in previous mode ", opt_mode, "... switching")
+            print("WARNING: was not able to determine lower-bound in previous mode ", opt_mode, "... switching", flush=True)
             opt_mode -= 1
             with warnings.catch_warnings():
               warnings.simplefilter("ignore", category=UserWarning)
@@ -1493,9 +1557,10 @@ class branching_wrapper:
       else:
         acqf_L = -np.inf 
         failed_LB_opt = False
+
     if not isinstance(self.acqf, LCBacquisition) or failed_LB_opt:
       # mean bounds
-      print("acqf LB via sig UB")
+      print("acqf LB via sig UB", flush=True)
       mu_L, mu_U = self.mu_bounds(kL, kU)
       sig_L = self.sig_LB(kL, kU, l=l, u=u)
       with warnings.catch_warnings():
@@ -1515,6 +1580,7 @@ class branching_wrapper:
       acqf_bounds = self.acqf.evaluate_meansig2(mu, var)
       acqf_L = acqf_bounds[0]
     LB_end_time = time.time()
+
     #print("lower-bound compute cumulative time = ", LB_end_time - LB_start_time)
     acqf_solve_success = False 
     UB_start_time = time.time()
@@ -1526,30 +1592,30 @@ class branching_wrapper:
         acqf_callback['grad'] = self.acqf.scalar_eval_g
       opt_evaluator = Evaluator()
       if self.acqf_UB_solver == "IPOPT": 
-        opt_solver_options = {'max_iter' : 100, 'tol' : 1.e-5, 'honor_original_bounds' : 'yes', 'print_level' : 0, 'sb' : 'yes'}
+        opt_solver_options = {'max_iter' : 100, 'tol' : 1.e-6, 'honor_original_bounds' : 'yes', 'print_level' : 0, 'sb' : 'yes'}
       else: #SLSQP
         opt_solver_options = {'maxiter' : 100, 'tol' : 1.e-5}
       acqf_minimizer = minimizer_wrapper(acqf_callback, self.acqf_UB_solver, box_bounds, constraints, opt_solver_options)
-      alpha = 0.05 + 0.9 * np.random.rand(len(u)) # rand numbers in [0.05, 0.95)
+      alpha = 0.5 #0.05 + 0.9 * self.rng.random(len(u)) # rand numbers in [0.05, 0.95)
       x0 = [alpha * l + (1. - alpha) * u]
       UBi_start_time = time.time()
       opt_sol = opt_evaluator.run(acqf_minimizer.minimizer_callback, x0)[0]
       UBi_end_time = time.time()
       #print("upper-bound comp attempt time = ", UBi_end_time - UBi_start_time)
       if not (np.all(opt_sol[0] >= l) and np.all(opt_sol[0] <= u)):
-        print(f"optimizer {opt_sol[0]} not within prescribed bounds: {l}, {u}")
+        print(f"WARNING: optimizer {opt_sol[0]} not within prescribed bounds: {l}, {u}")
       assert (np.all(opt_sol[0] >= l) and np.all(opt_sol[0] <= u)), f"acqf minimizer not within bounds"
       msg = opt_sol[3]
       acqf_solve_success = opt_sol[2]
       if not acqf_solve_success:
-        print(self.acqf_UB_solver + " did not converge on BOX: ", l, u, "... trying again with more verbosity and at another initial point")
-        print(self.acqf_UB_solver + " message: ", msg)
+        print("WARNING: " + self.acqf_UB_solver + " did not converge on BOX: ", l, u, "... trying again with more verbosity and relaxed tol", flush=True)
+        print("WARNING: " + self.acqf_UB_solver + " message: ", msg, flush=True)
         if self.acqf_UB_solver == "IPOPT":
           opt_solver_options = {'max_iter' : 200, 'tol' : 1.e-3, 'honor_original_bounds' : 'yes', 'print_level' : 0, 'sb' : 'yes'}
         else: # SLSQP
           opt_solver_options = {'maxiter' : 200, 'tol' : 1.e-3, 'disp' : True}
         acqf_minimizer = minimizer_wrapper(acqf_callback, self.acqf_UB_solver, box_bounds, constraints, opt_solver_options)
-        alpha = 0.05 + 0.9 * np.random.rand(len(u)) # rand numbers in [0.05, 0.95)
+        alpha = 0.5 #0.05 + 0.9 * self.rng.random(len(u)) # rand numbers in [0.05, 0.95)
         x0 = [alpha * l + (1. - alpha) * u]
         UBi_start_time = time.time()
         opt_sol = opt_evaluator.run(acqf_minimizer.minimizer_callback, x0)[0]
@@ -1557,10 +1623,15 @@ class branching_wrapper:
         #print("upper-bound comp attempt time = ", UBi_end_time - UBi_start_time)
         acqf_solve_success = opt_sol[2]
         if not acqf_solve_success:
-          print(self.acqf_UB_solver + "failed a second time. Will take the minimum of a small number of acqf function evaluations")
+          print("WARNING: "+ self.acqf_UB_solver + "failed a second time. Will take the minimum of a small number of acqf function evaluations", flush=True)
       if acqf_solve_success:
         acqf_U = self.acqf.evaluate(np.atleast_2d(opt_sol[0])).flatten()[0]
+        #print(f"Upper bound from evaluator {acqf_U} from ipopt {opt_sol[1]}")
+        #print("   optimal x:", opt_sol[0])
+        #print("   l:", l)
+        #print("   u:", u, flush=True)
         acqf_U_x = opt_sol[0]
+
     # evaluate the acquisition over a skeleton of the box
     # and choose the smallest value as the upper bound
     # of the minimum over the box
@@ -1577,12 +1648,17 @@ class branching_wrapper:
       min_arg = np.argmin(acqf_eval.flatten())
       acqf_U_x = x_points[min_arg]
       acqf_U = acqf_eval[min_arg]
+
+
     if acqf_L > acqf_U:
-      if abs(acqf_U - acqf_L) / abs(acqf_U) < 1.e-6:
-        acqf_L = acqf_U - 1.e-8
+      if abs(acqf_U - acqf_L) / (1+abs(acqf_U)) < 1.e-4:
+        acqf_L = acqf_U - 1.e-4
+        #acqf_U = acqf_L + 1.e-8
+        print("WARNING: small error in between lower and upper bounds, keeping U")
       else:
-        print("issue with upper and lower-bound computations...")
-        print("acqf_L = {0:1.12e}, acqf_U = {1:1.12e}".format(acqf_L, acqf_U))
+        print("WARNING: issue with upper and lower-bound computations...", flush=True)
+        print("WARNING: acqf_L = {0:1.16e}, acqf_U = {1:1.16e}".format(acqf_L, acqf_U), flush=True)
+        
     assert acqf_L <= acqf_U, "error: computed acquisition function bounds: acqf_U < acqf_L"
     if isinstance(acqf_L, (list, np.ndarray)):
       acqf_L = acqf_L[0]

@@ -335,7 +335,7 @@ class BOAlgorithm(BOAlgorithmBase):
           x_new.append(best_xopt)
         elif n_clusters > 1:
           assert len(bnb_nodes) >= n_clusters, "not enough BnB nodes to acquire requested number of batch points"
-          kmeans = KMeans(n_clusters=n_clusters, init='k-means++', n_init='auto', random_state=42)
+          kmeans = KMeans(n_clusters=n_clusters, init='k-means++', n_init='auto', random_state=self.solver_options.get("random_seed", 42))
           cluster_labels = kmeans.fit_predict(node_pts)
           clusters = [[node_pts[i] for i, val in enumerate(cluster_labels) if val == lbl] for lbl in range(n_clusters)]
           UBs_by_cluster = [[bnb_nodes[i].aq_U for i, val in enumerate(cluster_labels) if val == lbl] for lbl in range(n_clusters)]
