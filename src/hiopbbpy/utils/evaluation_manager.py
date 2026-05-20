@@ -117,6 +117,11 @@ class EvaluationManager:
     self.profiling = profiling
     self._first_submit_time = None
 
+    # Store timing data if profiling is enabled
+    self._execution_times = [] if profiling else None
+    self._wait_times = [] if profiling else None
+    self._turnaround_times = [] if profiling else None
+
     self.logger.info(f"{self.task_name} EvaluationManager initialized with executors:")
     for key, executor in self.executors.items():
       self.logger.info(f"  - {key}: {executor}")
@@ -188,7 +193,11 @@ class EvaluationManager:
       wait(futures)
 
       with self._queue_lock:
-        self._harvest_completed_locked()
+        self._harvest_completed_locked(
+          execution_times=self._execution_times,
+          wait_times=self._wait_times,
+          turnaround_times=self._turnaround_times
+        )
 
   def submit_tasks(self, fn, X, execute_at=None, **kwargs) -> None:
     """Submit tasks to the specified executor.
@@ -239,18 +248,15 @@ class EvaluationManager:
       Inputs and corresponding results for completed tasks. If a task
       failed or was cancelled, its result entry is ``None``.
     """
-    execution_times = []
-    wait_times = []
-    turnaround_times = []
-
     # Master-side wall clock for the whole batch
     batch_done_time = time.perf_counter()
 
     with self._queue_lock:
+      # Harvest any remaining completed tasks
       self._harvest_completed_locked(
-            execution_times=execution_times,
-            wait_times=wait_times,
-            turnaround_times=turnaround_times,
+            execution_times=self._execution_times,
+            wait_times=self._wait_times,
+            turnaround_times=self._turnaround_times,
       )
 
       X = list(self._completed_X)
@@ -258,8 +264,20 @@ class EvaluationManager:
       self._completed_X.clear()
       self._completed_F.clear()
 
+    # Use the stored timing data collected during all harvests
+    execution_times = self._execution_times or []
+    wait_times = self._wait_times or []
+    turnaround_times = self._turnaround_times or []
+
+    if self.profiling:
+      print(f"\nDEBUG: Profiling enabled, collected {len(execution_times)} execution times", flush=True)
+      if execution_times:
+        self._print_timing_stats(f"{self.task_name} Execution times", execution_times)
+      else:
+        print(f"WARNING: Profiling enabled but no execution times collected!", flush=True)
+
     if self.profiling and execution_times:
-      self._print_timing_stats(f"{self.task_name} Execution times", execution_times)
+      pass  # Timing stats already printed above
 
       # Optional: only print these if you are comfortable with cross-clock values
       # self._print_timing_stats("Wait times", wait_times)
@@ -277,11 +295,17 @@ class EvaluationManager:
           if self._first_submit_time is not None else 0.0
       )
 
-      print("\n=== Parallel Performance ===")
-      print(f"{self.task_name} Workers:                                     {num_workers}")
-      print(f"{self.task_name} Total work in seconds:                       {total_work:.6e}")
-      print(f"{self.task_name} Ideal walltime in seconds (perfect balance): {ideal_walltime:.6e}")
-      print(f"{self.task_name} Actual walltime in seconds (observed):       {actual_walltime:.6e}")
+      print("\n=== Parallel Performance ===", flush=True)
+      print(f"{self.task_name} Workers:                                     {num_workers}", flush=True)
+      print(f"{self.task_name} Total work in seconds:                       {total_work:.6e}", flush=True)
+      print(f"{self.task_name} Ideal walltime in seconds (perfect balance): {ideal_walltime:.6e}", flush=True)
+      print(f"{self.task_name} Actual walltime in seconds (observed):       {actual_walltime:.6e}", flush=True)
+
+    # Clear timing data for next batch
+    if self.profiling:
+      self._execution_times.clear()
+      self._wait_times.clear()
+      self._turnaround_times.clear()
 
     self._first_submit_time = None
     return X, F
@@ -310,22 +334,28 @@ class EvaluationManager:
           fx = future.result()
 
           if self.profiling:
-            worker_start_time = fx["start_time"]
-            worker_done_time = fx["done_time"]
-            execution_time = fx["execution_time"]
+            # Check if fx is a timing dict (from _timed_call)
+            if isinstance(fx, dict) and "start_time" in fx:
+              worker_start_time = fx["start_time"]
+              worker_done_time = fx["done_time"]
+              execution_time = fx["execution_time"]
 
-            # These are OK for local runs, but can be unreliable across nodes
-            wait_time = worker_start_time - submit_time
-            turnaround_time = worker_done_time - submit_time
+              # These are OK for local runs, but can be unreliable across nodes
+              wait_time = worker_start_time - submit_time
+              turnaround_time = worker_done_time - submit_time
 
-            if execution_times is not None:
-              execution_times.append(execution_time)
-            if wait_times is not None:
-              wait_times.append(wait_time)
-            if turnaround_times is not None:
-              turnaround_times.append(turnaround_time)
+              if execution_times is not None:
+                execution_times.append(execution_time)
+              if wait_times is not None:
+                wait_times.append(wait_time)
+              if turnaround_times is not None:
+                turnaround_times.append(turnaround_time)
 
-            fx = fx["result"]
+              fx = fx["result"]
+            else:
+              # Profiling enabled but result is not a timing dict
+              # This happens when function is wrapped (e.g., by MPIEvaluator)
+              print(f"DEBUG: Profiling enabled but result type is {type(fx)}, not a timing dict", flush=True)
 
           self._completed_F[-1] = fx
           self.logger.info(f"{self.task_name} Completed: f({x}) = {fx}")

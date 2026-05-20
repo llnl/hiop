@@ -153,6 +153,10 @@ class MPIEvaluator(Evaluator):
       print(f"Submitted task {i + 1}", flush=True)
 
     self.manager.sync()
+    print(f"\n{'='*50}")
+    print(f"Retrieving results for {self.manager.task_name}...")
+    print(f"Profiling enabled: {self.manager.profiling}")
+    print(f"{'='*50}\n", flush=True)
     Xout, Fout = self.manager.retrieve_results()
 
     # restore original order using returned indices
@@ -160,6 +164,8 @@ class MPIEvaluator(Evaluator):
     for out in Fout:
       if out is None:
         continue
+      # Handle profiling case where _run_indexed_fun returns (idx, result)
+      # but result might be a timing dict if profiling is enabled
       idx, val = out
       ordered[idx] = val
 
