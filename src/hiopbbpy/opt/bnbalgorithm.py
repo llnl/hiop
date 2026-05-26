@@ -503,10 +503,12 @@ class BnBAlgorithm(BnBAlgorithmBase):
        mode: 1 --> convex relaxation for maximum of variance        
     """
     assert mode in [0, 1], "mode can only be in 0, 1"
-    assert opt_mode in [0, 1, 2, 3], "opt mode can only be 0, 1, 2, or 3"
+    assert opt_mode in [0, 1, 2, 3, 4], "opt mode can only be 0, 1, 2, or 3"
     # opt_mode = 0 (previous baseline w ratio constraints)
     # opt_mode = 1 (Convex relaxation w no ratio constraints on k and no affine constraints)
-    # opt_mode = 2 (Most recent relaxation w ratio constraints and affine constraints
+    # opt_mode = 2 (Most recent relaxation w ratio constraints and affine constraints)
+    # opt_mode = 3 (Relaxation in w)
+    # opt_mode = 4 (opt_mode 3 but with alternative to ratio constraints on k)
     cons = [self.C2 @ self.X >= kL, self.C2 @ self.X <= kU, self.cons2 >= 0, self.en1 @ self.X >= 0]
     if opt_mode != 0:
       # add x optimization variable constrained to box: l <= x <= u
@@ -525,15 +527,16 @@ class BnBAlgorithm(BnBAlgorithmBase):
       assert len(rhomin) == ntrain
       # \rho_i = max_{x in box} { \rho_i(x) }
       # no need to include these constraints with equality constraint rho_i = ...
-      if opt_mode != 3:
-        cons.append(rhovar <= rhomax)
-        cons.append(rhomin <= rhovar)    
+      cons.append(rhovar <= rhomax) # pre w-relaxation bounds
+      #cons.append(rhomin <= rhovar)    
       # --- constraints coupling k and rho ---
-      # k_i => exp(-\rho_i / xscale)
+      # k_i => exp(-\rho_i)
       for i in range(ntrain):
         cons.append((self.C2 @ self.X)[i] >= cp.atoms.exp(-rhovar[i]))
       kMax = np.exp(-rhomin)
       kMin = np.exp(-rhomax)
+      #cons.append(kMin <= self.C2 @ self.X) implied by rhovar <= rhomax
+      cons.append(self.C2 @ self.X <= kMax) # pre-secant relaxation
       # k_i <= secant of k_i(x) over kMin, kMax
       # //!: I suggest we check and handle small |rhomax-rhomin| 
       cons.append(self.C2 @ self.X <= kMax + cp.atoms.multiply((kMin - kMax) / (rhomax - rhomin),  (rhovar  - rhomin)))
@@ -546,7 +549,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
         for i in range(ntrain):
           # Note that this is redundant when opt_mode is 3, being implied by the eq. constraint on rhovar
           cons.append(cp.atoms.norm((xvar-self.x[i]) / ((th**(-1./self.p)) * self.X_scale), p = self.p)**self.p <= rhovar[i])
-      if opt_mode == 3:
+      if opt_mode >= 3:
         assert self.p == 2.0, "opt_mode 3 only supports squared exponential kernel"
         wvar = cp.Variable(self.x.shape[1])
         for i in range(self.x.shape[1]):
@@ -554,7 +557,6 @@ class BnBAlgorithm(BnBAlgorithmBase):
           cons.append(wvar[i] <= (l[i] + u[i]) * xvar[i] - l[i] * u[i])
         for i in range(ntrain):
           cons.append(rhovar[i] == cp.atoms.sum(cp.atoms.multiply(th / self.X_scale**self.p, wvar - 2.0 * cp.atoms.multiply(self.x[i], xvar) + self.x[i] * self.x[i]))) 
-          #cons.append(rhovar[i] == cp.atoms.sum(cp.atoms.multiply(th / self.X_scale**self.p, wvar - 2.0 * cp.atoms.multiply(self.x[i], xvar) + np.linalg.norm(self.x[i], ord=2.0) ** 2.0)))
 
 
       # --- constraints ---
@@ -576,12 +578,71 @@ class BnBAlgorithm(BnBAlgorithmBase):
                 shift = np.inner(self.x[i] / self.X_scale, th * self.x[i] / self.X_scale) - np.inner(self.x[j] / self.X_scale, th * self.x[j] / self.X_scale)
                 assert opt_mode!=3, " constraint is redundant when opt_mode==3, being implied by the eq. constraint on rhovar"
                 cons.append(rhovar[i] - rhovar[j] == mult.T @ xvar + shift)
-                #lo = np.where(dxji >= 0., l, u)
-                #hi = np.where(dxji >= 0., u, l)
-                #rhoij_ubound = 2. * np.inner((hi / self.X_scale), th * dxji / self.X_scale) + np.inner(self.x[i] / self.X_scale, th * self.x[i] / self.X_scale) - np.inner(self.x[j] / self.X_scale, th * self.x[j] / self.X_scale)
-                #rhoij_lbound = 2. * np.inner((lo / self.X_scale), th * dxji / self.X_scale) + np.inner(self.x[i] / self.X_scale, th * self.x[i] / self.X_scale) - np.inner(self.x[j] / self.X_scale, th * self.x[j] / self.X_scale)
+          elif opt_mode == 3:
+            for i in range(ntrain):
+              for j in range(i+1, ntrain):
+                dxji = self.x[j] - self.x[i]
+                lo = np.where(dxji >= 0., l, u)
+                hi = np.where(dxji >= 0., u, l)
+                # rhoij_lbound <= rho_i - rho_j <= rhoij_ubound
+                # k_i <= k_j * exp(-1 * rhoij_lbound)
+                # k_i >= k_j * exp(-1 * rhoij_ubound)
+                rhoij_ubound = 2. * np.inner((hi / self.X_scale), th * dxji / self.X_scale) + np.inner(self.x[i] / self.X_scale, th * self.x[i] / self.X_scale) - np.inner(self.x[j] / self.X_scale, th * self.x[j] / self.X_scale)
+                rhoij_lbound = 2. * np.inner((lo / self.X_scale), th * dxji / self.X_scale) + np.inner(self.x[i] / self.X_scale, th * self.x[i] / self.X_scale) - np.inner(self.x[j] / self.X_scale, th * self.x[j] / self.X_scale)
+                kij_ubound = np.exp(-1. * rhoij_lbound)
+                kij_lbound = np.exp(-1. * rhoij_ubound)
+                #print("kij_ubound = ", kij_ubound)
+                #print("kij_lbound = ", kij_lbound)
+                
+                if not ((kij_ubound <= 1.e3 and kij_ubound >= 1.e-3) and (kij_lbound <= 1.e3 and kij_lbound >= 1.e-3)):
+                  continue
                 #cons.append(rhovar[i] - rhovar[j] <= rhoij_ubound)
                 #cons.append(rhovar[i] - rhovar[j] >= rhoij_lbound)
+                # it is more important that we place bounds on k than rho
+                cons.append((self.C2 @ self.X)[i] <= (self.C2 @ self.X)[j] * kij_ubound)
+                cons.append((self.C2 @ self.X)[i] >= (self.C2 @ self.X)[j] * kij_lbound)
+        else: # opt_mode 4
+          qvar = cp.Variable(int((ntrain * (ntrain -1) ) /2))
+          dvar = cp.Variable(int((ntrain * (ntrain -1) ) /2))
+          k = 0
+          for i in range(ntrain):
+            for j in range(i+1, ntrain):
+              # d = 2 x^\top \Theta (x^{(j)} - x^{(i)}) + ||x^{(i)}||_{\Theta}^2 - ||x^{(j)}||_{\Theta}^2 
+              cons.append(dvar[k] == cp.atoms.sum(cp.atoms.multiply(th / self.X_scale**self.p, 2.0 * cp.atoms.multiply(xvar, self.x[j] - self.x[i]) + self.x[i] * self.x[i] - self.x[j] * self.x[j]))) 
+              # q >= exp(d)
+              cons.append(qvar[k] >= cp.atoms.exp(-1.0 * dvar[k]))
+              # --- begin d secant constraint ---
+              
+              dxji = self.x[j] - self.x[i]
+              lo = np.where(dxji >= 0., l, u)
+              hi = np.where(dxji >= 0., u, l)
+              # rhoij_lbound <= rho_i - rho_j <= rhoij_ubound
+              # k_i <= k_j * exp(-1 * rhoij_lbound)
+              # k_i >= k_j * exp(-1 * rhoij_ubound)
+              d_ubound = 2. * np.inner((hi / self.X_scale), th * dxji / self.X_scale) + np.inner(self.x[i] / self.X_scale, th * self.x[i] / self.X_scale) - np.inner(self.x[j] / self.X_scale, th * self.x[j] / self.X_scale)
+              d_lbound = 2. * np.inner((lo / self.X_scale), th * dxji / self.X_scale) + np.inner(self.x[i] / self.X_scale, th * self.x[i] / self.X_scale) - np.inner(self.x[j] / self.X_scale, th * self.x[j] / self.X_scale)
+              q_ubound = np.exp(-1.0 * d_lbound)
+              q_lbound = np.exp(-1.0 * d_ubound)       
+              cons.append(qvar[k] <= q_ubound + ((q_lbound - q_ubound) / (d_ubound - d_lbound)) * (dvar[k] - d_lbound))
+              # --- end d secant constraint ---
+
+              # McCormick relaxation on product k_i = q_k * k_j
+              # z = x * y
+              # z >= x_l y + x * y_l - x_l * y_l
+              # z >= x_u y + x * y_u - x_u * y_u
+              # z <= x_u y + x * y_l - x_u * y_l
+              # z <= x_l * y + x * y_u - x_l * y_u
+              cons.append((self.C2 @ self.X)[i] >= q_lbound * (self.C2 @ self.X)[j] + qvar[k] * kMin[j] - q_lbound * kMin[j])
+              cons.append((self.C2 @ self.X)[i] >= q_ubound * (self.C2 @ self.X)[j] + qvar[k] * kMax[j] - q_ubound * kMax[j])
+              cons.append((self.C2 @ self.X)[i] <= q_ubound * (self.C2 @ self.X)[j] + qvar[k] * kMin[j] - q_ubound * kMin[j])
+              cons.append((self.C2 @ self.X)[i] <= q_lbound * (self.C2 @ self.X)[j] + qvar[k] * kMax[j] - q_lbound * kMax[j])
+              # ---- end McCormick relaxation on product k_i = q_k * k_j
+              
+              # add additional bound constraints on on d
+              cons.append(dvar[k] <= d_ubound)
+              cons.append(d_lbound <= dvar[k])
+              k = k + 1
+
         
     opt_tol = 1.e-8
     opt_rel_tol = 1.e-8
@@ -1389,17 +1450,18 @@ class branching_wrapper:
       S2 = self.gpsurrogate.variance(x)
       s2_L = min(S2.flatten())
     return np.sqrt(s2_L)
-  
   def convex_relaxation(self, l, u, kL, kU, opt_mode=2, mode=0):
     """
        mode: 0 --> convex relaxation for minimum of LCB acquisition function
        mode: 1 --> convex relaxation for maximum of variance        
     """
     assert mode in [0, 1], "mode can only be in 0, 1"
-    assert opt_mode in [0, 1, 2, 3], "opt mode can only be 0, 1, 2, or 3"
+    assert opt_mode in [0, 1, 2, 3, 4], "opt mode can only be 0, 1, 2, or 3"
     # opt_mode = 0 (previous baseline w ratio constraints)
     # opt_mode = 1 (Convex relaxation w no ratio constraints on k and no affine constraints)
-    # opt_mode = 2 (Most recent relaxation w ratio constraints and affine constraints
+    # opt_mode = 2 (Most recent relaxation w ratio constraints and affine constraints)
+    # opt_mode = 3 (Relaxation in w)
+    # opt_mode = 4 (opt_mode 3 but with alternative to ratio constraints on k)
     cons = [self.C2 @ self.X >= kL, self.C2 @ self.X <= kU, self.cons2 >= 0, self.en1 @ self.X >= 0]
     if opt_mode != 0:
       # add x optimization variable constrained to box: l <= x <= u
@@ -1418,15 +1480,16 @@ class branching_wrapper:
       assert len(rhomin) == ntrain
       # \rho_i = max_{x in box} { \rho_i(x) }
       # no need to include these constraints with equality constraint rho_i = ...
-      if opt_mode != 3:
-        cons.append(rhovar <= rhomax)
-        cons.append(rhomin <= rhovar)    
+      cons.append(rhovar <= rhomax) # pre w-relaxation bounds
+      #cons.append(rhomin <= rhovar)    
       # --- constraints coupling k and rho ---
-      # k_i => exp(-\rho_i / xscale)
+      # k_i => exp(-\rho_i)
       for i in range(ntrain):
         cons.append((self.C2 @ self.X)[i] >= cp.atoms.exp(-rhovar[i]))
       kMax = np.exp(-rhomin)
       kMin = np.exp(-rhomax)
+      #cons.append(kMin <= self.C2 @ self.X) implied by rhovar <= rhomax
+      cons.append(self.C2 @ self.X <= kMax) # pre-secant relaxation
       # k_i <= secant of k_i(x) over kMin, kMax
       # //!: I suggest we check and handle small |rhomax-rhomin| 
       cons.append(self.C2 @ self.X <= kMax + cp.atoms.multiply((kMin - kMax) / (rhomax - rhomin),  (rhovar  - rhomin)))
@@ -1439,7 +1502,7 @@ class branching_wrapper:
         for i in range(ntrain):
           # Note that this is redundant when opt_mode is 3, being implied by the eq. constraint on rhovar
           cons.append(cp.atoms.norm((xvar-self.x[i]) / ((th**(-1./self.p)) * self.X_scale), p = self.p)**self.p <= rhovar[i])
-      if opt_mode == 3:
+      if opt_mode >= 3:
         assert self.p == 2.0, "opt_mode 3 only supports squared exponential kernel"
         wvar = cp.Variable(self.x.shape[1])
         for i in range(self.x.shape[1]):
@@ -1447,7 +1510,6 @@ class branching_wrapper:
           cons.append(wvar[i] <= (l[i] + u[i]) * xvar[i] - l[i] * u[i])
         for i in range(ntrain):
           cons.append(rhovar[i] == cp.atoms.sum(cp.atoms.multiply(th / self.X_scale**self.p, wvar - 2.0 * cp.atoms.multiply(self.x[i], xvar) + self.x[i] * self.x[i]))) 
-          #cons.append(rhovar[i] == cp.atoms.sum(cp.atoms.multiply(th / self.X_scale**self.p, wvar - 2.0 * cp.atoms.multiply(self.x[i], xvar) + np.linalg.norm(self.x[i], ord=2.0) ** 2.0)))
 
 
       # --- constraints ---
@@ -1469,12 +1531,76 @@ class branching_wrapper:
                 shift = np.inner(self.x[i] / self.X_scale, th * self.x[i] / self.X_scale) - np.inner(self.x[j] / self.X_scale, th * self.x[j] / self.X_scale)
                 assert opt_mode!=3, " constraint is redundant when opt_mode==3, being implied by the eq. constraint on rhovar"
                 cons.append(rhovar[i] - rhovar[j] == mult.T @ xvar + shift)
-                #lo = np.where(dxji >= 0., l, u)
-                #hi = np.where(dxji >= 0., u, l)
-                #rhoij_ubound = 2. * np.inner((hi / self.X_scale), th * dxji / self.X_scale) + np.inner(self.x[i] / self.X_scale, th * self.x[i] / self.X_scale) - np.inner(self.x[j] / self.X_scale, th * self.x[j] / self.X_scale)
-                #rhoij_lbound = 2. * np.inner((lo / self.X_scale), th * dxji / self.X_scale) + np.inner(self.x[i] / self.X_scale, th * self.x[i] / self.X_scale) - np.inner(self.x[j] / self.X_scale, th * self.x[j] / self.X_scale)
+          elif opt_mode == 3:
+            for i in range(ntrain):
+              for j in range(i+1, ntrain):
+                dxji = self.x[j] - self.x[i]
+                lo = np.where(dxji >= 0., l, u)
+                hi = np.where(dxji >= 0., u, l)
+                # rhoij_lbound <= rho_i - rho_j <= rhoij_ubound
+                # k_i <= k_j * exp(-1 * rhoij_lbound)
+                # k_i >= k_j * exp(-1 * rhoij_ubound)
+                rhoij_ubound = 2. * np.inner((hi / self.X_scale), th * dxji / self.X_scale) + np.inner(self.x[i] / self.X_scale, th * self.x[i] / self.X_scale) - np.inner(self.x[j] / self.X_scale, th * self.x[j] / self.X_scale)
+                rhoij_lbound = 2. * np.inner((lo / self.X_scale), th * dxji / self.X_scale) + np.inner(self.x[i] / self.X_scale, th * self.x[i] / self.X_scale) - np.inner(self.x[j] / self.X_scale, th * self.x[j] / self.X_scale)
+                kij_ubound = np.exp(-1. * rhoij_lbound)
+                kij_lbound = np.exp(-1. * rhoij_ubound)
+                #print("kij_ubound = ", kij_ubound)
+                #print("kij_lbound = ", kij_lbound)
+                
+                if not ((kij_ubound <= 1.e3 and kij_ubound >= 1.e-3) and (kij_lbound <= 1.e3 and kij_lbound >= 1.e-3)):
+                  continue
                 #cons.append(rhovar[i] - rhovar[j] <= rhoij_ubound)
                 #cons.append(rhovar[i] - rhovar[j] >= rhoij_lbound)
+                # it is more important that we place bounds on k than rho
+                cons.append((self.C2 @ self.X)[i] <= (self.C2 @ self.X)[j] * kij_ubound)
+                cons.append((self.C2 @ self.X)[i] >= (self.C2 @ self.X)[j] * kij_lbound)
+        else: # opt_mode 4
+          qvar = cp.Variable(int((ntrain * (ntrain -1) ) /2))
+          dvar = cp.Variable(int((ntrain * (ntrain -1) ) /2))
+          k = 0
+          for i in range(ntrain):
+            for j in range(i+1, ntrain):
+              # d = 2 x^\top \Theta (x^{(j)} - x^{(i)}) + ||x^{(i)}||_{\Theta}^2 - ||x^{(j)}||_{\Theta}^2 
+              cons.append(dvar[k] == cp.atoms.sum(cp.atoms.multiply(th / self.X_scale**self.p, 2.0 * cp.atoms.multiply(xvar, self.x[j] - self.x[i]) + self.x[i] * self.x[i] - self.x[j] * self.x[j]))) 
+              # q >= exp(d)
+              cons.append(qvar[k] >= cp.atoms.exp(-1.0 * dvar[k]))
+              # --- begin d secant constraint ---
+              
+              dxji = self.x[j] - self.x[i]
+              lo = np.where(dxji >= 0., l, u)
+              hi = np.where(dxji >= 0., u, l)
+              # rhoij_lbound <= rho_i - rho_j <= rhoij_ubound
+              # k_i <= k_j * exp(-1 * rhoij_lbound)
+              # k_i >= k_j * exp(-1 * rhoij_ubound)
+              d_ubound = 2. * np.inner((hi / self.X_scale), th * dxji / self.X_scale) + np.inner(self.x[i] / self.X_scale, th * self.x[i] / self.X_scale) - np.inner(self.x[j] / self.X_scale, th * self.x[j] / self.X_scale)
+              d_lbound = 2. * np.inner((lo / self.X_scale), th * dxji / self.X_scale) + np.inner(self.x[i] / self.X_scale, th * self.x[i] / self.X_scale) - np.inner(self.x[j] / self.X_scale, th * self.x[j] / self.X_scale)
+              q_ubound = np.exp(-1.0 * d_lbound)
+              q_lbound = np.exp(-1.0 * d_ubound)       
+              cons.append(qvar[k] <= q_ubound + ((q_lbound - q_ubound) / (d_ubound - d_lbound)) * (dvar[k] - d_lbound))
+              # --- end d secant constraint ---
+              # McCormick relaxation on product k_i = q_k * k_j
+              # z = x * y
+              # z >= x_l y + x * y_l - x_l * y_l
+              # z >= x_u y + x * y_u - x_u * y_u
+              # z <= x_u y + x * y_l - x_u * y_l
+              # z <= x_l * y + x * y_u - x_l * y_u
+              cons.append((self.C2 @ self.X)[i] >= q_lbound * (self.C2 @ self.X)[j] + qvar[k] * kMin[j] - q_lbound * kMin[j])
+              cons.append((self.C2 @ self.X)[i] >= q_ubound * (self.C2 @ self.X)[j] + qvar[k] * kMax[j] - q_ubound * kMax[j])
+              cons.append((self.C2 @ self.X)[i] <= q_ubound * (self.C2 @ self.X)[j] + qvar[k] * kMin[j] - q_ubound * kMin[j])
+              cons.append((self.C2 @ self.X)[i] <= q_lbound * (self.C2 @ self.X)[j] + qvar[k] * kMax[j] - q_lbound * kMax[j])
+              
+              #cons.append((self.C2 @ self.X)[i] >= q_lbound * (self.C2 @ self.X)[j] + kMin[j] * qvar[k] - q_lbound * kMin[j])
+              #cons.append((self.C2 @ self.X)[i] >= q_ubound * (self.C2 @ self.X)[j] + kMax[j] * qvar[k] - q_ubound * kMax[j])
+              #cons.append((self.C2 @ self.X)[i] <= q_lbound * (self.C2 @ self.X)[j] + kMin[j] * qvar[k] - q_ubound * kMin[j])
+              #cons.append((self.C2 @ self.X)[i] <= q_lbound * (self.C2 @ self.X)[j] + kMax[j] * qvar[k] - q_lbound * kMax[j])
+
+              # ---- end McCormick relaxation on product k_i = q_k * k_j
+              
+              # add additional bound constraints on on d
+              cons.append(dvar[k] <= d_ubound)
+              cons.append(d_lbound <= dvar[k])
+              k = k + 1
+
         
     opt_tol = 1.e-8
     opt_rel_tol = 1.e-8
@@ -1515,6 +1641,7 @@ class branching_wrapper:
         if i == 1:
           opt_tol *= 1.e2
         print("WARNING: Loosening convex opt tolerance to ", opt_tol, flush=True)
+
         if mode == 0:
           acqf_L = -np.inf
         else:
@@ -1526,6 +1653,7 @@ class branching_wrapper:
       return acqf_L
     else:
       return sig_U
+  
   def compute_acqf_bounds(self, l, u, skip_LB=False):
     # kernel bounds
     kL, kU = self.ker_bounds(l, u)
