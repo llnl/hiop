@@ -56,8 +56,6 @@ echo ""
 #######################################
 # Launch BO with MPI
 #######################################
-export HIOP_XFOIL_JOB_ROOT="./hiop_temp/job_${JOBID}"
-
 echo "Command: mpiexec -n $TOTAL_PROCS python -m mpi4py.futures BODriverEX_mpi.py"
 echo ""
 

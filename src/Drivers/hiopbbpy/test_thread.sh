@@ -1,7 +1,7 @@
 #!/bin/bash -l
-#SBATCH --job-name=xfoil_thread
-#SBATCH --output=logs/xfoil_thread_%j.out
-#SBATCH --error=logs/xfoil_thread_%j.err
+#SBATCH --job-name=eval_mgr_thread
+#SBATCH --output=logs/eval_mgr_thread_%j.out
+#SBATCH --error=logs/eval_mgr_thread_%j.err
 #SBATCH -N 1
 #SBATCH -n 4
 #SBATCH -p pbatch

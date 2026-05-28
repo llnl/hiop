@@ -5,7 +5,7 @@ This directory contains Bayesian Optimization (BO) drivers that use the Evaluati
 ## Quick Start
 
 ### Scaling Tests (Simple 2D Problem)
-Run automated scaling tests with a simple 2D LpNorm problem (no xfoil dependency):
+Run automated scaling tests with a simple 2D LpNorm problem:
 ```bash
 bash submit_bo_scaling.sh
 ```
@@ -49,9 +49,7 @@ sbatch submit_bo_xfoil.sbatch
 
 - `README.md` - This file (general overview)
 - `TESTING_GUIDE.md` - Guide for running scaling tests
-- `README_EvaluationManager.md` - Technical details about EvaluationManager
 - `STRUCTURE.md` - Directory structure and organization
-- `xfoil_bo/README_XFOIL.md` - xfoil-specific BO documentation
 
 ## EvaluationManager Integration
 
@@ -88,13 +86,6 @@ tail -f logs/bo_*.out
 grep -H "Parallel Performance\|Elapsed time" logs/bo_*.out | sort
 ```
 
-### Run xfoil BO
-See `xfoil_bo/README_XFOIL.md` for detailed instructions.
-
-```bash
-# Single node with 32 workers
-sbatch xfoil_bo/submit_bo_xfoil.sbatch
-```
 
 ### Run EvaluationManager Tests
 ```bash
@@ -164,13 +155,6 @@ hiopbbpy/
 │   ├── logs/                   # Job output files
 │   └── hiop_temp/             # Temporary run directories
 │
-└── xfoil_bo/                   # xfoil-specific files (can move to separate repo)
-    ├── BODriverXfoil.py
-    ├── BODriverXfoil_mpi.py
-    ├── xfoilProblem.py
-    ├── submit_bo_xfoil.sbatch
-    ├── README_XFOIL.md
-    └── data/                   # Airfoil data
 ```
 
 ## Requirements
@@ -179,10 +163,6 @@ hiopbbpy/
 - mpi4py (for MPI executors)
 - OpenMPI (recommended) or mvapich2
 - hiopbbpy package
-
-**For xfoil BO** (see `README_XFOIL.md`):
-- xfoil binary
-- ds4mems package
 
 ## Troubleshooting
 

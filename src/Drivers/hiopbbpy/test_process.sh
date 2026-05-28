@@ -1,7 +1,7 @@
 #!/bin/bash -l
-#SBATCH --job-name=xfoil_process
-#SBATCH --output=logs/xfoil_process_%j.out
-#SBATCH --error=logs/xfoil_process_%j.err
+#SBATCH --job-name=eval_mgr_process
+#SBATCH --output=logs/eval_mgr_process_%j.out
+#SBATCH --error=logs/eval_mgr_process_%j.err
 #SBATCH -N 1
 #SBATCH -n 4
 #SBATCH -p pbatch

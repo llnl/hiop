@@ -6,7 +6,7 @@
 ```bash
 bash submit_bo_scaling.sh
 ```
-Tests **3, 5, 9, 17 processes** on 1 and 2 nodes using simple 2D LpNorm problem (no xfoil).
+Tests **3, 5, 9, 17 processes** on 1 and 2 nodes using simple 2D LpNorm problem.
 
 ### EvaluationManager Tests
 ```bash
@@ -18,7 +18,7 @@ Tests **1, 2, 4, 8, 16, 32, 64 workers** with thread/process/MPI executors.
 
 **BODriverEX_mpi.py**: Simple 2D LpNorm optimization
 - 64 initial samples, 20 BO iterations
-- No xfoil dependency, fast evaluations
+- Fast evaluations
 - Shows profiling output
 
 **EvaluationManagerCI.py**: Trivial test function
@@ -68,14 +68,6 @@ Elapsed time:        00:01:23 (83 seconds)
 ==========================================
 ```
 
-## Running xfoil BO
-
-See `xfoil_bo/README_XFOIL.md` for complete xfoil documentation.
-
-**Quick start:**
-```bash
-sbatch xfoil_bo/submit_bo_xfoil.sbatch  # Single node, 32 workers
-```
 
 ## Configuration
 
@@ -112,5 +104,3 @@ ls logs/*.err  # Check error logs
 ## See Also
 
 - `README.md` - Main documentation
-- `README_EvaluationManager.md` - Technical details
-- `xfoil_bo/README_XFOIL.md` - xfoil BO documentation
