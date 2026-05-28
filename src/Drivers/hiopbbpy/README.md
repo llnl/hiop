@@ -11,32 +11,18 @@ bash submit_bo_scaling.sh
 ```
 This tests **3, 5, 9, 17 processes** on 1 and 2 nodes.
 
-### Production xfoil BO (Single Node)
-Run xfoil-based airfoil optimization:
-```bash
-sbatch submit_bo_xfoil.sbatch
-```
-
 ## Files Overview
 
 ### BO Drivers
 
-**Test Problems (no external dependencies):**
 - `BODriverEX.py` - Simple 2D LpNorm problem (single executor)
 - `BODriverEX_mpi.py` - Simple 2D LpNorm problem (MPI version for scaling tests)
 - `BODriverCI.py` - Branin/LpNorm test problems
 
-**xfoil Problems** (see `xfoil_bo/README_XFOIL.md`):
-- `xfoil_bo/BODriverXfoil.py` - 8D xfoil airfoil optimization (ProcessPoolExecutor)
-- `xfoil_bo/BODriverXfoil_mpi.py` - 8D xfoil airfoil optimization (MPIPoolExecutor)
-- `xfoil_bo/xfoilProblem.py` - Problem definition for xfoil optimization
-
 ### Submission Scripts
 
-**BO Scripts:**
 - `submit_bo_scaling.sh` - Automated scaling test launcher (uses BODriverEX_mpi.py)
 - `submit_bo_template.sbatch` - Generic template for any BO configuration
-- `xfoil_bo/submit_bo_xfoil.sbatch` - Production xfoil BO (see `xfoil_bo/README_XFOIL.md`)
 
 **EvaluationManager Test Scripts:**
 - `submit_scaling_tests.sh` - Scaling tests for thread/process/mpi executors
