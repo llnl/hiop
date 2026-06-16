@@ -943,20 +943,10 @@ class BnBAlgorithm(BnBAlgorithmBase):
     start_time = time.time()
     bbschildren = []
     bfschildren = []
-    while self.num_branches < self.max_bnbiter: # iteration limit
-
-      print(f"\n NEW BNB iteration: branched nodes so far {self.num_branches} !!!!", flush=True)
-      
-      # -- retrieve submitted tasks -- 
-      # asynchronously retrieve results from Evaluator that have been processed
-      #if self.synchronous:
-      #  bbschildren = self.bbsevaluator.sync()
+    while self.num_branches < self.max_bnbiter: # do not exceed max number of branches
       if not self.synchronous:
-        bbschildren = self.bbsevaluator.retrieve_results()
-      print(bbschildren)
-      # not all children are return, hence children is a ragged array
-      # need to flatten this ragged list
-      bbschildren = [item for sublist in bbschildren for item in sublist]
+        bbschildren = self.bbsevaluator.retrieve_results() # asynchronously retrieve results
+      bbschildren = [item for sublist in bbschildren for item in sublist] # flatten
 
       if not self.synchronous:
         bfschildren = self.bfsevaluator.retrieve_results()
@@ -975,21 +965,19 @@ class BnBAlgorithm(BnBAlgorithmBase):
         # update best_node via children
         updated_LUB_node = False
         updated_LLB_node = False
-
-        self.LUB = 1e+20#= min([child.aq_L for child in children])
-        
+        self.LUB = 1e+20
         for child in children:
           if child.aq_U < child.aq_L:
+            # print info on node prior to failure via assert
             print("ERROR (acqf_UB < acqf_LB) on box with corners ", child.l, child.u)
             print("lower-bound = ", child.aq_L)
             print("upper-bound = ", child.aq_U)
           assert child.aq_U >= child.aq_L, "ERROR: child upper bound < child lower bound for child"
           if child.aq_U <= self.LUB:
             print(f"LUB / best node updated: previous {self.LUB}   new {child.aq_U}   LB prev {self.best_node.aq_L}   new{child.aq_L}")
-
             self.LUB = child.aq_U
             self.best_node = child
-            updated_LUB_node = True            
+            updated_LUB_node = True
           if child.aq_L <= self.LLB:
             print(f"LLB updated: previous {self.LLB}   new {child.aq_L}  child/new UB {child.aq_U}")
             self.LLB = child.aq_L
@@ -997,6 +985,19 @@ class BnBAlgorithm(BnBAlgorithmBase):
         if not updated_LLB_node:
           print("LLB not updated")
           if self.pure_BBS and self.synchronous:
+            # the LLB will generally be increasing as 
+            # we "refine" the domain via branching
+            # but we need the smallest lower-bound
+            # running synchronously this issue isn't a big concern
+            # as we can just take the smallest lower-bound over
+            # all children as the current children will be all nodes
+            # in the current level
+            # TODO: provide a strategy when running asynchronously
+            #   This will likely require some bookkeeping
+            #     What is the deepest level of the tree for which
+            #     all children have been computed?
+            #     What is the least lower-bound among all such children
+            #     in that level?
             LLBprev = self.LLB
             self.LLB = min([child.aq_L for child in children])
             print(f"forcing LLB update previous {LLBprev}  new {self.LLB}")
@@ -1006,10 +1007,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
           
         assert self.LUB == self.best_node.aq_U, "ERROR: LUB and best node U got disconnected somehow"
         gap_history.append(self.best_node.aq_U - self.LLB)
-        
-        # pre-prune
         children_lower_bounds = [child.aq_L for child in children]
-
         # now move pruned children to data structs for (potential) future evaluation
         children_lower_bounds = [child.aq_L for child in children]
         # sort the children in order of increasing acqf lower-bounds
