@@ -180,7 +180,7 @@ jobs:
       - name: Install HiOp
         run: |
           ls -al
-          spack -d -e . install  --keep-stage --verbose --show-log-on-error --only package --no-cache
+          spack -d -e . install  --keep-stage --verbose --show-log-on-error --only package
 
       - name: Test Build
         run: |

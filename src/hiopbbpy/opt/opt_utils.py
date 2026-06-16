@@ -4,9 +4,9 @@ Implementation of the Bayesian Optimization Algorithms
 Authors:    Tucker Hartland <hartland1@llnl.gov>
             Nai-Yuan Chiang <chiang7@llnl.gov>
 """
-from scipy.optimize import minimize, NonlinearConstraint
+from scipy.optimize import minimize, NonlinearConstraint, Bounds
 from .optproblem import IpoptProb
-
+#import time
 
 class minimizer_wrapper:
   def __init__(self, fun, method, bounds, constraints, solver_options):
@@ -20,7 +20,8 @@ class minimizer_wrapper:
     output = []
     msg = ""
     for x0 in x0s:
-      if self.method == "SLSQP":
+      #time.sleep(2.5)
+      if self.method in ["SLSQP", "trust-constr"]:
         if 'tol' in self.solver_options:
           tol = self.solver_options['tol']
           solver_options = self.solver_options.copy()
@@ -38,8 +39,9 @@ class minimizer_wrapper:
         xopt = y.x
         yopt = y.fun
       elif self.method == "trust-constr":
-        nonlinear_constraint = NonlinearConstraint(self.constraints['cons'], self.constraints['cl'], self.constraints['cu'], jac=self.constraints['jac'])
-        y = minimize(self.fun['obj'], x0, method=self.method, bounds=self.bounds, constraints=[nonlinear_constraint], options=self.solver_options)
+        #nonlinear_constraint = NonlinearConstraint(self.constraints['cons'], self.constraints['cl'], self.constraints['cu'], jac=self.constraints['jac'])
+        bounds = Bounds(lb= self.bounds[0], ub=self.bounds[1], keep_feasible=True) 
+        y = minimize(self.fun['obj'], x0, method=self.method, bounds=self.bounds, tol=tol,options=self.solver_options)#constraints=[nonlinear_constraint], options=self.solver_options)
         success = y.success
         if not success:
           msg = y.message

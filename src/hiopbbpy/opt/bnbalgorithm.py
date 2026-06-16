@@ -591,13 +591,8 @@ class BnBAlgorithm(BnBAlgorithmBase):
                 rhoij_lbound = 2. * np.inner((lo / self.X_scale), th * dxji / self.X_scale) + np.inner(self.x[i] / self.X_scale, th * self.x[i] / self.X_scale) - np.inner(self.x[j] / self.X_scale, th * self.x[j] / self.X_scale)
                 kij_ubound = np.exp(-1. * rhoij_lbound)
                 kij_lbound = np.exp(-1. * rhoij_ubound)
-                #print("kij_ubound = ", kij_ubound)
-                #print("kij_lbound = ", kij_lbound)
-                
                 if not ((kij_ubound <= 1.e3 and kij_ubound >= 1.e-3) and (kij_lbound <= 1.e3 and kij_lbound >= 1.e-3)):
                   continue
-                #cons.append(rhovar[i] - rhovar[j] <= rhoij_ubound)
-                #cons.append(rhovar[i] - rhovar[j] >= rhoij_lbound)
                 # it is more important that we place bounds on k than rho
                 cons.append((self.C2 @ self.X)[i] <= (self.C2 @ self.X)[j] * kij_ubound)
                 cons.append((self.C2 @ self.X)[i] >= (self.C2 @ self.X)[j] * kij_lbound)
@@ -1544,13 +1539,8 @@ class branching_wrapper:
                 rhoij_lbound = 2. * np.inner((lo / self.X_scale), th * dxji / self.X_scale) + np.inner(self.x[i] / self.X_scale, th * self.x[i] / self.X_scale) - np.inner(self.x[j] / self.X_scale, th * self.x[j] / self.X_scale)
                 kij_ubound = np.exp(-1. * rhoij_lbound)
                 kij_lbound = np.exp(-1. * rhoij_ubound)
-                #print("kij_ubound = ", kij_ubound)
-                #print("kij_lbound = ", kij_lbound)
-                
                 if not ((kij_ubound <= 1.e3 and kij_ubound >= 1.e-3) and (kij_lbound <= 1.e3 and kij_lbound >= 1.e-3)):
                   continue
-                #cons.append(rhovar[i] - rhovar[j] <= rhoij_ubound)
-                #cons.append(rhovar[i] - rhovar[j] >= rhoij_lbound)
                 # it is more important that we place bounds on k than rho
                 cons.append((self.C2 @ self.X)[i] <= (self.C2 @ self.X)[j] * kij_ubound)
                 cons.append((self.C2 @ self.X)[i] >= (self.C2 @ self.X)[j] * kij_lbound)
@@ -1562,7 +1552,7 @@ class branching_wrapper:
             for j in range(i+1, ntrain):
               # d = 2 x^\top \Theta (x^{(j)} - x^{(i)}) + ||x^{(i)}||_{\Theta}^2 - ||x^{(j)}||_{\Theta}^2 
               cons.append(dvar[k] == cp.atoms.sum(cp.atoms.multiply(th / self.X_scale**self.p, 2.0 * cp.atoms.multiply(xvar, self.x[j] - self.x[i]) + self.x[i] * self.x[i] - self.x[j] * self.x[j]))) 
-              # q >= exp(d)
+              # q >= exp(-d)
               cons.append(qvar[k] >= cp.atoms.exp(-1.0 * dvar[k]))
               # --- begin d secant constraint ---
               
@@ -1588,13 +1578,7 @@ class branching_wrapper:
               cons.append((self.C2 @ self.X)[i] >= q_ubound * (self.C2 @ self.X)[j] + qvar[k] * kMax[j] - q_ubound * kMax[j])
               cons.append((self.C2 @ self.X)[i] <= q_ubound * (self.C2 @ self.X)[j] + qvar[k] * kMin[j] - q_ubound * kMin[j])
               cons.append((self.C2 @ self.X)[i] <= q_lbound * (self.C2 @ self.X)[j] + qvar[k] * kMax[j] - q_lbound * kMax[j])
-              
-              #cons.append((self.C2 @ self.X)[i] >= q_lbound * (self.C2 @ self.X)[j] + kMin[j] * qvar[k] - q_lbound * kMin[j])
-              #cons.append((self.C2 @ self.X)[i] >= q_ubound * (self.C2 @ self.X)[j] + kMax[j] * qvar[k] - q_ubound * kMax[j])
-              #cons.append((self.C2 @ self.X)[i] <= q_lbound * (self.C2 @ self.X)[j] + kMin[j] * qvar[k] - q_ubound * kMin[j])
-              #cons.append((self.C2 @ self.X)[i] <= q_lbound * (self.C2 @ self.X)[j] + kMax[j] * qvar[k] - q_lbound * kMax[j])
-
-              # ---- end McCormick relaxation on product k_i = q_k * k_j
+              # ---- end McCormick relaxation of product k_i = q_k * k_j
               
               # add additional bound constraints on on d
               cons.append(dvar[k] <= d_ubound)

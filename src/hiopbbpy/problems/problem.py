@@ -28,7 +28,7 @@ class Problem:
       # each dict = one scalar constraint
       self.n_con = len(constraints)
         
-  def _evaluate(self, x: np.ndarray) -> np.ndarray:
+  def _evaluate(self, x: np.ndarray, **kwargs) -> np.ndarray:
     """
     problem evaluation y = f(x) of
     a scalar valued function f
@@ -44,7 +44,7 @@ class Problem:
     """
     raise NotImplementedError("Child class of hiopProblem should implement method _evaluate")
 
-  def evaluate(self, x: np.ndarray) -> np.ndarray:
+  def evaluate(self, x: np.ndarray, **kwargs) -> np.ndarray:
     """
     problem callback y = f(x) of
     the scalar valued function  f
@@ -59,7 +59,7 @@ class Problem:
        Function values (cast to reals)
     """
     y = np.ndarray((x.shape[0], 1))
-    y[:,:] = self._evaluate(x)
+    y[:,:] = self._evaluate(x, **kwargs)
     return y
 
   def con_evaluate(self, x: np.ndarray) -> np.ndarray:

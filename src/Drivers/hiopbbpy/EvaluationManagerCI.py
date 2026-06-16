@@ -1,6 +1,14 @@
 """
-This is a class to manage function evaluations using multiple parallel executors.
-It supports both intra-node and inter-node parallelism.
+Test script demonstrating EvaluationManager with multiple executor types.
+Supports both intra-node and inter-node parallelism.
+
+Usage examples:
+  Single-node with threads:    python EvaluationManagerCI.py -e thread -w 4
+  Single-node with processes:  python EvaluationManagerCI.py -e process -w 4
+  Multi-node with MPI:         mpiexec -n 8 python EvaluationManagerCI.py -e mpi
+
+For MPI, use N = number of total processes across all nodes.
+The script will use rank 0 as master and ranks 1-(N-1) as workers.
 
 Authors:    Tucker Hartland <hartland1@llnl.gov>
             Weslley S Pereira <wdasilv@nrel.gov>
@@ -12,12 +20,20 @@ import sys
 import os
 import socket
 import threading
-from hiopbbpy.utils import EvaluationManager, is_running_with_mpi
-from concurrent.futures import ThreadPoolExecutor
+from hiopbbpy.utils import EvaluationManager
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 
 def _fn_for_test(x, sleep_time=0.1, slow_first=False, driver_rank=0):
     hostname = socket.gethostname()
     pid = os.getpid()
+
+    # Try to get the actual MPI rank of the worker executing this function
+    try:
+        from mpi4py import MPI
+        comm = MPI.COMM_WORLD
+        actual_rank = comm.Get_rank()
+    except:
+        actual_rank = driver_rank  # Fallback to passed rank if MPI not available
 
     if slow_first and x == 0:
         actual_sleep = 3 * sleep_time
@@ -25,7 +41,7 @@ def _fn_for_test(x, sleep_time=0.1, slow_first=False, driver_rank=0):
         actual_sleep = sleep_time
 
     print(
-        f"rank={driver_rank} pid={pid} host={hostname}: processing x={x}",
+        f"rank={actual_rank} pid={pid} host={hostname}: processing x={x}",
         flush=True,
     )
 
@@ -36,7 +52,16 @@ if __name__ == "__main__":
   # Arguments for command line
   parser = argparse.ArgumentParser(
     description="Execute n function calls with t duration.",
-    epilog="To properly run the example with mpi4py, use: env MPI4PY_FUTURES_MAX_WORKERS=<N> mpiexec -n 1 python evaluation_manager.py",
+    formatter_class=argparse.RawDescriptionHelpFormatter,
+    epilog="""
+Examples:
+  Single-node with threads:     python EvaluationManagerCI.py -e thread -w 4
+  Single-node with processes:   python EvaluationManagerCI.py -e process -w 4
+  Multi-node with MPI:          mpiexec -n <N> python EvaluationManagerCI.py -e mpi
+
+For MPI, use N = number of nodes * processes_per_node.
+The script uses rank 0 as master and ranks 1-(N-1) as workers.
+    """,
   )
   parser.add_argument("-n", type=int, default=20, help="Number of tasks to execute")
   parser.add_argument(
@@ -54,26 +79,68 @@ if __name__ == "__main__":
     action="store_true",
     help="Make the first task slower (3x sleep time)",
   )
+  parser.add_argument(
+    "-e",
+    "--executor",
+    type=str,
+    default="thread",
+    choices=["thread", "process", "mpi"],
+    help="Executor type: thread (ThreadPoolExecutor), process (ProcessPoolExecutor), or mpi (MPIPoolExecutor)",
+  )
+  parser.add_argument(
+    "-w",
+    "--max_workers",
+    type=int,
+    default=None,
+    help="Maximum number of workers (for thread/process executors)",
+  )
   args = parser.parse_args()
-
-  # Choose executor type
-  if is_running_with_mpi():
-    from mpi4py import MPI
-    driver_rank = MPI.COMM_WORLD.Get_rank()
-    executor_type = "mpi"
-  else:
-    driver_rank = 0
-    executor_type = "cpu"
 
   # Set up logging
   logging.basicConfig(level=logging.INFO)
 
-  # Create manager
-  cpu_executor = ThreadPoolExecutor()
+  # Create executor based on user choice
+  if args.executor == "thread":
+    cpu_executor = ThreadPoolExecutor(max_workers=args.max_workers)
+    executor_name = "ThreadPool"
+  elif args.executor == "process":
+    cpu_executor = ProcessPoolExecutor(max_workers=args.max_workers)
+    executor_name = "ProcessPool"
+  elif args.executor == "mpi":
+    try:
+      from mpi4py import MPI
+      from mpi4py.futures import MPIPoolExecutor
+
+      comm = MPI.COMM_WORLD
+      rank = comm.Get_rank()
+      size = comm.Get_size()
+
+      if size < 2:
+        print("ERROR: MPI executor requires at least 2 processes (1 master + 1 worker)")
+        print("Run with: mpiexec -n <N> python EvaluationManagerCI.py -e mpi")
+        sys.exit(1)
+
+      # Use context manager - this prevents spawning and uses existing processes
+      # Only rank 0 will run the main logic, others will be workers
+      if rank != 0:
+        # Worker ranks just need to participate in the MPIPoolExecutor
+        with MPIPoolExecutor() as executor:
+          pass  # Workers block here until master is done
+        sys.exit(0)
+
+      cpu_executor = MPIPoolExecutor()
+      executor_name = f"MPIPool (rank={rank}/{size}, {size-1} workers)"
+      print(f"MPI executor initialized: {size} total processes, {size-1} workers across nodes")
+
+    except ImportError:
+      print("ERROR: mpi4py not installed. Install with: pip install mpi4py")
+      sys.exit(1)
+
+  # Create manager (only rank 0 reaches here for MPI)
   manager = EvaluationManager(
-      cpu_executor=cpu_executor,
+      executor=cpu_executor,
       profiling=args.profile,
-      task_name="CI_TASK"
+      task_name=f"CI_TASK_{executor_name}"
   )
 
   # Submit tasks
@@ -81,10 +148,8 @@ if __name__ == "__main__":
   manager.submit_tasks(
       _fn_for_test,
       [i for i in range(args.n)],
-      execute_at=executor_type,
       sleep_time=args.sleep_time,
       slow_first=args.slow_first,
-      driver_rank=driver_rank,
   )
 
   # Do some other work while tasks are running
