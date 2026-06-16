@@ -67,19 +67,6 @@ class Evaluator(object):
 
 class MPIEvaluator(Evaluator):
   """
-<<<<<<< HEAD
-  A wrapper of the evaluation_manager code.
-  Note that an application code e.g., application.py that use this Evaluator should be run as
-  env MPI4PY_FUTURES_MAX_WORKERS=8 mpiexec -n 1 python application.py
-  or mpiexec -n 8 python -m mpi4py.futures application.py
-  Also, the application code should have a "main" section wrapped in
-  if __name__ == "__main__":
-  Expecting the function evaluations to return an array.
-  Fout has then the structure of
-  [[eval0], [[eval1]], [eval2],...]]
-  We reformat to 
-  [eval0, eval1, eval2,...]
-=======
   A wrapper of the evaluation_manager code that supports multiple execution modes.
 
   Execution modes:
@@ -115,7 +102,6 @@ class MPIEvaluator(Evaluator):
   Output format:
   Function evaluations return arrays with structure [[eval0], [eval1], [eval2], ...]
   which are reformatted to [eval0, eval1, eval2, ...]
->>>>>>> origin/develop
   """
   def __init__(self, function_mode=True, executor=None, profiling=False,
                  task_name="MPITASK", run_root="./hiop_temp", use_run_dir=False):

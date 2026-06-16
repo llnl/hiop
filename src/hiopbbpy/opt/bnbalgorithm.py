@@ -6,7 +6,7 @@ from scipy import linalg
 from scipy.stats import qmc
 from .acquisition import EIacquisition, LCBacquisition
 from ..utils.util import Evaluator, MPIEvaluator
-from ..utils.evaluation_manager import is_running_with_mpi
+#from ..utils.evaluation_manager import is_running_with_mpi
 from .opt_utils import minimizer_wrapper
 from itertools import count
 try:
@@ -398,28 +398,45 @@ class BnBAlgorithm(BnBAlgorithmBase):
     assert isinstance(self.saveDataDir, str), "save_data_dir is not of type string"
     assert isinstance(self.early_stopping_heuristics, bool), "early stopping heuristics BnB option was set to non boolean value"
 
-    if is_running_with_mpi():
-      num_available_workers = MPI.COMM_WORLD.Get_size() - 1
-      if num_available_workers > 1:
-        # roughly evenly split workers for use in bbs and bfs evaluators
-        if self.pure_BBS:
-          num_bbs_workers = num_available_workers
-          num_bfs_workers = 1
-        else:
-          num_bbs_workers = np.ceil(num_available_workers * 3 / 4).astype(int)
-          num_bfs_workers = max(1, num_available_workers - num_bbs_workers)
-      else:
-        # num_available_workers == 1 or num_available_workers == 0
-        # can occur when running on one process in which root is both master and the
-        # only worker process. If there are 2 mpi processes then root is master and
-        # there is one worker process. This worker process will be used for both
-        # bbs and bfs evaluators
-        num_bbs_workers = 1
+    #if is_running_with_mpi():
+    #  num_available_workers = MPI.COMM_WORLD.Get_size() - 1
+    #  if num_available_workers > 1:
+    #    # roughly evenly split workers for use in bbs and bfs evaluators
+    #    if self.pure_BBS:
+    #      num_bbs_workers = num_available_workers
+    #      num_bfs_workers = 1
+    #    else:
+    #      num_bbs_workers = np.ceil(num_available_workers * 3 / 4).astype(int)
+    #      num_bfs_workers = max(1, num_available_workers - num_bbs_workers)
+    #  else:
+    #    # num_available_workers == 1 or num_available_workers == 0
+    #    # can occur when running on one process in which root is both master and the
+    #    # only worker process. If there are 2 mpi processes then root is master and
+    #    # there is one worker process. This worker process will be used for both
+    #    # bbs and bfs evaluators
+    #    num_bbs_workers = 1
+    #    num_bfs_workers = 1
+    #else:
+    #  num_bbs_workers = 1
+    #  num_bfs_workers = 1
+    # TODO: re-include max_workers
+    num_available_workers = MPI.COMM_WORLD.Get_size() - 1
+    if num_available_workers > 1:
+      # roughly evenly split workers for use in bbs and bfs evaluators
+      if self.pure_BBS:
+        num_bbs_workers = num_available_workers
         num_bfs_workers = 1
+      else:
+        num_bbs_workers = np.ceil(num_available_workers * 3 / 4).astype(int)
+        num_bfs_workers = max(1, num_available_workers - num_bbs_workers)
     else:
+      # num_available_workers == 1 or num_available_workers == 0
+      # can occur when running on one process in which root is both master and the
+      # only worker process. If there are 2 mpi processes then root is master and
+      # there is one worker process. This worker process will be used for both
+      # bbs and bfs evaluators
       num_bbs_workers = 1
       num_bfs_workers = 1
-    # TODO: re-include max_workers
     self.bbsevaluator = MPIEvaluator(function_mode=False)#, max_workers = num_bbs_workers)
     self.bfsevaluator = MPIEvaluator(function_mode=False)#, max_workers = num_bfs_workers)  
     self.num_bbs_workers = num_bbs_workers
