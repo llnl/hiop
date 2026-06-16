@@ -123,12 +123,12 @@ class MPIEvaluator(Evaluator):
   def __del__(self):
     del self.manager
   
-  def set_task_name(self, task_name):
+  def set_task_name(self, task_name) -> None:
     self.manager.set_task_name(task_name)
-  
-  def run(self, fun, Xin):  
+    return
+ 
+  def submit_tasks(self, fun, Xin) -> None:
     nevals = Xin.shape[0]
-    print("in Evaluator::run")
 
     # unique batch directory so repeated calls do not reuse temp_dir_0, temp_dir_1, ...
     batch_id = f"{self.manager.task_name}_{os.getpid()}_{time.time_ns()}_{uuid.uuid4().hex[:8]}"
@@ -151,7 +151,12 @@ class MPIEvaluator(Evaluator):
         **kwargs,
       )
       print(f"Submitted task {i + 1}", flush=True)
+    return None
 
+
+  def run(self, fun, Xin):  
+    nevals = Xin.shape[0]
+    self.submit_tasks(fun, Xin)
     self.manager.sync()
     print(f"\n{'='*50}")
     print(f"Retrieving results for {self.manager.task_name}...")
@@ -186,6 +191,18 @@ class MPIEvaluator(Evaluator):
   def sync(self):
     self.manager.sync()
     return
+  def retrieve_results(self):
+    X, FX = self.manager.retrieve_results()
+    if len(FX) > 0:
+      if self.function_mode:
+        ncomplete_evals = np.array(FX).shape[0]
+        Y = np.ndarray((ncomplete_evals, 1))
+        Y[:,0] = np.array(FX)[:,0,0]
+      else:
+        Y = [Fi[0] for Fi in FX]
+    else:
+      Y = np.array([])
+    return Y
 
 def _run_indexed_fun(fun, idx, x, **kwargs):
     return idx, fun(x, **kwargs)

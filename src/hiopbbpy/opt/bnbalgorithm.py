@@ -941,23 +941,25 @@ class BnBAlgorithm(BnBAlgorithmBase):
     max_bbs_node_size = 0
     max_bfs_node_size = 0
     start_time = time.time()
+    bbschildren = []
+    bfschildren = []
     while self.num_branches < self.max_bnbiter: # iteration limit
 
       print(f"\n NEW BNB iteration: branched nodes so far {self.num_branches} !!!!", flush=True)
       
       # -- retrieve submitted tasks -- 
       # asynchronously retrieve results from Evaluator that have been processed
-      if self.synchronous:
-        self.bbsevaluator.sync()
-      bbschildren = self.bbsevaluator.retrieve_results()
-
+      #if self.synchronous:
+      #  bbschildren = self.bbsevaluator.sync()
+      if not self.synchronous:
+        bbschildren = self.bbsevaluator.retrieve_results()
+      print(bbschildren)
       # not all children are return, hence children is a ragged array
       # need to flatten this ragged list
       bbschildren = [item for sublist in bbschildren for item in sublist]
 
-      if self.synchronous:
-        self.bfsevaluator.sync()
-      bfschildren = self.bfsevaluator.retrieve_results()
+      if not self.synchronous:
+        bfschildren = self.bfsevaluator.retrieve_results()
       bfschildren = [item for sublist in bfschildren for item in sublist]
 
       children = bbschildren + bfschildren # join child lists
@@ -1122,7 +1124,10 @@ class BnBAlgorithm(BnBAlgorithmBase):
         brancher = branching_wrapper(self.acqf, LUB = self.LUB, epsilon_prune=self.epsilon_prune, acqf_UB_solver = self.acqf_UB_solver, random_seed=self.random_seed if self.random_seed is not None else None, opt_mode=self.opt_mode,)
         bbsnodes = np.array(bbsnodes)
         if len(bbsnodes) > 0:
-          self.bbsevaluator.submit_tasks(brancher.callback, bbsnodes)
+          if self.synchronous:
+            bbschildren = self.bbsevaluator.run(brancher.callback, bbsnodes)
+          else:
+            self.bbsevaluator.submit_tasks(brancher.callback, bbsnodes)
         print(f"Tasks (bbs) {num_bbs_tasks_to_submit} submitted")
       # only submit additional tasks if there aren't too many in the Evaluators queue
       if self.synchronous:
@@ -1139,7 +1144,10 @@ class BnBAlgorithm(BnBAlgorithmBase):
           bfsnodes.append(node)
         bfsnodes = np.array(bfsnodes)
         if len(bfsnodes) > 0:
-          self.bfsevaluator.submit_tasks(brancher.callback, bfsnodes)
+          if self.synchronous:
+            bfschildren = self.bfsevaluator.submit_tasks(brancher.callback, bfsnodes)
+          else:
+            self.bfsevaluator.submit_tasks(brancher.callback, bfsnodes)
         print(f"Tasks (bfs) {len(bfsnodes)} submitted")
 
     self.all_nonpruned_nodes = all_bfsnodes + [n for (L, c, n) in self.queue]

@@ -370,6 +370,12 @@ class EvaluationManager:
 
     self._queue = new_queue
 
+  def completed_tasks(self) -> bool:
+    return (len(self._queue) == 0)
+  def num_submitted_tasks(self) -> int:
+    return len(self._queue)
+
+
   def print_status(self) -> None:
     """Print the current status of the task queue and completion buffers."""
     with self._queue_lock:
