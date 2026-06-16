@@ -25,9 +25,13 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 import numpy as np
-from .evaluation_manager import EvaluationManager, is_running_with_mpi
+from .evaluation_manager import EvaluationManager
 import logging
 
+import os
+import time
+import uuid
+from pathlib import Path
 
 def check_required_keys(user_dict, required_keys):
   for key in required_keys:
@@ -63,39 +67,124 @@ class Evaluator(object):
 
 class MPIEvaluator(Evaluator):
   """
-  A wrapper of the evaluation_manager code.
-  Note that application codes application.py that use this Evaluator should be run as
-  env MPI4PY_FUTURES_MAX_WORKERS=8 mpiexec -n 1 python application.py
-  Also, the application code should have a "main" section wrapped in
-  if __name__ == "__main__":
-  Expecting the function evaluations to return an array.
-  Fout has then the structure of
-  [[eval0], [[eval1]], [eval2],...]]
-  We reformat to 
-  [eval0, eval1, eval2,...]
+  A wrapper of the evaluation_manager code that supports multiple execution modes.
+
+  Execution modes:
+
+  1. Single-node with ProcessPoolExecutor or ThreadPoolExecutor:
+     python application.py
+
+  2. Single-node with MPI (legacy mode):
+     env MPI4PY_FUTURES_MAX_WORKERS=8 mpiexec -n 1 python application.py
+
+  3. Multi-node with MPI (recommended for HPC clusters):
+     mpiexec -n <N> python application.py
+     where N >= 2 (1 master rank 0 + N-1 workers distributed across nodes)
+
+     For multi-node, your application.py must have:
+       if __name__ == "__main__":
+         from mpi4py import MPI
+         from mpi4py.futures import MPIPoolExecutor
+         import sys
+
+         comm = MPI.COMM_WORLD
+         rank = comm.Get_rank()
+
+         if rank != 0:
+           MPIPoolExecutor()  # Workers enter executor loop
+           sys.exit(0)
+
+         # Master (rank 0) continues here
+         executor = MPIPoolExecutor()
+         evaluator = MPIEvaluator(executor=executor, ...)
+         # ... rest of your code
+
+  Output format:
+  Function evaluations return arrays with structure [[eval0], [eval1], [eval2], ...]
+  which are reformatted to [eval0, eval1, eval2, ...]
   """
-  def __init__(self, function_mode=True,cpu_executor=None, mpi_executor=None, profiling=False, task_name="MPITASK"):
-    self.manager = EvaluationManager(cpu_executor,mpi_executor,profiling=profiling, task_name=task_name)
+  def __init__(self, function_mode=True, executor=None, profiling=False,
+                 task_name="MPITASK", run_root="./hiop_temp", use_run_dir=False):
+    # If no executor provided, create a default ThreadPoolExecutor
+    if executor is None:
+      from concurrent.futures import ThreadPoolExecutor
+      import multiprocessing
+      max_workers = multiprocessing.cpu_count()
+      executor = ThreadPoolExecutor(max_workers=max_workers)
+      print(f"No executor provided for {task_name}, using ThreadPoolExecutor with {max_workers} workers")
+
+    self.manager = EvaluationManager(executor, profiling=profiling, task_name=task_name)
     self.function_mode = function_mode
-    if is_running_with_mpi():
-      self.executor_type = "mpi"
-    else:
-      self.executor_type = "cpu"
+    self.run_root = Path(run_root)
+    self.run_root.mkdir(parents=True, exist_ok=True)
+    self.use_run_dir = use_run_dir
+    print(f"Create Evaluator for task: {task_name}")
+  
   def __del__(self):
     del self.manager
+  
   def set_task_name(self, task_name):
     self.manager.set_task_name(task_name)
-  def run(self, fun, Xin):
+  
+  def run(self, fun, Xin):  
     nevals = Xin.shape[0]
-    self.manager.submit_tasks(fun, [np.atleast_2d(Xin[i]) for i in range(nevals)], execute_at=self.executor_type)
+    print("in Evaluator::run")
+
+    # unique batch directory so repeated calls do not reuse temp_dir_0, temp_dir_1, ...
+    batch_id = f"{self.manager.task_name}_{os.getpid()}_{time.time_ns()}_{uuid.uuid4().hex[:8]}"
+    batch_dir = self.run_root / batch_id
+    batch_dir.mkdir(parents=True, exist_ok=False)
+
+    for i in range(nevals):
+      xi = np.atleast_2d(Xin[i])
+
+      kwargs = {}
+      if self.use_run_dir:
+        run_dir = batch_dir / f"eval_{i:04d}"
+        run_dir.mkdir(parents=True, exist_ok=False)
+        kwargs["run_dir"] = str(run_dir)
+
+      # submit (index, x) so we can restore original order later
+      self.manager.submit_tasks(
+        _run_indexed_fun,
+        [(fun, i, xi)],
+        **kwargs,
+      )
+      print(f"Submitted task {i + 1}", flush=True)
+
     self.manager.sync()
+    print(f"\n{'='*50}")
+    print(f"Retrieving results for {self.manager.task_name}...")
+    print(f"Profiling enabled: {self.manager.profiling}")
+    print(f"{'='*50}\n", flush=True)
     Xout, Fout = self.manager.retrieve_results()
+
+    # restore original order using returned indices
+    ordered = [None] * nevals
+    for out in Fout:
+      if out is None:
+        continue
+      # Handle profiling case where _run_indexed_fun returns (idx, result)
+      # but result might be a timing dict if profiling is enabled
+      idx, val = out
+      ordered[idx] = val
+
+    missing = [i for i, v in enumerate(ordered) if v is None]
+    if missing:
+      raise RuntimeError(f"Missing evaluation results for indices {missing}")
+
     if self.function_mode:
-      Y = np.ndarray((nevals, 1))
-      Y[:,0] = np.array(Fout)[:,0,0]
+      Y = np.empty((nevals, 1), dtype=float)
+      for i, val in enumerate(ordered):
+        arr = np.asarray(val, dtype=float)
+        Y[i, 0] = float(arr.reshape(-1)[0])
     else:
-      Y = [Fi[0] for Fi in Fout]
+      Y = [val[0] for val in ordered]
+
     return Y
+
+def _run_indexed_fun(fun, idx, x, **kwargs):
+    return idx, fun(x, **kwargs)
 
 class Logger:
   """
