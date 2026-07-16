@@ -157,7 +157,7 @@ void hiopOptions::load_from_file(const char* filename)
   }
   string name, value;
   for(std::string line; getline(input, line);) {
-    line = ltrim(line);
+    ltrim(line);
 
     if(line.size() == 0) continue;
     if(line[0] == '#') continue;
