@@ -367,14 +367,6 @@ public:
 
 protected:
   hiopVector* rd_tilde_;
-
-#ifdef HIOP_DEEPCHECKS
-  // y=beta*y+alpha*H*x
-  virtual void HessianTimesVec_noLogBarrierTerm(double beta, hiopVector& y, double alpha, const hiopVector& x)
-  {
-    Hess_->timesVec(beta, y, alpha, x);
-  }
-#endif
 };
 
 /*
