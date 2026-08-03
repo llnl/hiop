@@ -23,7 +23,7 @@ from ..surrogate_modeling.gp import GaussianProcess
 from ..problems.problem import Problem
 from ..utils.util import Evaluator
 from .boalgorithm import BOAlgorithmBase
-from hiopbbpy.surrogate_modeling.muygp import muyGP
+#from hiopbbpy.surrogate_modeling.muygp import muyGP   # uncomment if using muyGP
 
 # Map real-space points into the unit cube defined by xlimits
 def to_unit(x, lb, ub):
