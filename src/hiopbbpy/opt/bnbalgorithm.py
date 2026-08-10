@@ -6,7 +6,7 @@ from scipy import linalg
 from scipy.stats import qmc
 from .acquisition import EIacquisition, LCBacquisition
 from ..utils.util import Evaluator, MPIEvaluator
-#from ..utils.evaluation_manager import is_running_with_mpi
+from .bnb_utils import * 
 from .opt_utils import minimizer_wrapper
 from itertools import count
 try:
@@ -118,7 +118,6 @@ class BnBAlgorithmBase:
     # Node class for priority queue
     # Kernel info for bounds
     self.kernel_spec = None
-    self.kernel_func = None
     self.y_min = None
 
     # Evaluation parameters
@@ -145,7 +144,7 @@ class BnBAlgorithmBase:
     par = sm.optimal_par
 
     # --- kernel / corr selection ---
-    corr = sm.options["corr"]  # e.g., 'squar_exp', 'pow_exp', 'abs_exp', 'matern32', 'matern52'
+    corr = sm.options["corr"]  # e.g., 'squar_exp', 'pow_exp', 'abs_exp', 'matern12', 'matern32', 'matern52'
     if corr == "pow_exp":
       # OptionsDictionary -> use membership + indexing (no .get)
       p = float(sm.options["pow_exp_power"]) if "pow_exp_power" in sm.options else 2.0
@@ -160,6 +159,9 @@ class BnBAlgorithmBase:
       self.p = 2.0
     elif corr == "abs_exp":
       # Exponential is pow_exp with p=1
+      self.kernel_spec = "pow_exp"
+      self.p = 1.0
+    elif corr == "matern12":
       self.kernel_spec = "pow_exp"
       self.p = 1.0
     elif corr == "matern32":
@@ -258,14 +260,8 @@ class BnBAlgorithmBase:
       p = getattr(self, "p", 2.0)
       s_min = (th * (dmin ** p)).sum(axis=1)
       s_max = (th * (dmax ** p)).sum(axis=1)
-      kU = np.exp(-s_min)                                       # max on box
+      kU = np.exp(-s_min)                                  # max on box
       kL = np.exp(-s_max)                                  # min on box
-    elif spec == "matern12":
-      # Matérn ν=1/2 (a.k.a. abs-exp): k = exp(-sum_j θ_j |dx_j|)
-      s_min = (th * dmin).sum(axis=1)
-      s_max = (th * dmax).sum(axis=1)
-      kU = np.exp(-s_min)
-      kL = np.exp(-s_max)
     elif spec == "matern32":
       # SMT separable form: ∏_j (1 + √3 θ_j |dx_j|) exp(-√3 θ_j |dx_j|)
       a = np.sqrt(3.0) * th
@@ -392,7 +388,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
       # Different deterministic stream for each BO iteration
       self.rng = np.random.default_rng(int(self.random_seed) + 1000003 * int(self.BOit))
     
-    assert self.opt_mode in [0, 1, 2, 3, 4], "unknown opt_mode"
+    assert self.opt_mode in [0, 1, 2, 3, 4, 5], "unknown opt_mode"
     assert self.acqf_UB_solver in ["SLSQP", "trust-constr", "IPOPT", "MINEVAL"], "invalid acqf ub solver"
     assert isinstance(self.saveData, bool), "save_data is not of type bool"
     assert isinstance(self.saveDataDir, str), "save_data_dir is not of type string"
@@ -520,14 +516,18 @@ class BnBAlgorithm(BnBAlgorithmBase):
        mode: 1 --> convex relaxation for maximum of variance        
     """
     assert mode in [0, 1], "mode can only be in 0, 1"
-    assert opt_mode in [0, 1, 2, 3, 4], "opt mode can only be 0, 1, 2, or 3"
+    assert opt_mode in [0, 1, 2, 3, 4, 5], "opt mode can only be 0, 1, 2, 3, 4, or 5"
+    assert not (opt_mode in [0, 1, 2, 3, 4] and self.kernel_spec != "pow_exp"), "opt mode 0,1,2,3, and 4 limited to pow_exp kernel"
     # opt_mode = 0 (previous baseline w ratio constraints)
     # opt_mode = 1 (Convex relaxation w no ratio constraints on k and no affine constraints)
     # opt_mode = 2 (Most recent relaxation w ratio constraints and affine constraints)
     # opt_mode = 3 (Relaxation in w)
     # opt_mode = 4 (opt_mode 3 but with alternative to ratio constraints on k)
-    cons = [self.C2 @ self.X >= kL, self.C2 @ self.X <= kU, self.cons2 >= 0, self.en1 @ self.X >= 0]
-    if opt_mode != 0:
+    cons = [self.cons2 >= 0, self.en1 @ self.X >= 0]
+    if opt_mode != 5:
+      cons.append(self.C2 @ self.X >= kL)
+      cons.append(self.C2 @ self.X <= kU)
+    if opt_mode != 0 and opt_mode != 5:
       # add x optimization variable constrained to box: l <= x <= u
       xvar = cp.Variable(self.x.shape[1])
       cons.append(l <= xvar)
@@ -654,8 +654,67 @@ class BnBAlgorithm(BnBAlgorithmBase):
               cons.append(dvar[k] <= d_ubound)
               cons.append(d_lbound <= dvar[k])
               k = k + 1
-
-        
+    elif opt_mode == 5:
+      #TODO: add other kernel options
+      ntrain = self.x.shape[0]
+      dimx = self.x.shape[1]
+      # add x optimization variable constrained to box: l <= x <= u
+      xvar = cp.Variable(dimx)
+      cons.append(l <= xvar)
+      cons.append(xvar <= u)
+      cons.append(cp.atoms.power(cp.atoms.norm(self.X[:-1]), 2) <= 1.0) # k^T R^-1 k = z^T z <= 1
+      # determine bounds for k and lambda
+      dmin = np.maximum(0.0, np.maximum((l - self.x) / self.X_scale, (self.x - u)/ self.X_scale))        # (nt,d)
+      dmax = np.maximum(np.abs((l - self.x) / self.X_scale), np.abs((u - self.x) / self.X_scale))         # (nt,d)
+      th  = self.theta.ravel()     # (d,)
+      lamvar = cp.Variable(ntrain)
+      lamU = np.log(kU)
+      lamL = np.log(kL)
+      cons.append(lamvar >= lamL)
+      cons.append(lamvar <= lamU)
+      for i in range(ntrain):
+        cons.append((self.C2 @ self.X)[i] >= cp.atoms.exp(lamvar[i]))
+      cons.append(self.C2 @ self.X <= kL + cp.atoms.multiply((kU - kL) / (lamU - lamL),  (lamvar  - lamL)))
+      etavar = cp.Variable((ntrain, dimx))
+      cons.append(lamvar == cp.atoms.sum(etavar, axis=1)) # sum along column of matrix-valued \eta
+      if self.kernel_spec == "pow_exp":
+        assert self.p in [1.0, 2.0], "opt_mode 5 only support matern 1/2 (a.k.a. pow exp) and SE kernels"
+        if self.p == 2.0:
+          wvar = cp.Variable(dimx)
+          for i in range(ntrain):
+            for j in range(dimx):
+              cons.append(etavar[i,j] == (-1.0 * th[j] / (self.X_scale[j]**self.p)) * (wvar[j] - 2. * self.x[i][j] * xvar[j] + self.x[i][j]**2))
+          for j in range(dimx):
+            cons.append(xvar[j]**2 <= wvar[j])
+            cons.append(wvar[j] <= (l[j] + u[j]) * xvar[j] - l[j] * u[j])
+        elif self.p == 1.0:
+          # --- tau and alpha are ragged arrays
+          taus = [[] for j in range(dimx)]
+          for j in range(dimx):
+            taus[j].append(l[j])
+            taus[j].append(u[j])
+            for i in range(ntrain):
+              if self.x[i][j] < u[j] and l[j] < self.x[i][j]:
+                taus[j].append(self.x[i][j])
+          alphavars = [cp.Variable(len(taus[j])) for j in range(dimx)]
+          for i in range(ntrain):
+            for j in range(dimx):
+              cons.append(etavar[i][j] == cp.atoms.sum(cp.atoms.multiply(-1.0 * th[j] / (self.X_scale[j]) * np.abs(taus[j] - self.x[i][j]), alphavars[j])))
+          for j in range(dimx):
+            cons.append(xvar[j] == cp.atoms.sum(cp.atoms.multiply(taus[j], alphavars[j])))
+            cons.append(cp.atoms.sum(alphavars[j]) == 1.0)
+            for i in range(len(taus[j])):
+              cons.append(alphavars[j][i] >= 0.0)
+      else: #matern32 or matern52
+        nu = 1.5
+        if self.kernel_spec != "matern32":
+          nu = 2.5
+        for j in range(dimx):
+          component_phi = matern_phi(self.x[:,j].tolist(), th[j] / self.X_scale[j], nu)
+          D_rs = component_phi.generate_alpha_beta_r(l[j], u[j])
+          for k in range(len(D_rs)):
+            # alpha_m xj + beta_m^T eta_(:, j) <= r_m
+            cons.append(D_rs[k][0] * xvar[j] + cp.atoms.scalar_product(D_rs[k][1], etavar[:,j]) <= D_rs[k][2])
     opt_tol = 1.e-8
     opt_rel_tol = 1.e-8
     for i in range(3):
@@ -670,7 +729,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
       try:
         if mode == 0:
           prob = cp.Problem(cp.Minimize(self.obj2), cons)
-          if not prob.is_dcp():
+          if not prob.is_dcp:
             raise RuntimeError("LCB relaxation is not DCP")
           
           acqf_L = prob.solve(solver=cp.CLARABEL, verbose=verbose, tol_gap_abs=opt_tol, tol_gap_rel=opt_rel_tol, max_iter=max_iters)
@@ -710,7 +769,8 @@ class BnBAlgorithm(BnBAlgorithmBase):
   def compute_acqf_bounds(self, l, u, skip_LB=False):
     # kernel bounds
     kL, kU = self.ker_bounds(l, u)
-    assert self.p == 1.0 or self.p == 2.0, "not supporting p not equal to 1 or 2"
+    if self.kernel_spec == "pow_exp":
+      assert self.p == 1.0 or self.p == 2.0, "not supporting p not equal to 1 or 2"
     
     failed_LB_opt = False
     if isinstance(self.acqf, LCBacquisition):
@@ -1241,7 +1301,7 @@ class branching_wrapper:
     par = sm.optimal_par
 
     # --- kernel / corr selection ---
-    corr = sm.options["corr"]  # e.g., 'squar_exp', 'pow_exp', 'abs_exp', 'matern32', 'matern52'
+    corr = sm.options["corr"]  # e.g., 'squar_exp', 'pow_exp', 'abs_exp', 'matern12', 'matern32', 'matern52'
     if corr == "pow_exp":
       # OptionsDictionary -> use membership + indexing (no .get)
       p = float(sm.options["pow_exp_power"]) if "pow_exp_power" in sm.options else 2.0
@@ -1256,6 +1316,9 @@ class branching_wrapper:
       self.p = 2.0
     elif corr == "abs_exp":
       # Exponential is pow_exp with p=1
+      self.kernel_spec = "pow_exp"
+      self.p = 1.0
+    elif corr == "matern12":
       self.kernel_spec = "pow_exp"
       self.p = 1.0
     elif corr == "matern32":
@@ -1389,12 +1452,6 @@ class branching_wrapper:
       s_max = (th * (dmax ** p)).sum(axis=1)
       kU = np.exp(-s_min)                                       # max on box
       kL = np.exp(-s_max)                                       # min on box
-    elif spec == "matern12":
-      # Matérn ν=1/2 (a.k.a. abs-exp): k = exp(-sum_j θ_j |dx_j|)
-      s_min = (th * dmin).sum(axis=1)
-      s_max = (th * dmax).sum(axis=1)
-      kU = np.exp(-s_min)
-      kL = np.exp(-s_max)
     elif spec == "matern32":
       # SMT separable form: ∏_j (1 + √3 θ_j |dx_j|) exp(-√3 θ_j |dx_j|)
       a = np.sqrt(3.0) * th
@@ -1474,14 +1531,14 @@ class branching_wrapper:
        mode: 1 --> convex relaxation for maximum of variance        
     """
     assert mode in [0, 1], "mode can only be in 0, 1"
-    assert opt_mode in [0, 1, 2, 3, 4], "opt mode can only be 0, 1, 2, or 3"
+    assert opt_mode in [0, 1, 2, 3, 4, 5], "opt mode can only be 0, 1, 2, or 3"
     # opt_mode = 0 (previous baseline w ratio constraints)
     # opt_mode = 1 (Convex relaxation w no ratio constraints on k and no affine constraints)
     # opt_mode = 2 (Most recent relaxation w ratio constraints and affine constraints)
     # opt_mode = 3 (Relaxation in w)
     # opt_mode = 4 (opt_mode 3 but with alternative to ratio constraints on k)
     cons = [self.C2 @ self.X >= kL, self.C2 @ self.X <= kU, self.cons2 >= 0, self.en1 @ self.X >= 0]
-    if opt_mode != 0:
+    if opt_mode != 0 and opt_mode != 5:
       # add x optimization variable constrained to box: l <= x <= u
       xvar = cp.Variable(self.x.shape[1])
       cons.append(l <= xvar)
@@ -1575,7 +1632,7 @@ class branching_wrapper:
             for j in range(i+1, ntrain):
               # d = 2 x^\top \Theta (x^{(j)} - x^{(i)}) + ||x^{(i)}||_{\Theta}^2 - ||x^{(j)}||_{\Theta}^2 
               cons.append(dvar[k] == cp.atoms.sum(cp.atoms.multiply(th / self.X_scale**self.p, 2.0 * cp.atoms.multiply(xvar, self.x[j] - self.x[i]) + self.x[i] * self.x[i] - self.x[j] * self.x[j]))) 
-              # q >= exp(-d)
+              # q >= exp(d)
               cons.append(qvar[k] >= cp.atoms.exp(-1.0 * dvar[k]))
               # --- begin d secant constraint ---
               
@@ -1591,6 +1648,7 @@ class branching_wrapper:
               q_lbound = np.exp(-1.0 * d_ubound)       
               cons.append(qvar[k] <= q_ubound + ((q_lbound - q_ubound) / (d_ubound - d_lbound)) * (dvar[k] - d_lbound))
               # --- end d secant constraint ---
+
               # McCormick relaxation on product k_i = q_k * k_j
               # z = x * y
               # z >= x_l y + x * y_l - x_l * y_l
@@ -1601,13 +1659,48 @@ class branching_wrapper:
               cons.append((self.C2 @ self.X)[i] >= q_ubound * (self.C2 @ self.X)[j] + qvar[k] * kMax[j] - q_ubound * kMax[j])
               cons.append((self.C2 @ self.X)[i] <= q_ubound * (self.C2 @ self.X)[j] + qvar[k] * kMin[j] - q_ubound * kMin[j])
               cons.append((self.C2 @ self.X)[i] <= q_lbound * (self.C2 @ self.X)[j] + qvar[k] * kMax[j] - q_lbound * kMax[j])
-              # ---- end McCormick relaxation of product k_i = q_k * k_j
+              # ---- end McCormick relaxation on product k_i = q_k * k_j
               
               # add additional bound constraints on on d
               cons.append(dvar[k] <= d_ubound)
               cons.append(d_lbound <= dvar[k])
               k = k + 1
-
+    elif opt_mode == 5:
+      assert self.p == 2.0, "opt_mode 5 only supports squared exponential kernel"
+      # add x optimization variable constrained to box: l <= x <= u
+      xvar = cp.Variable(self.x.shape[1])
+      cons.append(l <= xvar)
+      cons.append(xvar <= u)
+      ntrain = self.x.shape[0]
+      # determine bounds for k and lambda
+      dmin = np.maximum(0.0, np.maximum((l - self.x) / self.X_scale, (self.x - u)/ self.X_scale))        # (nt,d)
+      dmax = np.maximum(np.abs((l - self.x) / self.X_scale), np.abs((u - self.x) / self.X_scale))         # (nt,d)
+      th  = self.theta.ravel()     # (d,)
+      # rho is not an optimization variable but
+      # is clearly related to lambda so will be used
+      rhoMin = (th * (dmin**self.p)).sum(axis=1)
+      rhoMax = (th * (dmax**self.p)).sum(axis=1) 
+      #cons.append(kMin <= self.C2 @ self.X) implied by rhovar <= rhomax
+      kMax = np.exp(-rhoMin)
+      kMin = np.exp(-rhoMax)
+      cons.append(kMin <= self.C2 @ self.X)  # k >= kMin     
+      cons.append(self.C2 @ self.X <= kMax)  # k <= kMax
+      lamvar = cp.Variable(ntrain)
+      lamMax = -1.0 * rhoMin
+      lamMin = -1.0 * rhoMax
+      #for i in range(ntrain):
+      #  cons.append((self.C2 @ self.X)[i] >= cp.atoms.exp(lamvar[i]))
+      cons.append(self.C2 @ self.X <= kMin + cp.atoms.multiply((kMax - kMin) / (lamMax - lamMin),  (lamvar  - lamMin)))
+      etavar = cp.Variable((ntrain, ntrain))
+      cons.append(lamvar == cp.atoms.sum(etavar, axis=1)) # sum along column of matrix-valued \eta
+      wvar = cp.Variable(self.x.shape[1])
+      for i in range(ntrain):
+        for j in range(self.x.shape[1]):
+          cons.append(etavar[i,j] == (-1.0 * th[j] / self.X_scale[j]) * (wvar[j] - 2 * self.x[i][j] * xvar[j] + self.x[i][j]**2.))
+      for j in range(self.x.shape[1]):
+        cons.append(xvar[j] * xvar[j] <= wvar[j])
+        cons.append(wvar[j] <= (l[j] + u[j]) * xvar[j] - l[j] * u[j])
+      
         
     opt_tol = 1.e-8
     opt_rel_tol = 1.e-8
