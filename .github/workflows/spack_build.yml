@@ -163,7 +163,7 @@ jobs:
         run: spack -e . mirror set --oci-username ${{ env.USERNAME }} --oci-password "${{ secrets.GITHUB_TOKEN }}" local-buildcache
 
       - name: Trust keys
-        run: spack -e . buildcache keys --install --trust
+        run: spack -e . buildcache keys --install --trust || echo "No keys to trust, continuing..."
 
       - name: Find external packages
         run: spack -e . external find --all --exclude python --exclude curl --exclude openssl
@@ -186,8 +186,8 @@ jobs:
         run: |
           # Not all pipelines have `+mpi`, so this command might fail
           # Command also only prints shell commands, need to source
-          spack -e . load --sh openmpi > env.txt || [ rm env.txt || true ]
-          source env.txt || true
+          spack -e . load --sh openmpi > env.txt || rm -f env.txt
+          [ -f env.txt ] && source env.txt || true
           cd $(spack -e . location --build-dir hiop@develop)
           ctest -VV
 
