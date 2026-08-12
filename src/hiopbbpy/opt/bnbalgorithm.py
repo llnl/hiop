@@ -476,6 +476,33 @@ class BnBAlgorithm(BnBAlgorithmBase):
     self.b_obj3[-1] = 1.0
     self.obj3 = self.b_obj3.T @ self.X + self.c_obj3
 
+
+    # constants for choosing number of "k ratio" constraints
+    # first constraints are determined via nearest neighbor search
+    # the kernel distances will be based on the forms of the kernels
+    # for SE th * ((x - x^(i)) / X_scale))^2 is used
+    # for all other kenels th * |(x - x^(i)) / X_scale| is used
+    # for this reason the distance metric will be
+    # || \sqrt(th) / X_scale * (x^(i) - x^(r))||_2 for SE
+    # and || th / X_scale * (x^(i) - x^(r)||_1 for all other kernels
+    distance_mat = np.zeros((ntrain,ntrain))
+    theta = self.theta.ravel()
+    # only fill the upper triangle
+    for i in range(ntrain):
+      for j in range(i+1, ntrain):
+        if self.kernel_spec == "pow_exp" and self.p == 2.0:
+          distance_mat[i, j] = np.linalg.norm(np.sqrt(theta) * (self.x[i] - self.x[j]) / self.X_scale)
+        else:
+          distance_mat[i, j] = np.linalg.norm(theta * (self.x[i] - self.x[j]) / self.X_scale, ord=1)
+    # now extract largest pairs
+    self.c0 = 10
+    npairs = min(self.c0 * ntrain, int((ntrain * (ntrain - 1)) / 2))
+    self.nearest_neighbor_pairs = get_largest_matrix_element_idxs(distance_mat, npairs) 
+    #TODO: add more pairs
+
+
+    #self.c0 = 
+
   # For minimization, we find a feasible function value as the upper bound on the minimum value of the acquisition function.
   def compute_acqf_upper_bound(self, l, u):
     # We compute the upper bound of the acquisition function based on bounds of the kernel, mu and sigma.
@@ -705,6 +732,32 @@ class BnBAlgorithm(BnBAlgorithmBase):
             cons.append(cp.atoms.sum(alphavars[j]) == 1.0)
             for i in range(len(taus[j])):
               cons.append(alphavars[j][i] >= 0.0)
+        # TODO: choose which constraints get added based on nearest neighbor pairs
+        # both of these options max/min (\phi_i - phi_r) lie on end points
+        # create lambda callback for dphi_ir
+        for pair in self.nearest_neighbor_pairs:
+          i_idx = pair[0]
+          r_idx = pair[1]
+          lir_min = 0.
+          lir_max = 0.
+          dphi_ijr = lambda t,j: -th[j] / (self.X_scale[j]**self.p) * (np.abs(t - self.x[i_idx][j])**self.p - np.abs(t - self.x[r_idx][j])**self.p)
+          lijr_mins = [min([dphi_ijr(l[j], j), dphi_ijr(u[j],j)]) for j in range(dimx)]
+          lijr_maxs = [max([dphi_ijr(l[j], j), dphi_ijr(u[j],j)]) for j in range(dimx)]
+          lir_min = sum(lijr_mins)
+          lir_max = sum(lijr_maxs)
+          if lir_max - lir_min > 1.e-6:
+            cons.append(lir_min <= lamvar[i_idx] - lamvar[r_idx])
+            cons.append(lamvar[i_idx] - lamvar[r_idx] <= lir_max) 
+          else:
+            print("lir_max - lir_min = ", lir_max - lir_min)
+          #print("i, r = {0:d}, {1:d}, lir_min, lir_max = {2:1.2e}, {3:1.2e}".format(i_idx, r_idx, lir_min, lir_max))
+        #print("-"*20)
+        #print("-"*20)
+        #print("-"*20)
+          
+
+
+
       else: #matern32 or matern52
         nu = 1.5
         if self.kernel_spec != "matern32":
