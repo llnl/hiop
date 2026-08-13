@@ -1786,8 +1786,6 @@ hiopNlpDenseConstraints::hiopNlpDenseConstraints(hiopInterfaceDenseConstraints& 
 
 hiopNlpDenseConstraints::~hiopNlpDenseConstraints() {}
 
-bool hiopNlpDenseConstraints::finalizeInitialization() { return hiopNlpFormulation::finalizeInitialization(); }
-
 hiopDualsLsqUpdate* hiopNlpDenseConstraints::alloc_duals_lsq_updater()
 {
   return new hiopDualsLsqUpdateLinsysRedDenseSymPD(this);

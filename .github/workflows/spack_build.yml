@@ -9,7 +9,9 @@ env:
   tempdir: /opt/spack-cache
   TMP: /opt/spack-cache
   TMPDIR: /opt/spack-cache
-  # Our repo name contains upper case characters, so we can't use ${{ github.repository }}
+
+  # Our repo name contains upper case characters, so we can't use
+  # ${{ github.repository }}
   IMAGE_NAME: hiop
   USERNAME: hiop-bot
   BASE_VERSION: ubuntu-24.04-fortran
@@ -17,14 +19,16 @@ env:
 jobs:
   base_image_build:
     runs-on: ubuntu-24.04
+
     permissions:
       packages: write
       contents: read
 
     name: Build Custom Base Image
+
     steps:
       # No GHCR base image with skopeo, so this will do...
-      - name: "Set up skopeo"
+      - name: Set up skopeo
         uses: warjiang/setup-skopeo@v0.1.3
         with:
           version: latest
@@ -33,22 +37,31 @@ jobs:
       - name: Check for existing base images
         run: |
           set -e
-          CONTAINER_TAG=${{ env.BASE_VERSION }}
+
+          CONTAINER_TAG="${{ env.BASE_VERSION }}"
           OCI_URL="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.BASE_VERSION }}"
-          echo Checking for CONTAINER_TAG $CONTAINER_TAG
-          skopeo inspect \
-              docker://$OCI_URL \
-              --raw \
-              --creds "${{ env.USERNAME }}:${{ secrets.GITHUB_TOKEN }}" \
-            > /dev/null && echo "Image already exists. Please bump version." && exit 0
-          echo "IMAGE_EXISTS=false" >> $GITHUB_ENV
+
+          echo "Checking for CONTAINER_TAG ${CONTAINER_TAG}"
+
+          if skopeo inspect \
+            "docker://${OCI_URL}" \
+            --raw \
+            --creds "${{ env.USERNAME }}:${{ secrets.GITHUB_TOKEN }}" \
+            > /dev/null 2>&1; then
+            echo "Image already exists."
+            echo "IMAGE_EXISTS=true" >> "$GITHUB_ENV"
+          else
+            echo "Image does not exist; it will be built."
+            echo "IMAGE_EXISTS=false" >> "$GITHUB_ENV"
+          fi
 
       # Need to build custom base image with gfortran
       - name: Create Dockerfile heredoc
         if: ${{ env.IMAGE_EXISTS == 'false' }}
         run: |
-          cat << EOF > Dockerfile
+          cat << 'EOF' > Dockerfile
           FROM ubuntu:24.04
+
           RUN apt-get update && \
               apt-get install -y --no-install-recommends \
                 software-properties-common \
@@ -56,7 +69,9 @@ jobs:
                 openssh-client \
                 openssh-server \
               && rm -rf /var/lib/apt/lists/*
+
           RUN add-apt-repository ppa:ubuntu-toolchain-r/test && \
+              apt-get update && \
               apt-get install -y --no-install-recommends \
                 gfortran \
                 gcc \
@@ -66,6 +81,7 @@ jobs:
 
       # https://docs.github.com/en/actions/publishing-packages/publishing-docker-images
       - name: Log in to the Container registry
+        if: ${{ env.IMAGE_EXISTS == 'false' }}
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -92,20 +108,24 @@ jobs:
   hiop_spack_builds:
     needs: base_image_build
     runs-on: ubuntu-22.04
+
     permissions:
       packages: write
       contents: read
+
     strategy:
       matrix:
         spack_spec:
-          - hiop@develop+mpi~raja~shared~kron~sparse ^openmpi 
+          - hiop@develop+mpi~raja~shared~kron~sparse ^openmpi
           - hiop@develop~mpi~raja~shared~kron~sparse
           - hiop@develop~mpi+raja~shared~kron~sparse
           # We will need coinhsl for this, but what are the rules for using
           # a coinhsl tarball?
           # - hiop@develop~mpi~raja~shared~kron+sparse
+
         blas_provider:
           - openblas
+
         compiler:
           - gcc
 
@@ -115,99 +135,171 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          # Once we move submodule deps into spack, we can do some more builds
-          # Also need to change build script to use spack from base image
+          # Once we move submodule deps into Spack, we can do more builds.
+          # Also need to change build script to use Spack from base image.
           submodules: true
 
-      - name: Clone Spack
-        run: git clone https://github.com/spack/spack.git
+      - name: Clone Spack v1.2.2
+        run: |
+          git clone \
+            --branch v1.2.2 \
+            --depth 1 \
+            https://github.com/spack/spack.git
 
       - name: Setup Spack
-        run: echo "$PWD/spack/bin" >> "$GITHUB_PATH"
+        run: |
+          echo "$PWD/spack/bin" >> "$GITHUB_PATH"
+
+      - name: Verify Spack version
+        run: |
+          VERSION="$(spack --version)"
+          echo "Spack version: $VERSION"
+
+          case "$VERSION" in
+            1.2.2*) ;;
+            *)
+              echo "ERROR: Expected Spack 1.2.2"
+              exit 1
+              ;;
+          esac
 
       - name: Create heredoc spack.yaml
         run: |
           spack debug report
+
           cat << EOF > spack.yaml
           spack:
             specs:
             - ${{ matrix.spack_spec }} target=x86_64_v2
             - ${{ matrix.blas_provider }} target=x86_64_v2
+
             concretizer:
-              reuse: true # We want to re-use existing binaries in spack / GHCR mirror
-              unify: true # We want to build the openblas and hiop version together!
+              # Reuse existing dependency binaries from Spack / GHCR mirrors.
+              # The HiOp root package is explicitly forced to build from source
+              # in the install command below.
+              reuse: true
+              unify: true
+
             config:
               source_cache: $SPACK_CACHE/source_cache
               misc_cache: $SPACK_CACHE/misc_cache
               build_stage: $SPACK_CACHE/build_stage
+              keep_stage: true
+
               install_tree:
                 root: /opt/spack
-                padded_length: False
+                padded_length: false
+
             mirrors:
               local-buildcache: oci://${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-              # If the spack buildcache fails for any readon, feel free to disable
               spack: https://binaries.spack.io/develop
+
             packages:
               all:
                 require: "%${{ matrix.compiler }}"
-              # https://spack.readthedocs.io/en/latest/packages_yaml.html#setting-requirements-on-virtual-specs
+
+              # We don't need CMake GUI features for minimal container builds.
               cmake:
-                # We don't need CMake GUI features for minimal container builds
                 require: "~qtgui~ncurses"
+
+              # Building OpenSSL was causing errors.
               libevent:
-                # Building OpenSSL was causing errors
                 require: "~openssl"
           EOF
 
       - name: Configure GHCR mirror
-        run: spack -e . mirror set --oci-username ${{ env.USERNAME }} --oci-password "${{ secrets.GITHUB_TOKEN }}" local-buildcache
+        run: |
+          spack -e . mirror set \
+            --oci-username "${{ env.USERNAME }}" \
+            --oci-password "${{ secrets.GITHUB_TOKEN }}" \
+            local-buildcache
 
       - name: Trust keys
-        run: spack -e . buildcache keys --install --trust
+        run: |
+          yes | spack -e . buildcache keys --install --trust \
+            || echo "No keys to trust, continuing..."
 
       - name: Find external packages
-        run: spack -e . external find --all --exclude python --exclude curl --exclude openssl
+        run: |
+          spack -e . external find \
+            --all \
+            --exclude python \
+            --exclude curl \
+            --exclude openssl
 
       - name: Spack develop HiOp
-        run: spack -e . develop --path=$(pwd) hiop@git."${{ github.head_ref || github.ref_name }}"=develop
+        run: |
+          spack -e . develop \
+            --path="$(pwd)" \
+            hiop@git."${{ github.head_ref || github.ref_name }}"=develop
 
       - name: Concretize
-        run: spack -e . concretize --fresh
-
-      - name: Install Dependencies
-        run: spack -e . install --no-check-signature --fail-fast --show-log-on-error --verbose --only dependencies
-
-      - name: Install HiOp
         run: |
-          ls -al
-          spack -d -e . install  --keep-stage --verbose --show-log-on-error --only package
+          spack -e . concretize --fresh
+
+      - name: Show concretized environment
+        run: |
+          spack -e . find -lv
+
+      - name: Install dependencies
+        run: |
+          spack -e . install \
+            --only dependencies \
+            --use-buildcache package:never,dependencies:auto \
+            --no-check-signature \
+            --show-log-on-error \
+            --verbose
+
+      - name: Build HiOp from source
+        env:
+          SPACK_KEEP_BUILD_STAGE: "true"
+        run: |
+          spack -e . install \
+            --only package \
+            --use-buildcache package:never,dependencies:auto \
+            --keep-stage \
+            --no-check-signature \
+            --show-log-on-error \
+            --verbose
 
       - name: Test Build
         run: |
-          # Not all pipelines have `+mpi`, so this command might fail
-          # Command also only prints shell commands, need to source
-          spack -e . load --sh openmpi > env.txt || [ rm env.txt || true ]
-          source env.txt || true
-          cd $(spack -e . location --build-dir hiop@develop)
-          ctest -VV
+          # Load OpenMPI environment for the +mpi matrix entry.
+          # Non-MPI entries simply skip this.
+          spack -e . load --sh openmpi > env.txt 2>/dev/null \
+            || rm -f env.txt
+
+          if [ -f env.txt ]; then
+            source env.txt
+          fi
+
+          BUILD_DIR="$(spack -e . location --build-dir hiop@develop)"
+
+          echo "HiOp build directory: ${BUILD_DIR}"
+
+          if [ -z "${BUILD_DIR}" ] || [ ! -d "${BUILD_DIR}" ]; then
+            echo "ERROR: HiOp build directory does not exist."
+            exit 1
+          fi
+
+          cd "${BUILD_DIR}"
+          ctest --output-on-failure -VV
 
       - name: Push binaries to buildcache
         if: ${{ !cancelled() }}
         env:
-          # What Spack’s example expects
-          GITHUB_USER: ${{ env.USERNAME }}          # e.g. hiop-bot
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # packages: write perms
+          GITHUB_USER: ${{ env.USERNAME }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Ensure the mirror uses these env var names for auth (idempotent)
           spack -e . mirror set \
             --oci-username-variable GITHUB_USER \
             --oci-password-variable GITHUB_TOKEN \
             local-buildcache
 
-          # Push (NO username/password flags here!)
           spack -e . buildcache push \
             --force \
-            --base-image ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.BASE_VERSION }} \
+            --allow-missing \
+            --base-image "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.BASE_VERSION }}" \
             --unsigned \
             --update-index \
             local-buildcache
