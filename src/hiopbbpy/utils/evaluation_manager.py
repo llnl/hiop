@@ -238,7 +238,7 @@ class EvaluationManager:
           future_obj = self.executors[key].submit(fn, *args, **kwargs)
 
         self._queue.append([x, future_obj, key, submit_time])
-        self.logger.info(f"{self.task_name} Submitted f({x})")
+        #self.logger.scalars(f"{self.task_name} Submitted f({x})")
 
   def retrieve_results(self) -> tuple[list, list]:
     """Retrieves the results of completed tasks.

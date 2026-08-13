@@ -136,7 +136,9 @@ class BOAlgorithm(BOAlgorithmBase):
       self.solver_options = {}
       self.solver_options = options.get('solver_options', self.solver_options)
     self.opt_solver = opt_solver    
-    self.bnb_queue = None
+    self.bnb_queue = None  # legacy; not a complete spatial partition
+    self.bnb_partition = None
+    self.bnb_lower_bound_transfer = options.get('BnBLowerBoundTransfer', None)
     if user_grad:
       self.fun_grad = user_grad
 
@@ -313,7 +315,10 @@ class BOAlgorithm(BOAlgorithmBase):
         bnb = BnBAlgorithm(acqf, options=self.solver_options, BOit=i)
      
         # Initialize BnB (perhaps use old set of boxes if self.bnb_queue is not None)
-        bnb.initialize(queue=self.bnb_queue)
+        bnb.initialize(
+          partition=self.bnb_partition,
+          transfer_lower_bound=self.bnb_lower_bound_transfer,
+        )
         
         # Run BnB optimization
         best_xopt = bnb.optimize()
@@ -321,7 +326,7 @@ class BOAlgorithm(BOAlgorithmBase):
         print("size of BnB queue = ", len(bnb.queue))
         print("optimal point = ", best_xopt)
         # experimental, testing clustering of BnB queue----
-        bnb_nodes = [item[2] for item in bnb.queue]
+        bnb_nodes = bnb.get_candidate_nodes()
         node_pts = np.array([node.aq_U_x for node in bnb_nodes])
         """
           approach -- 1) split queue into batch_size 
@@ -353,7 +358,8 @@ class BOAlgorithm(BOAlgorithmBase):
         x_train = np.vstack([x_train, x_new])
         if self.bnb_warm_start:
           # Update queue in order to warm-start BnB at next BO step
-          self.bnb_queue = bnb.queue
+          self.bnb_partition = bnb.export_partition()
+          self.bnb_queue = bnb.queue  # compatibility/diagnostics only
         self.bnb_num_branch_hist.append(bnb.num_branches)
 
       y_new = self.obj_evaluator.run(self.prob.evaluate, x_train[-self.batch_size:])
