@@ -109,7 +109,7 @@ class MPIEvaluator(Evaluator):
     if executor is None:
       from concurrent.futures import ThreadPoolExecutor
       import multiprocessing
-      max_workers = multiprocessing.cpu_count()
+      max_workers = 8 #multiprocessing.cpu_count()
       executor = ThreadPoolExecutor(max_workers=max_workers)
       print(f"No executor provided for {task_name}, using ThreadPoolExecutor with {max_workers} workers")
 

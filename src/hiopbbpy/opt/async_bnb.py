@@ -680,9 +680,9 @@ def initialize_async_search(
   # Defaults keep this adapter compatible with the current branch while the
   # constructor options are migrated.
   if not hasattr(algorithm, "inflight_factor"):
-    algorithm.inflight_factor = 1.5
+    algorithm.inflight_factor = 1.
   if not hasattr(algorithm, "poll_interval"):
-    algorithm.poll_interval = 1.0e-3
+    algorithm.poll_interval = 1.0e-1
   if not hasattr(algorithm, "max_task_retries"):
     algorithm.max_task_retries = 1
   if not hasattr(algorithm, "bound_consistency_tol"):
@@ -878,8 +878,9 @@ def run_async_search(
       if algorithm.stop_reason == "worker_failure":
         break
 
-    print(f"Evaluator retrieve_results: {len(completed)}  all results were processed.")
-    print(f"BnB nodes/leaves in the partition: {store.counts()}")
+    if len(completed) > 0:
+      print(f"Evaluator retrieve_results: {len(completed)}  all results were processed.")
+      print(f"BnB nodes/leaves in the partition: {store.counts()}")
     
     if algorithm.stop_reason == "worker_failure":
       break
@@ -924,7 +925,8 @@ def run_async_search(
       capacity -= 1
       made_progress = True
 
-    print(f"Submitted {submitted} new nodes. Capacity {capacity} out of {inflight_limit}.")
+    if submitted:
+      print(f"Submitted {submitted} new nodes. Capacity {capacity} out of {inflight_limit}. synchronous {algorithm.synchronous}")
       
     if algorithm.synchronous and submitted:
       evaluator.sync()

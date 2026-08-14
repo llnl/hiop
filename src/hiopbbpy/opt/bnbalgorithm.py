@@ -341,8 +341,8 @@ class BnBAlgorithm(BnBAlgorithmBase):
     self.min_diam = 0.125
     self.epsilon_prune = 1.e-14
     self.epsilon_node = self.epsilon_gap/100
-    self.inflight_factor = 1.5
-    self.poll_interval = 1.e-3
+    self.inflight_factor = 1.
+    self.poll_interval = 0.05
     self.max_task_retries = 1
     self.bound_consistency_tol = 1.e-4
     self.max_bnbiter = 2000
@@ -352,7 +352,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
     self.saveData = False #saveData
     self.saveDataDir = ""
     self.pure_BBS = False  # pure BBS search or hybrid BBS/BFS search
-    self.synchronous = False # synchronous or asynchronous evaluations
+    self.synchronous = True # synchronous or asynchronous evaluations
     self.verbose_cvx_solver = False # verbose convex optimizer solves
     self.opt_mode = 3
 
@@ -424,6 +424,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
         function_mode=False,
         executor=options.get("executor", None),
         task_name="BNB",
+        profiling=False,
       )
     else:
       self.node_evaluator = supplied_evaluator
