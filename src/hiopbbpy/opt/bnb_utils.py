@@ -278,7 +278,7 @@ def Fjmax_fivehalves(lj, uj, X, thj, alpha, beta):
   return x_min, x_max, y_min, y_max
 
 
-def k_largest_matrix_element_pairs(matrix, k):
+def get_largest_matrix_element_idxs(matrix, k):
   arr = np.array(matrix)
 
   # 1. Flatten the 2D matrix to a 1D array
