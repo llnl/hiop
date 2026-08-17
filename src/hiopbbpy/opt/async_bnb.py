@@ -295,6 +295,9 @@ class AsyncLeafPartition:
   # Dispatch and result acceptance
   # ------------------------------------------------------------------------
   def _pop_valid_ready_id(self) -> Optional[int]:
+    '''
+    Find next BnB node to branch on.
+    '''
     while self.ready:
       lower_bound, negative_depth, node_id = heapq.heappop(self.ready)
       leaf = self.leaves.get(node_id)
@@ -308,6 +311,9 @@ class AsyncLeafPartition:
     return None
 
   def dispatch_next(self, metadata: Optional[Mapping[str, Any]] = None) -> Optional[BnBNode]:
+    '''
+    Send the BnB node to the inflight queue and update its status in node partition
+    '''
     node_id = self._pop_valid_ready_id()
     if node_id is None:
       return None
@@ -433,7 +439,7 @@ class AsyncLeafPartition:
         else:
           raise ValueError("Inherited parent feasible point contradicts child lower bound")
 
-  def accept_result(self, result: BranchResult) -> Tuple[BnBNode, ...]:
+  def accept_result(self, result: BranchResult) -> Tuple[Tuple[BnBNode, ...], bool]:
     """
     Atomically replace an in-flight parent by its two returned children. Children may be
     added as READY or CLOSED (pruned or due to small local gap). If the result changes
@@ -472,8 +478,12 @@ class AsyncLeafPartition:
         self.incumbent_x = child.aq_U_x.copy()
         winning_child = child
 
+    incumbent_changed = False
     if self.incumbent_value < previous_incumbent:
-      print(f"Incumbent updated: new LUB={self.incumbent_value} previous LUB={previous_incumbent}")
+      incumbent_changed = True
+      #lub_change = self.incumbent_value - previous_incumbent
+      #print(f"New incumbent: LUB={self.incumbent_value} change={lub_change}")
+      #print(f"  Counts before: {self.counts()}")
       self._reclassify_ready_after_incumbent_update()
 
     for child in children:
@@ -504,7 +514,7 @@ class AsyncLeafPartition:
     self.accepted_parent_tasks += 1
     if self.debug_checks:
       self.assert_invariants()
-    return tuple(children)
+    return tuple(children), incumbent_changed
 
   # ------------------------------------------------------------------------
   # Warm start, views, and diagnostics
@@ -786,10 +796,44 @@ def run_async_search(
       sum(leaf.volume for leaf in store.leaves.values()
           if leaf.close_reason == CloseReason.PRUNED.value)
   ]
+
+  algorithm.totalvol = sum(leaf.volume for leaf in store.leaves.values())
+  log.info("BnB domain total volume: %g" % algorithm.totalvol)
+  
   algorithm.pruningratio_history = [
       store.counts()["pruned"] / max(1, store.counts()["total"])
   ]
+  algorithm.print_iter_last = -1
+  algorithm.print_iter_count = 0
 
+  def print_iter_info(algorithm: Any, store: Any, log: Any, incumb_changed: Bool) -> None:
+    """
+    Print a short summary of the search stats
+    """
+    counts_dict = store.counts()
+    if algorithm.print_iter_count % 10 == 0:
+      msg = f"# branches  optim gap  \% PrunedVol   PrunedRatio | "
+      keys_str = "   ".join(counts_dict.keys())
+      msg = f"  {msg}    {keys_str} |     LUB"
+      log.info(msg)
+    algorithm.print_iter_count += 1
+
+    vals_str = " ".join(f"{v:8d}" for v in counts_dict.values())
+
+    prunedvol_perc = algorithm.prunedvol_history[-1] / algorithm.totalvol * 100.
+    msg = ( f"{algorithm.num_branches:8d}  {algorithm.gap_history[-1]:12.5e}  "
+            f"{prunedvol_perc:12.5f} {algorithm.pruningratio_history[-1]:12.5e}")
+
+    msg = f"{msg} | {vals_str}"
+
+    if incumb_changed:
+      msg = f"* {msg}      | {store.incumbent_value:12.5e}"
+    else:
+      msg = f"  {msg}"
+      
+    log.info(msg)
+
+  
   def make_brancher() -> Any:
     return brancher_type(
         algorithm.acqf,
@@ -843,7 +887,7 @@ def run_async_search(
         counts["pruned"] / max(1, counts["total"])
     )
 
-  def accept_completed_result(result: BranchResult, allow_retry: bool) -> bool:
+  def accept_completed_result(result: BranchResult, allow_retry: bool) -> tuple[bool, bool]:
     if result is None:
       raise RuntimeError("The asynchronous evaluator returned a missing result")
     parent_id = int(result.parent_id)
@@ -851,10 +895,11 @@ def run_async_search(
     # A late result from an older BO generation can have the same persistent
     # parent ID as a current task.  Never release/reuse the current task's
     # brancher on the basis of that stale result.
+    incumbent_changed = False
     if record is not None and int(result.generation) == int(record.generation):
       release_brancher(parent_id)
     try:
-      children = store.accept_result(result)
+      children, incumbent_changed = store.accept_result(result)
     except RuntimeError as exc:
       parent = store.leaves.get(int(result.parent_id))
       attempts = 0 if parent is None else int(parent.metadata.get("task_attempt", 0))
@@ -862,36 +907,50 @@ def run_async_search(
         algorithm.last_worker_error = str(exc)
         if algorithm.stop_reason is None:
           algorithm.stop_reason = "worker_failure"
-        return False
-      return True
+        return False, incumbent_changed
+      return True, incumbent_changed
     if children:
       record_children(children)
-      return True
-    return False
+      return True, incumbent_changed
+    return False, incumbent_changed
 
   while True:
     made_progress = False
-
+    incumbent_changed = False
     completed = evaluator.retrieve_results()
     for result in completed:
-      made_progress = accept_completed_result(result, allow_retry=True) or made_progress
+      made_progress2, incumbent_changed2 = accept_completed_result(result, allow_retry=True)
+      made_progress = made_progress2 or made_progress
+      incumbent_changed = incumbent_changed2 or incumbent_changed
       if algorithm.stop_reason == "worker_failure":
         break
 
-    if len(completed) > 0:
-      print(f"Evaluator retrieve_results: {len(completed)}  all results were processed.")
-      print(f"BnB nodes/leaves in the partition: {store.counts()}")
-    
+    #if len(completed) > 0:
+    #  print(f"Evaluator retrieve_results: {len(completed)}  all results were processed.")
+      #print(f"BnB nodes/leaves in the partition: {store.counts()}")
+
+    #if incumbent_changed:
+    #  print(f"  Counts after : {store.counts()}")
+      
     if algorithm.stop_reason == "worker_failure":
       break
 
     #print(f"[0]Nodes in READY {len(store.ready_nodes())}  in INFLIGHT {len(store.inflight)}  leaves in partition {len(store.leaves)}")
+
     
     algorithm.LUB = store.incumbent_value
     algorithm.LLB = store.global_lower_bound()
     algorithm.best_node = store.incumbent_leaf()
     algorithm._refresh_legacy_views()
 
+
+    # print iteration info
+    print_interval = np.power(10, min(4, 1 + np.floor(np.log10(algorithm.num_branches)))) / 10
+    if algorithm.num_branches - algorithm.print_iter_last > print_interval or incumbent_changed:
+      print_iter_info(algorithm, store, log, incumbent_changed)
+      if not incumbent_changed: 
+        algorithm.print_iter_last = algorithm.num_branches
+    
     if store.is_certified(algorithm.epsilon_gap, algorithm.epsilon_rel_gap):
       algorithm.certified = True
       algorithm.stop_reason = "optimality_gap"
@@ -907,12 +966,16 @@ def run_async_search(
     # partition and retains its certified lower bound while this task runs.
     capacity = inflight_limit - len(store.inflight)
     submitted = 0
+    depth_max = 0
+    depth_min = 100000
     while capacity > 0:
       parent = store.dispatch_next(
           metadata={"incumbent_at_submit": store.incumbent_value}
       )
       if parent is None:
         break
+      depth_min = min(depth_min, parent.depth)
+      depth_max = max(depth_max, parent.depth)
       parent_id = int(parent.node_id)
       brancher = acquire_brancher(parent_id)
       try:
@@ -925,8 +988,8 @@ def run_async_search(
       capacity -= 1
       made_progress = True
 
-    if submitted:
-      print(f"Submitted {submitted} new nodes. Capacity {capacity} out of {inflight_limit}. synchronous {algorithm.synchronous}")
+    #if submitted:
+    #  print(f"Submitted {submitted} new nodes. Capacity {capacity} out of {inflight_limit}. Sync {algorithm.synchronous}  Min/Max depths {depth_min} <<<< {depth_max}")
       
     if algorithm.synchronous and submitted:
       evaluator.sync()
@@ -996,6 +1059,8 @@ def run_async_search(
       np.savetxt(prefix + label + "_aqL" + suffix, np.asarray([node.aq_L for node in nodes]))
 
   incumbent_x = None if store.incumbent_x is None else store.incumbent_x.copy()
+
+  print_iter_info(algorithm, store, log, False) 
   log.info("BnB finished with status [%s] in %g seconds.", algorithm.stop_reason, time.time() - start_time)
   log.info("BnB returned LLB=%14.8e LUB=%14.8e gap=%14.8e.", algorithm.LLB, algorithm.LUB, algorithm.final_gap)
   return best_leaf.l.copy(), best_leaf.u.copy(), store.incumbent_value, incumbent_x

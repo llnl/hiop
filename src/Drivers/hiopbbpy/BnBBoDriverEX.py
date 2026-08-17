@@ -296,7 +296,7 @@ if __name__ == "__main__":
   x_train = problem.sample(n_samples)
   y_train = problem.evaluate(x_train)
   
-  theta = 5  # hyperparameter for GP kernel
+  theta = 5.  # hyperparameter for GP kernel
   fix_theta = True
   theta_bounds = [0.3, 10.]
   pow_exp_power = 2.0
@@ -335,7 +335,7 @@ if __name__ == "__main__":
       'max_iter': bnbmaxiter,
       'max_bnbtime': bnbmaxtime,
       'pure_BBS' : True,
-      'synchronous' : True,
+      'synchronous' : False,
       'early_stopping_heuristics' : False,
       'save_data' : False,
       'save_data_dir' : save_data_dir,

@@ -73,6 +73,10 @@ class MPIEvaluator(Evaluator):
 
   1. Single-node with ProcessPoolExecutor or ThreadPoolExecutor:
      python application.py
+    
+     It should be noted that performance issues due to (lack of) thready affinity
+     was observed on LC clusters with ThreadPoolExecutor. In all these cases, 
+     ProcessPoolExecutor worked flawelessly. We used srun -n 1 -c cores_or_threads 
 
   2. Single-node with MPI (legacy mode):
      env MPI4PY_FUTURES_MAX_WORKERS=8 mpiexec -n 1 python application.py
@@ -105,13 +109,15 @@ class MPIEvaluator(Evaluator):
   """
   def __init__(self, function_mode=True, executor=None, profiling=False,
                  task_name="MPITASK", run_root="./hiop_temp", use_run_dir=False):
-    # If no executor provided, create a default ThreadPoolExecutor
+    # If no executor provided, create a default ProcessPoolExecutor
     if executor is None:
-      from concurrent.futures import ThreadPoolExecutor
+      from concurrent.futures import ProcessPoolExecutor
+      #from concurrent.futures import ThreadPoolExecutor
       import multiprocessing
-      max_workers = 8 #multiprocessing.cpu_count()
-      executor = ThreadPoolExecutor(max_workers=max_workers)
-      print(f"No executor provided for {task_name}, using ThreadPoolExecutor with {max_workers} workers")
+      max_workers = 32 #multiprocessing.cpu_count()
+      #executor = ThreadPoolExecutor(max_workers=max_workers)
+      executor = ProcessPoolExecutor(max_workers=max_workers)
+      print(f"No executor provided for {task_name}, using ProcessPoolExecutor with {max_workers} workers")
 
     self.manager = EvaluationManager(executor, profiling=profiling, task_name=task_name)
     self.function_mode = function_mode

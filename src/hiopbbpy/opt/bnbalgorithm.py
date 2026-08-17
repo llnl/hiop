@@ -342,7 +342,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
     self.epsilon_prune = 1.e-14
     self.epsilon_node = self.epsilon_gap/100
     self.inflight_factor = 1.
-    self.poll_interval = 0.05
+    self.poll_interval = 0.01
     self.max_task_retries = 1
     self.bound_consistency_tol = 1.e-4
     self.max_bnbiter = 2000
@@ -352,7 +352,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
     self.saveData = False #saveData
     self.saveDataDir = ""
     self.pure_BBS = False  # pure BBS search or hybrid BBS/BFS search
-    self.synchronous = True # synchronous or asynchronous evaluations
+    self.synchronous = False # synchronous or asynchronous evaluations
     self.verbose_cvx_solver = False # verbose convex optimizer solves
     self.opt_mode = 3
 
@@ -834,7 +834,8 @@ class BnBAlgorithm(BnBAlgorithmBase):
       msg = opt_sol[3]
       acqf_solve_success = opt_sol[2]
       if not acqf_solve_success:
-        print(self.acqf_UB_solver + " did not converge on BOX: ", l, u, "... trying again with more verbosity and at another initial point", flush=True)
+        #print(self.acqf_UB_solver + " did not converge on BOX: ", l, u, "... trying again with more verbosity and at another initial point", flush=True)
+        print(self.acqf_UB_solver + " did not converge on BOX ... trying again with more verbosity and at another initial point", flush=True)
         print(self.acqf_UB_solver + " message: ", msg, flush=True)
         if self.acqf_UB_solver == "IPOPT":
           opt_solver_options = {'max_iter' : 200, 'tol' : 1.e-3, 'honor_original_bounds' : 'yes', 'print_level' : 0, 'sb' : 'yes'}
@@ -1490,7 +1491,8 @@ class branching_wrapper:
       msg = opt_sol[3]
       acqf_solve_success = opt_sol[2]
       if not acqf_solve_success:
-        print("WARNING: " + self.acqf_UB_solver + " did not converge on BOX: ", l, u, "... trying again with more verbosity and relaxed tol", flush=True)
+        #print("WARNING: " + self.acqf_UB_solver + " did not converge on BOX: ", l, u, "... trying again with more verbosity and relaxed tol", flush=True)
+        print("WARNING: " + self.acqf_UB_solver + " did not converge on BOX ... trying again with more verbosity and relaxed tol", flush=True)
         print("WARNING: " + self.acqf_UB_solver + " message: ", msg, flush=True)
         if self.acqf_UB_solver == "IPOPT":
           opt_solver_options = {'max_iter' : 200, 'tol' : 1.e-3, 'honor_original_bounds' : 'yes', 'print_level' : 0, 'sb' : 'yes'}
