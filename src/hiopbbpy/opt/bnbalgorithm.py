@@ -352,7 +352,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
     self.saveData = False #saveData
     self.saveDataDir = ""
     self.pure_BBS = False  # pure BBS search or hybrid BBS/BFS search
-    self.synchronous = False # synchronous or asynchronous evaluations
+    self.synchronous = True # synchronous or asynchronous evaluations
     self.verbose_cvx_solver = False # verbose convex optimizer solves
     self.opt_mode = 3
 

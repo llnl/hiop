@@ -481,9 +481,6 @@ class AsyncLeafPartition:
     incumbent_changed = False
     if self.incumbent_value < previous_incumbent:
       incumbent_changed = True
-      #lub_change = self.incumbent_value - previous_incumbent
-      #print(f"New incumbent: LUB={self.incumbent_value} change={lub_change}")
-      #print(f"  Counts before: {self.counts()}")
       self._reclassify_ready_after_incumbent_update()
 
     for child in children:
@@ -1042,7 +1039,8 @@ def run_async_search(
     best_leaf = min(store.leaves.values(), key=lambda leaf: (leaf.aq_L, leaf.node_id))
   algorithm.final_diameter = best_leaf.diam
 
-  if getattr(algorithm, "saveData", False):
+  if getattr(algorithm, "saveData", False) and algorithm.saveData:
+
     prefix = str(getattr(algorithm, "saveDataDir", ""))
     suffix = "_BOit" + str(getattr(algorithm, "BOit", 0)) + ".dat"
     np.savetxt(prefix + "branch_history" + suffix, algorithm.branch_history)

@@ -114,7 +114,7 @@ class MPIEvaluator(Evaluator):
       from concurrent.futures import ProcessPoolExecutor
       #from concurrent.futures import ThreadPoolExecutor
       import multiprocessing
-      max_workers = 32 #multiprocessing.cpu_count()
+      max_workers = 4 #multiprocessing.cpu_count()
       #executor = ThreadPoolExecutor(max_workers=max_workers)
       executor = ProcessPoolExecutor(max_workers=max_workers)
       print(f"No executor provided for {task_name}, using ProcessPoolExecutor with {max_workers} workers")
@@ -122,8 +122,9 @@ class MPIEvaluator(Evaluator):
     self.manager = EvaluationManager(executor, profiling=profiling, task_name=task_name)
     self.function_mode = function_mode
     self.run_root = Path(run_root)
-    self.run_root.mkdir(parents=True, exist_ok=True)
     self.use_run_dir = use_run_dir
+    if self.use_run_dir:
+      self.run_root.mkdir(parents=True, exist_ok=True)
     print(f"Create Evaluator for task: {task_name}")
   
   def __del__(self):
@@ -136,10 +137,11 @@ class MPIEvaluator(Evaluator):
   def submit_tasks(self, fun, Xin) -> None:
     nevals = Xin.shape[0]
 
-    # unique batch directory so repeated calls do not reuse temp_dir_0, temp_dir_1, ...
-    batch_id = f"{self.manager.task_name}_{os.getpid()}_{time.time_ns()}_{uuid.uuid4().hex[:8]}"
-    batch_dir = self.run_root / batch_id
-    batch_dir.mkdir(parents=True, exist_ok=False)
+    if self.use_run_dir:
+      # unique batch directory so repeated calls do not reuse temp_dir_0, temp_dir_1, ...
+      batch_id = f"{self.manager.task_name}_{os.getpid()}_{time.time_ns()}_{uuid.uuid4().hex[:8]}"
+      batch_dir = self.run_root / batch_id
+      batch_dir.mkdir(parents=True, exist_ok=False)
 
     for i in range(nevals):
       xi = np.atleast_2d(Xin[i])
@@ -151,11 +153,7 @@ class MPIEvaluator(Evaluator):
         kwargs["run_dir"] = str(run_dir)
 
       # submit (index, x) so we can restore original order later
-      self.manager.submit_tasks(
-        _run_indexed_fun,
-        [(fun, i, xi)],
-        **kwargs,
-      )
+      self.manager.submit_tasks(_run_indexed_fun, [(fun, i, xi)], **kwargs)
     return None
 
 
