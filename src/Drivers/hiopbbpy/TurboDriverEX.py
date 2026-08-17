@@ -19,6 +19,11 @@ from hiopbbpy.opt import TurboAlgorithm
 from hiopbbpy.problems import LpNormProblem
 from hiopbbpy.utils import MPIEvaluator
 
+try:
+    from hiopbbpy.surrogate_modeling.muygp import muyGP
+except ImportError:
+    muyGP = None   # optional: requires the MuyGPyS package with ADD_MUYGPS=1 pip install
+
 ### parameters
 n_samples = 20   # number of the initial samples to train GP
 theta = 1.e-2    # hyperparameter for GP kernel
@@ -36,10 +41,11 @@ if __name__ == "__main__":
   x_train = problem.sample(n_samples)
   y_train = obj_evaluator.run(problem.evaluate, x_train)
 
-  ### surrogate FACTORY: TuRBO builds new models per region and on restart.
-  ### Swap this single line for `lambda: muyGP(nx, xlimits)` to use the scalable
-  ### GP backend; nothing else in the driver changes.
+  # default backend:
   surrogate_factory = lambda: smtKRG(theta, xlimits, nx)
+  # to use the scalable MuyGPyS backend instead, comment the line above and use:
+  # surrogate_factory = lambda: muyGP(nx, xlimits)
+
 
   options = {
     'log_level': 'ITERATION',

@@ -23,13 +23,12 @@ from ..surrogate_modeling.gp import GaussianProcess
 from ..problems.problem import Problem
 from ..utils.util import Evaluator
 from .boalgorithm import BOAlgorithmBase
-#from hiopbbpy.surrogate_modeling.muygp import muyGP   # uncomment if using muyGP
 
-# Map real-space points into the unit cube defined by xlimits
+# Map design space points into the unit cube defined by xlimits
 def to_unit(x, lb, ub):
   return (x - lb) / (ub - lb)
 
-# Map unit-cube points back into real space
+# Map unit-cube points back into design space
 def from_unit(u, lb, ub):
   return lb + (ub - lb) * u
 
@@ -62,9 +61,9 @@ def make_tr_candidates(center_u, length, n_candidates, rng, prob_perturb=None):
 
 # Posterior marginal statistics (mean, standard deviation) at the candidates.
 # Computed once per iteration.
-def posterior_stats(surrogate, X_real):
-  mu = np.asarray(surrogate.mean(X_real)).reshape(-1)
-  var = np.asarray(surrogate.variance(X_real)).reshape(-1)
+def posterior_stats(surrogate, X_design):
+  mu = np.asarray(surrogate.mean(X_design)).reshape(-1)
+  var = np.asarray(surrogate.variance(X_design)).reshape(-1)
   sd = np.sqrt(np.clip(var, 0.0, None))
   return mu, sd
 
@@ -103,7 +102,7 @@ class TrustRegionState:
     self.batch_size = batch_size
     self.center_u = np.asarray(center_u, dtype=float)   # center in the unit cube
     self.best_value = float(best_value)
-    self.best_x = np.asarray(best_x, dtype=float)       # center in real space
+    self.best_x = np.asarray(best_x, dtype=float)       # center in design space
     self.length = float(length_init)
     self.length_min = float(length_min)
     self.length_max = float(length_max)
@@ -167,7 +166,10 @@ class TurboAlgorithm(BOAlgorithmBase):
     options = options or {}
     assert callable(surrogate_factory), "surrogate_factory must be callable() -> GaussianProcess"
     # surrogate_factory: callable() -> GaussianProcess. A factory (not a built model)
-    # because TuRBO-m needs a fresh surrogate per region and on restart.1
+    # because TuRBO-m needs a fresh surrogate per region and on restart.
+    _gp = surrogate_factory() # one-time temporary construction for assertion
+    if not isinstance(_gp, GaussianProcess):
+      raise TypeError(f"surrogate_factory must return GaussianProcess, got {type(_gp)}")
 
     self.prob = prob
     self.surrogate_factory = surrogate_factory
@@ -176,6 +178,11 @@ class TurboAlgorithm(BOAlgorithmBase):
     self.xlimits = np.asarray(prob.xlimits, dtype=float)
     self.lb = self.xlimits[:, 0]
     self.ub = self.xlimits[:, 1]
+    # validate bounds once: normalization divides by (ub - lb)
+    if np.any(self.ub - self.lb < 1e-10):
+        raise ValueError("Each xlimits dimension must have ub > lb (got a degenerate/zero-width bound)")
+ 
+ 
     self.dim = prob.ndim
 
     logger_level = options.get('log_level', "INFO")
@@ -184,15 +191,18 @@ class TurboAlgorithm(BOAlgorithmBase):
     self.bo_maxiter = options.get('bo_maxiter', self.bo_maxiter)
     assert self.bo_maxiter > 0, f"Invalid bo_maxiter: {self.bo_maxiter}"
 
-    batch_size = int(options.get('batch_size', 1))
+    batch_size = options.get('batch_size', 1)
     assert batch_size > 0, f"batch_size {batch_size} is not strictly positive"
     self.batch_size = batch_size
 
     self.n_trust_regions = options.get('n_trust_regions', 1)
+    assert isinstance(self.n_trust_regions, int), f"n_trust_regions {self.n_trust_regions} not an integer"
     assert self.n_trust_regions > 0, f"Invalid n_trust_regions: {self.n_trust_regions}"
 
     # default scales candidates with dimension, capped to [2000, 5000]
     self.n_candidates = options.get('n_candidates', min(5000, max(2000, 200 * self.dim)))
+    assert self.n_candidates > 0, f"Invalid n_candidates: {self.n_candidates}"
+
     self.local_gp = options.get('local_gp', False)  # False: one global GP; True: one GP per region
     self.rng = np.random.default_rng(options.get('seed', 0))
 
@@ -200,7 +210,8 @@ class TurboAlgorithm(BOAlgorithmBase):
     self.length_min = options.get('length_min', 0.5 ** 7)
     self.length_max = options.get('length_max', 1.6)
     self.success_tolerance = options.get('success_tolerance', 10)
-
+    assert self.success_tolerance > 0, f"Invalid success_tolerance: {self.success_tolerance}"
+    
     self.obj_evaluator = options.get('obj_evaluator', self.obj_evaluator)
     assert isinstance(self.obj_evaluator, Evaluator)
 
@@ -224,6 +235,7 @@ class TurboAlgorithm(BOAlgorithmBase):
         gp = self.surrogate_factory()
         Xr, Yr = self._region_data(r)
         if Xr.shape[0] < 2:                        # too sparse: fall back to all data
+          self.logger.warning(f"Region {r} has <2 points, using global data for GP training") 
           Xr, Yr = self.xtrain, self.ytrain
         gp.train(Xr, Yr)
         self.surrogates.append(gp)
@@ -314,10 +326,10 @@ class TurboAlgorithm(BOAlgorithmBase):
       pooled_u, pooled_x, pooled_mu, pooled_sd, pooled_region = [], [], [], [], []
       for r, st in enumerate(self.regions):
         U = make_tr_candidates(st.center_u, st.length, self.n_candidates, self.rng)
-        Xr = from_unit(U, self.lb, self.ub)
-        mu, sd = posterior_stats(self._surrogate_for(r), Xr)
+        Xdesign = from_unit(U, self.lb, self.ub)
+        mu, sd = posterior_stats(self._surrogate_for(r), Xdesign)
         pooled_u.append(U)
-        pooled_x.append(Xr)
+        pooled_x.append(Xdesign)
         pooled_mu.append(mu)
         pooled_sd.append(sd)
         pooled_region.append(np.full(U.shape[0], r, dtype=int))

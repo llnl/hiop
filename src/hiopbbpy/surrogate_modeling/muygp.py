@@ -1,9 +1,9 @@
 """
 A GaussianProcess surrogate backed by MuyGPyS: predicts each point from its
-nearest neighbors, avoiding the dense n x n solve. Same train/mean/variance
+nearest neighbors (nn), avoiding the dense n x n solve. Same train/mean/variance
 interface as smtKRG.
 
-Matern smoothness and length_scale are fixed; only sigma^2 is optimized (via
+Matern smoothness (smoothness) and length_scale are fixed; only sigma^2 is optimized (via
 optimize_scale) since it sets the variance magnitude Thompson sampling uses.
 Optimizing the kernel hyperparameters via MuyGPyS.optimize is the natural
 next step.
@@ -21,6 +21,8 @@ from MuyGPyS.gp.noise import HomoscedasticNoise
 from MuyGPyS.neighbors import NN_Wrapper
 
 
+
+# nn refers to nearest neighbor in this file
 def _nn_indices(result):
   # NN_Wrapper.get_nns / get_batch_nns return either an index array or an
   # (indices, distances) tuple depending on version. this function normalizes both to just the indices.
@@ -35,7 +37,7 @@ class muyGP(GaussianProcess):
     self.smoothness = smoothness
     self.length_scale = length_scale
     self.noise = noise
-    self.nn_method = nn_method
+    self.nn_method = nn_method   # nearest neighbor method
     self.normalize = normalize
     self.muygps = None
     self.nbrs = None
