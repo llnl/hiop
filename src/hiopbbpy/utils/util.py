@@ -114,7 +114,7 @@ class MPIEvaluator(Evaluator):
       from concurrent.futures import ProcessPoolExecutor
       #from concurrent.futures import ThreadPoolExecutor
       import multiprocessing
-      max_workers = 4 #multiprocessing.cpu_count()
+      max_workers = multiprocessing.cpu_count()-1
       #executor = ThreadPoolExecutor(max_workers=max_workers)
       executor = ProcessPoolExecutor(max_workers=max_workers)
       print(f"No executor provided for {task_name}, using ProcessPoolExecutor with {max_workers} workers")
@@ -125,7 +125,8 @@ class MPIEvaluator(Evaluator):
     self.use_run_dir = use_run_dir
     if self.use_run_dir:
       self.run_root.mkdir(parents=True, exist_ok=True)
-    print(f"Create Evaluator for task: {task_name}")
+    nworkers = getattr(executor, "_max_workers", None)
+    print(f"Create Evaluator for task: {task_name} using {executor.__class__.__name__} with {nworkers} workers")
   
   def __del__(self):
     del self.manager

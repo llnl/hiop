@@ -135,7 +135,8 @@ class BOAlgorithm(BOAlgorithmBase):
     elif opt_solver == "BnB":
       self.solver_options = {}
       self.solver_options = options.get('solver_options', self.solver_options)
-    self.opt_solver = opt_solver    
+
+    self.opt_solver = opt_solver
     self.bnb_queue = None  # legacy; not a complete spatial partition
     self.bnb_partition = None
     self.bnb_lower_bound_transfer = options.get('BnBLowerBoundTransfer', None)
@@ -145,7 +146,7 @@ class BOAlgorithm(BOAlgorithmBase):
     self.bnb_warm_start = True
     self.bnb_warm_start = options.get('BnBWarmStart', self.bnb_warm_start)
     assert isinstance(self.bnb_warm_start, bool), "provided BnBWarmStart is not a boolean type"
-
+    
     self.logger.info(f"Problem name: {prob.name}")
     self.logger.info(f"Max BO iter: {self.bo_maxiter}")
     self.logger.info(f"Optimizing acquisition ({self.acquisition_type}) "

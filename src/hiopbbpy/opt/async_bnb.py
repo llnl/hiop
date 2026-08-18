@@ -694,10 +694,6 @@ def initialize_async_search(
     algorithm.max_task_retries = 1
   if not hasattr(algorithm, "bound_consistency_tol"):
     algorithm.bound_consistency_tol = 1.0e-4
-  if not hasattr(algorithm, "node_evaluator"):
-    algorithm.node_evaluator = algorithm.bbsevaluator
-  if not hasattr(algorithm, "num_workers"):
-    algorithm.num_workers = max(1, int(getattr(algorithm, "num_bbs_workers", 1)))
 
   store = AsyncLeafPartition(
       epsilon_prune=algorithm.epsilon_prune,
@@ -772,10 +768,10 @@ def run_async_search(
   store: AsyncLeafPartition = algorithm.leaf_partition
 
   evaluator = algorithm.node_evaluator
-  num_workers = max(1, int(algorithm.num_workers))
+  num_workers = max(1, int(evaluator.num_workers()))
 
   log = algorithm.log
-  
+
   inflight_limit = max(1, int(math.ceil(algorithm.inflight_factor * num_workers)))
   poll_interval = max(0.0, float(algorithm.poll_interval))
 
@@ -809,7 +805,7 @@ def run_async_search(
     """
     counts_dict = store.counts()
     if algorithm.print_iter_count % 10 == 0:
-      msg = f"# branches  optim gap  \% PrunedVol   PrunedRatio | "
+      msg = f"# branches  optim gap    PrunedVol(%) PrunedRatio | "
       keys_str = "   ".join(counts_dict.keys())
       msg = f"  {msg}    {keys_str} |     LUB"
       log.info(msg)

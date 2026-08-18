@@ -352,7 +352,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
     self.saveData = False #saveData
     self.saveDataDir = ""
     self.pure_BBS = False  # pure BBS search or hybrid BBS/BFS search
-    self.synchronous = True # synchronous or asynchronous evaluations
+    self.synchronous = False # synchronous or asynchronous evaluations
     self.verbose_cvx_solver = False # verbose convex optimizer solves
     self.opt_mode = 3
 
@@ -397,27 +397,6 @@ class BnBAlgorithm(BnBAlgorithmBase):
     assert isinstance(self.saveDataDir, str), "save_data_dir is not of type string"
     assert isinstance(self.early_stopping_heuristics, bool), "early stopping heuristics BnB option was set to non boolean value"
 
-    #if is_running_with_mpi():
-    #  num_available_workers = MPI.COMM_WORLD.Get_size() - 1
-    #  if num_available_workers > 1:
-    #    # roughly evenly split workers for use in bbs and bfs evaluators
-    #    if self.pure_BBS:
-    #      num_bbs_workers = num_available_workers
-    #      num_bfs_workers = 1
-    #    else:
-    #      num_bbs_workers = np.ceil(num_available_workers * 3 / 4).astype(int)
-    #      num_bfs_workers = max(1, num_available_workers - num_bbs_workers)
-    #  else:
-    #    # num_available_workers == 1 or num_available_workers == 0
-    #    # can occur when running on one process in which root is both master and the
-    #    # only worker process. If there are 2 mpi processes then root is master and
-    #    # there is one worker process. This worker process will be used for both
-    #    # bbs and bfs evaluators
-    #    num_bbs_workers = 1
-    #    num_bfs_workers = 1
-    #else:
-    #  num_bbs_workers = 1
-    #  num_bfs_workers = 1
     supplied_evaluator = options.get("node_evaluator", None)
     if supplied_evaluator is None:
       self.node_evaluator = MPIEvaluator(
@@ -428,15 +407,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
       )
     else:
       self.node_evaluator = supplied_evaluator
-    configured_workers = options.get("num_workers", None)
-    if configured_workers is None:
-      configured_workers = self.node_evaluator.num_workers()
-    self.num_workers = max(1, int(configured_workers))
-    # Temporary aliases for downstream code that still names the BBS evaluator.
-    self.bbsevaluator = self.node_evaluator
-    self.bfsevaluator = None
-    self.num_bbs_workers = self.num_workers
-    self.num_bfs_workers = 0
+
     # improved optimization problem to determine LCB lower bound
     ntrain = len(self.gamma)
     self.b_obj2 = np.zeros(ntrain + 1)
@@ -780,7 +751,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
       try:
         if mode == 0:
           prob = cp.Problem(cp.Minimize(self.obj2), cons)
-          if not prob.is_dcp:
+          if not prob.is_dcp():
             raise RuntimeError("LCB relaxation is not DCP")
           
           acqf_L = prob.solve(solver=cp.CLARABEL, verbose=verbose, tol_gap_abs=opt_tol, tol_gap_rel=opt_rel_tol, max_iter=max_iters)
