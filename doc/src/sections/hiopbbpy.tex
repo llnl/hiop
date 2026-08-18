@@ -44,6 +44,16 @@ Then, for example, in Linux/MacOS, one can activate this virtual environment via
 \end{verbatim}
 Once activated, one can install dependencies isolated from their system Python.
 
+
+\Hibbpy also supports the {\it{MuyGPyS}} surrogate backend, which provides a
+scalable Gaussian process based on nearest-neighbor approximation via the
+\verb~muyGP~ class. {\it{MuyGPyS}} (version 0.9 or later) is an optional
+dependency and is not installed by default. To install \Hibbpy with
+{\it{MuyGPyS}} support, set the \verb~ADD_MUYGPS~ environment variable:
+\begin{verbatim}
+> ADD_MUYGPS=1 pip install .
+\end{verbatim}
+The default \verb~smtKRG~ surrogate requires no additional dependencies.
 \subsection{The Python interface}
 
 An objective function is defined as a class that inherits from \verb~Problem~ and has a required \verb~_evaluate~ method such as
