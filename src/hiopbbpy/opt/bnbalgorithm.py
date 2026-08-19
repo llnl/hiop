@@ -5,9 +5,13 @@ import heapq
 from scipy import linalg
 from scipy.stats import qmc
 from .acquisition import EIacquisition, LCBacquisition
-from ..utils.util import Evaluator, MPIEvaluator
+from ..utils.util import Evaluator, MPIEvaluator, Logger
 from .bnb_utils import * 
 from .opt_utils import minimizer_wrapper
+from .async_bnb import (
+  BnBNode, BranchResult, CloseReason, LeafState,
+  initialize_async_search, run_async_search,
+)
 from itertools import count
 try:
   from mpi4py import MPI
@@ -46,20 +50,6 @@ class variance_U_problem:
 # BnBNode
 # corners of interval [l, u]
 # upper and lower bounds of acquisition function
-class BnBNode:
-  def __init__(self, l, u, aq_L, aq_U):
-    self.l = l
-    self.u = u
-    self.aq_L = aq_L
-    self.aq_U = aq_U
-    self.diam = np.max(u - l)
-    self.midpoint = 0.5 * (l + u)
-    self.parent_aq_U = None
-    self.parent_aq_L = None
-    self.aq_U_x = None
-    self.parent_aq_U_x = None # the point at which the upper-bound was
-  def __lt__(self, other):
-    return self.aq_U > other.aq_U
 
 
 def dist_to_corner(l, u, x):
@@ -138,6 +128,8 @@ class BnBAlgorithmBase:
     self.x = x
     self.y = y
     self.ntrain = self.x.shape[0]
+
+    self.log = Logger()
 
   def sync_from_smt(self):
     sm = self.gpsurrogate.surrogatesmt
@@ -343,11 +335,16 @@ class BnBAlgorithm(BnBAlgorithmBase):
     self.sync_from_smt()
     
     # Stopping criteria parameters (default)    
-    self.epsilon_gap = 1e-3
+    self.epsilon_gap = 1e-4
     self.epsilon_diam = 1e-2
-    self.epsilon_rel_gap = 1.e-2
+    self.epsilon_rel_gap = 1.e-4
     self.min_diam = 0.125
     self.epsilon_prune = 1.e-14
+    self.epsilon_node = self.epsilon_gap/100
+    self.inflight_factor = 1.
+    self.poll_interval = 0.01
+    self.max_task_retries = 1
+    self.bound_consistency_tol = 1.e-4
     self.max_bnbiter = 2000
     self.nodes_per_batch = 1
     self.max_bnbtime = 12 * 60 # 12 minutes
@@ -366,6 +363,8 @@ class BnBAlgorithm(BnBAlgorithmBase):
 
     # Set options form command 
     self.epsilon_gap = options.get('abs_tol', self.epsilon_gap)
+    self.epsilon_node = self.epsilon_gap/100
+    self.epsilon_node = options.get('node_tol', self.epsilon_node)
     self.epsilon_rel_gap = options.get('rel_tol', self.epsilon_rel_gap)
     self.epsilon_diam = options.get('epsilon_diam', self.epsilon_diam)
     self.epsilon_prune = options.get('epsilon_prune', self.epsilon_prune)
@@ -381,6 +380,10 @@ class BnBAlgorithm(BnBAlgorithmBase):
     self.saveData = options.get('save_data', self.saveData)
     self.min_diam = options.get('min_diameter', self.min_diam)
     self.early_stopping_heuristics = options.get('early_stopping_heuristics', self.early_stopping_heuristics)
+    self.inflight_factor = options.get('inflight_factor', self.inflight_factor)
+    self.poll_interval = options.get('poll_interval', self.poll_interval)
+    self.max_task_retries = options.get('max_task_retries', self.max_task_retries)
+    self.bound_consistency_tol = options.get('bound_consistency_tol', self.bound_consistency_tol)
     self.random_seed = options.get("random_seed", None)
     if self.random_seed is None:
       self.rng = np.random.default_rng()
@@ -394,51 +397,17 @@ class BnBAlgorithm(BnBAlgorithmBase):
     assert isinstance(self.saveDataDir, str), "save_data_dir is not of type string"
     assert isinstance(self.early_stopping_heuristics, bool), "early stopping heuristics BnB option was set to non boolean value"
 
-    #if is_running_with_mpi():
-    #  num_available_workers = MPI.COMM_WORLD.Get_size() - 1
-    #  if num_available_workers > 1:
-    #    # roughly evenly split workers for use in bbs and bfs evaluators
-    #    if self.pure_BBS:
-    #      num_bbs_workers = num_available_workers
-    #      num_bfs_workers = 1
-    #    else:
-    #      num_bbs_workers = np.ceil(num_available_workers * 3 / 4).astype(int)
-    #      num_bfs_workers = max(1, num_available_workers - num_bbs_workers)
-    #  else:
-    #    # num_available_workers == 1 or num_available_workers == 0
-    #    # can occur when running on one process in which root is both master and the
-    #    # only worker process. If there are 2 mpi processes then root is master and
-    #    # there is one worker process. This worker process will be used for both
-    #    # bbs and bfs evaluators
-    #    num_bbs_workers = 1
-    #    num_bfs_workers = 1
-    #else:
-    #  num_bbs_workers = 1
-    #  num_bfs_workers = 1
-    # TODO: re-include max_workers
-    num_available_workers = MPI.COMM_WORLD.Get_size() - 1
-    if num_available_workers > 1:
-      # roughly evenly split workers for use in bbs and bfs evaluators
-      if self.pure_BBS:
-        num_bbs_workers = num_available_workers
-        num_bfs_workers = 1
-      else:
-        num_bbs_workers = np.ceil(num_available_workers * 3 / 4).astype(int)
-        num_bfs_workers = max(1, num_available_workers - num_bbs_workers)
+    supplied_evaluator = options.get("node_evaluator", None)
+    if supplied_evaluator is None:
+      self.node_evaluator = MPIEvaluator(
+        function_mode=False,
+        executor=options.get("executor", None),
+        task_name="BNB",
+        profiling=False,
+      )
     else:
-      # num_available_workers == 1 or num_available_workers == 0
-      # can occur when running on one process in which root is both master and the
-      # only worker process. If there are 2 mpi processes then root is master and
-      # there is one worker process. This worker process will be used for both
-      # bbs and bfs evaluators
-      num_bbs_workers = 1
-      num_bfs_workers = 1
-    self.bbsevaluator = MPIEvaluator(function_mode=False)#, max_workers = num_bbs_workers)
-    self.bfsevaluator = MPIEvaluator(function_mode=False)#, max_workers = num_bfs_workers)  
-    self.num_bbs_workers = num_bbs_workers
-    self.num_bfs_workers = num_bfs_workers
-    #self.max_queue_size = 10 * self.num_bbs_workers
-    
+      self.node_evaluator = supplied_evaluator
+
     # improved optimization problem to determine LCB lower bound
     ntrain = len(self.gamma)
     self.b_obj2 = np.zeros(ntrain + 1)
@@ -782,7 +751,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
       try:
         if mode == 0:
           prob = cp.Problem(cp.Minimize(self.obj2), cons)
-          if not prob.is_dcp:
+          if not prob.is_dcp():
             raise RuntimeError("LCB relaxation is not DCP")
           
           acqf_L = prob.solve(solver=cp.CLARABEL, verbose=verbose, tol_gap_abs=opt_tol, tol_gap_rel=opt_rel_tol, max_iter=max_iters)
@@ -875,8 +844,19 @@ class BnBAlgorithm(BnBAlgorithmBase):
       if self.acqf.has_gradient:
         acqf_callback['grad'] = self.acqf.scalar_eval_g
       opt_evaluator = Evaluator()
+
+      # We need to be carefull here since the errors in the gradient (compared to FD) are in the 1e-4 range
+      # Relax tolerance for dual infeasibility/norm of gradient of the Lagrangian
       if self.acqf_UB_solver == "IPOPT": 
-        opt_solver_options = {'max_iter' : 100, 'tol' : 1.e-5, 'honor_original_bounds' : 'yes', 'print_level' : 0, 'sb' : 'yes'}
+        opt_solver_options = {
+          'max_iter': 100,
+          'tol': 1.e-5,
+          'honor_original_bounds': 'yes',
+          'print_level': 0,
+          'sb': 'yes',
+          'acceptable_iter': 5,
+          'acceptable_tol': 5e-4,
+        }
       else: #SLSQP
         opt_solver_options = {'maxiter' : 100, 'tol' : 1.e-5}
       acqf_minimizer = minimizer_wrapper(acqf_callback, self.acqf_UB_solver, box_bounds, constraints, opt_solver_options)
@@ -889,10 +869,19 @@ class BnBAlgorithm(BnBAlgorithmBase):
       msg = opt_sol[3]
       acqf_solve_success = opt_sol[2]
       if not acqf_solve_success:
-        print(self.acqf_UB_solver + " did not converge on BOX: ", l, u, "... trying again with more verbosity and at another initial point", flush=True)
+        #print(self.acqf_UB_solver + " did not converge on BOX: ", l, u, "... trying again with more verbosity and at another initial point", flush=True)
+        print(self.acqf_UB_solver + " did not converge on BOX ... trying again with more verbosity and at another initial point", flush=True)
         print(self.acqf_UB_solver + " message: ", msg, flush=True)
         if self.acqf_UB_solver == "IPOPT":
-          opt_solver_options = {'max_iter' : 200, 'tol' : 1.e-3, 'honor_original_bounds' : 'yes', 'print_level' : 0, 'sb' : 'yes'}
+          opt_solver_options = {
+            'max_iter': 200,
+            'tol': 1.e-3,
+            'honor_original_bounds': 'yes',
+            'print_level': 0,
+            'sb': 'yes',
+            'acceptable_iter': 5,
+            'acceptable_tol': 1e-2
+          }
         else: # SLSQP
           opt_solver_options = {'maxiter' : 200, 'tol' : 1.e-3, 'disp' : True}
         acqf_minimizer = minimizer_wrapper(acqf_callback, self.acqf_UB_solver, box_bounds, constraints, opt_solver_options)
@@ -901,7 +890,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
         opt_sol = opt_evaluator.run(acqf_minimizer.minimizer_callback, x0)[0]
         acqf_solve_success = opt_sol[2]
         if not acqf_solve_success:
-          print(self.acqf_UB_solver + "failed a second time. Will take the minimum of a small number of acqf function evaluations", flush=True)
+          print(self.acqf_UB_solver + " failed a second time. Will take the minimum of a small number of acqf function evaluations", flush=True)
       if acqf_solve_success:
         acqf_U = self.acqf.evaluate(np.atleast_2d(opt_sol[0])).flatten()[0]
         acqf_U_x = opt_sol[0]
@@ -934,18 +923,30 @@ class BnBAlgorithm(BnBAlgorithmBase):
     if isinstance(acqf_U, (list, np.ndarray)):
       acqf_U = acqf_U[0]
     return acqf_L, acqf_U, acqf_U_x
-  def _prune_queue(self, queue, lub, eps):
-    """Keep only nodes whose lower-bound is not greater or equal least upper-bound + eps; then re-heapify."""
-    # queue items are (L, counter, node)
-    pruned_queue = [(L, c, n) for (L, c, n) in queue if L < lub + eps]
-    pruned_nodes = [n for (L, c, n) in queue if L >= lub + eps] # for now return the nodes that are pruned for analysis
-    heapq.heapify(pruned_queue)
-    return pruned_queue, pruned_nodes
-  def _prune_node_list(self, node_list, lub, eps):
-    """Keep only nodes whose lower-bound is not greater or equal least upper-bound + eps."""
-    pruned_node_list = [node for node in node_list if node.aq_L < lub + eps]
-    pruned_nodes = [node for node in node_list if node.aq_L >= lub + eps]
-    return pruned_node_list, pruned_nodes
+
+  def _refresh_legacy_views(self):
+    """Expose compatibility views without duplicating authoritative records."""
+    store = self.leaf_partition
+    ready_nodes = sorted(
+      store.ready_nodes(),
+      key=lambda node: (node.aq_L, -node.depth, node.node_id),
+    )
+    self.queue = [(node.aq_L, int(node.node_id), node) for node in ready_nodes]
+    heapq.heapify(self.queue)
+    self.all_nonpruned_nodes = store.candidate_nodes()
+    self.all_prunednodes = [
+      node for node in store.leaves.values()
+      if node.close_reason == CloseReason.PRUNED.value
+    ]
+
+  def export_partition(self):
+    """Return every ready, in-flight, and closed leaf for BO warm start."""
+    return self.leaf_partition.export_partition()
+
+  def get_candidate_nodes(self):
+    """Return leaves useful for batching, excluding only pruned leaves."""
+    return self.leaf_partition.candidate_nodes()
+
   def optimize(self):
     opt = self.bnboptimize(self.gpsurrogate.xlimits[:,0], self.gpsurrogate.xlimits[:,1])
     lopt = opt[0]
@@ -956,374 +957,13 @@ class BnBAlgorithm(BnBAlgorithmBase):
       return midpoint_opt
     else:
       return aq_U_x
-  def initialize(self, l0 = None, u0 = None, queue = None):
-    """
-    Initialization, perhaps use an old tree structure given by optional queue
-    argument
-    """ 
-    if l0 is None or u0 is None:
-      l_init = self.gpsurrogate.xlimits[:,0]
-      u_init = self.gpsurrogate.xlimits[:,1]
-    else:
-      # to do check that l0 and u0 is right shape
-      l_init = l0
-      u_init = u0
-    # Root bounds
-    aq_L_val, aq_U_val, aq_U_x = self.compute_acqf_bounds(l_init, u_init) 
-    print(f"\nInitial acquisition bounds: lower: {aq_L_val}   upper: {aq_U_val}")
-
-    # Init root + heap ordered by aq_L
-    root = BnBNode(l_init, u_init, aq_L_val, aq_U_val)
-    root.aq_U_x = aq_U_x
-    
-    # --- HEAP STORES TUPLES: (L, counter, node) ---
-    self._ctr = getattr(self, "_ctr", count())
-    self.queue = [(root.aq_L, next(self._ctr), root)]
-    """
-    either use old queue to determine LUB or the previous queue provided
-    as an argument
-    """
-    # Least upper bound (LUB)
-    self.best_node = root
-    self.LUB = self.best_node.aq_U
-    self.LLB = self.best_node.aq_L
-    if queue is not None:
-      print("root node acqf_L, acqf_U = ", root.aq_L, root.aq_U)
-      for _, _, node in queue:
-        acqf_U = self.acqf.evaluate(np.atleast_2d((node.l + node.u)/2.))[0, 0]
-        self.LUB = min(self.LUB, acqf_U)
-      """
-        Here the strategy is to tesselate the domain into
-        hyperrectangles. Each of the hyperrectangles will
-        define a BnBNode which we can then check upper and lower-bounds
-        and update the least upper-bound if appropriate
-      """
-      # grab training points as well
-      eps = 0.05
-      for i in range(self.x.shape[0]):
-        for j in range(i):
-          midpt = np.atleast_2d((self.x[i] + self.x[j]) / 2.)
-          acqf_midpt = self.acqf.evaluate(midpt)[0,0]
-          if acqf_midpt < self.LUB:
-            print("updating LUB from ", self.LUB, "to ", acqf_midpt)
-          self.LUB = min(self.LUB, acqf_midpt)
-          # determine corner l, u for box where xi and xj are corners
-          Xij = np.array([self.x[i], self.x[j]]).T
-          lij = np.min(Xij, axis=1)
-          uij = np.max(Xij, axis=1)
-          Delta = uij - lij
-          lij = lij + Delta * eps / 2.
-          uij = uij - Delta * eps / 2.
-          _, aq_U_val,_ = self.compute_acqf_bounds(lij, uij, skip_LB=True)
-          if aq_U_val < self.LUB:
-            print("updating LUB based on midpoint node")
-            print("LUB: ", self.LUB, " --> ", aq_U_val)
-            self.LUB = min(self.LUB, aq_U_val)
+  def initialize(self, l0=None, u0=None, queue=None, partition=None, transfer_lower_bound=None):
+    """Initialize a root or reclassify a retained full leaf partition."""
+    return initialize_async_search(self, l0=l0, u0=u0, queue=queue, partition=partition, transfer_lower_bound=transfer_lower_bound)
 
   def bnboptimize(self, l_init, u_init):
-    """
-    Branch & Bound minimization with tolerance stopping.
-    Core logic only: correct heap order, pruning on LUB tightening,
-    single global stop, diameter continue, consistent per-node prune.
-    """
-    print("=== Starting Branch & Bound Acquisition Function Optimization ===")
-    print(f"=== Over lower/upper bounds: l = {l_init}, u = {u_init} ===")
-
-    heapq.heapify(self.queue)    
-
-    all_bfsnodes = []
-    
-    all_prunednodes = []
-    total_prunedvol = 0.
-
-    
-    # stopping criterion should be on the total maximum number of branched nodes
-    self.num_branches = 0
-
-    initial_gap = self.best_node.aq_U - self.best_node.aq_L
-    initial_vol = math.prod(self.best_node.u - self.best_node.l)
-
-    gap_history = [initial_gap]
-    prunedvol_history = [0.]
-    pruningratio_history = [1.]
-    branch_history = [1]
-
-    initial_diam = self.best_node.diam
-    smallest_diam = initial_diam
-
-    max_bbs_node_size = 0
-    max_bfs_node_size = 0
-    start_time = time.time()
-    bbschildren = []
-    bfschildren = []
-    while self.num_branches < self.max_bnbiter: # do not exceed max number of branches
-      if not self.synchronous:
-        bbschildren = self.bbsevaluator.retrieve_results() # asynchronously retrieve results
-      bbschildren = [item for sublist in bbschildren for item in sublist] # flatten
-
-      if not self.synchronous:
-        bfschildren = self.bfsevaluator.retrieve_results()
-      bfschildren = [item for sublist in bfschildren for item in sublist]
-
-      children = bbschildren + bfschildren # join child lists
-
-      print(f"evaluators elapsed time: {time.time() - start_time}")
-      print(f"evaluators returned {len(children)} children: BFS: {len(bfschildren)}   BBS: {len(bbschildren)}", flush=True)
-
-      if len(children) == 0:
-        assert True, "Trivial check"
-      else:
-        self.num_branches += len(children)
-        branch_history.append(self.num_branches)
-        # update best_node via children
-        updated_LUB_node = False
-        updated_LLB_node = False
-        self.LUB = 1e+20
-        for child in children:
-          if child.aq_U < child.aq_L:
-            # print info on node prior to failure via assert
-            print("ERROR (acqf_UB < acqf_LB) on box with corners ", child.l, child.u)
-            print("lower-bound = ", child.aq_L)
-            print("upper-bound = ", child.aq_U)
-          assert child.aq_U >= child.aq_L, "ERROR: child upper bound < child lower bound for child"
-          if child.aq_U <= self.LUB:
-            print(f"LUB / best node updated: previous {self.LUB}   new {child.aq_U}   LB prev {self.best_node.aq_L}   new{child.aq_L}")
-            self.LUB = child.aq_U
-            self.best_node = child
-            updated_LUB_node = True
-          if child.aq_L <= self.LLB:
-            print(f"LLB updated: previous {self.LLB}   new {child.aq_L}  child/new UB {child.aq_U}")
-            self.LLB = child.aq_L
-            updated_LLB_node = True
-        if not updated_LLB_node:
-          print("LLB not updated")
-          if self.pure_BBS and self.synchronous:
-            # the LLB will generally be increasing as 
-            # we "refine" the domain via branching
-            # but we need the smallest lower-bound
-            # running synchronously this issue isn't a big concern
-            # as we can just take the smallest lower-bound over
-            # all children as the current children will be all nodes
-            # in the current level
-            # TODO: provide a strategy when running asynchronously
-            #   This will likely require some bookkeeping
-            #     What is the deepest level of the tree for which
-            #     all children have been computed?
-            #     What is the least lower-bound among all such children
-            #     in that level?
-            LLBprev = self.LLB
-            self.LLB = min([child.aq_L for child in children])
-            print(f"forcing LLB update previous {LLBprev}  new {self.LLB}")
-            updated_LLB_node = True
-        else:
-          print("LLB updated from children")
-          
-        assert self.LUB == self.best_node.aq_U, "ERROR: LUB and best node U got disconnected somehow"
-        gap_history.append(self.best_node.aq_U - self.LLB)
-        children_lower_bounds = [child.aq_L for child in children]
-        # now move pruned children to data structs for (potential) future evaluation
-        children_lower_bounds = [child.aq_L for child in children]
-        # sort the children in order of increasing acqf lower-bounds
-        args = np.argsort(children_lower_bounds)
-        children = [children[arg] for arg in args]
-    
-        if self.early_stopping_heuristics and len(children) > self.max_queue_size:
-          children_upper_bounds = [child.aq_U for child in children]
-          # sort the children in order of increasing acqf upper-bounds
-          # and limit size to max_queue_size
-          args = np.argsort(children_upper_bounds)[:self.max_queue_size]
-          children = [children[arg] for arg in args]
-
-
-        # update smallest diameter
-        child_diams = np.array([child.diam for child in children])
-        smallest_diam = min(smallest_diam, min(child_diams))
-
-        # sort children into bbs and bfs lists
-        for child in children:
-          if self.pure_BBS or len(self.queue) < 10 * self.num_bbs_workers:
-            heapq.heappush(self.queue, (child.aq_L, next(self._ctr), child))
-          else:
-            all_bfsnodes.append(child) #TODO: prepend... according to number of workers
-        max_bbs_node_size = max(max_bbs_node_size, len(self.queue))
-        max_bfs_node_size = max(max_bfs_node_size, len(all_bfsnodes))
-        
-        # reprune
-        self.queue, pruned_bbsnodes = self._prune_queue(self.queue, self.LUB, self.epsilon_prune)
-        all_bfsnodes, pruned_bfsnodes = self._prune_node_list(all_bfsnodes, self.LUB, self.epsilon_prune)
-        pruned_nodes = pruned_bbsnodes + pruned_bfsnodes
-        print(f"Pruned {len(pruned_nodes)} nodes   BFS: {len(pruned_bfsnodes)} BBS: {len(pruned_bbsnodes)}")
-        for node in pruned_nodes:
-          all_prunednodes.append(node)
-          total_prunedvol += math.prod(node.u - node.l)
-        prunedvol_history.append(total_prunedvol)
-
-        
-        if len(pruningratio_history) == 1:
-          pruningratio = 1.
-        else:
-          pruningratio = len(all_prunednodes) / (len(all_prunednodes) + len(self.queue) + len(all_bfsnodes) + self.bbsevaluator.num_submitted_tasks() + self.bfsevaluator.num_submitted_tasks())
-        pruningratio_history.append(pruningratio)
-
-        # BnB opt progress report 
-        gap = self.best_node.aq_U - self.LLB
-        print(f"\n--- Total number branches  {self.num_branches} ---")
-        print(f"Corners of best (LUB) node region: l={self.best_node.l}, u={self.best_node.u}")
-        print(f"LUB node aquisition function bounds: L={self.best_node.aq_L}, U={self.best_node.aq_U}")
-        print(f"Least lower-bound (LLB): {self.LLB}")
-        print(f"gap = {gap}")
-        print(f"total pruned vol: {total_prunedvol}")
-        print(f"domain vol: {initial_vol}")
-        print(f"pruning ratio: {pruningratio}")
-        print(f"smallest node diam: {smallest_diam}")
-        print(f"size of bbs queue = {len(self.queue)}")
-        print(f"size of bfs node list = {len(all_bfsnodes)}")
-        print(f"number of submitted/unfinished jobs (bbs): {self.bbsevaluator.num_submitted_tasks()}")
-        print(f"number of submitted/unfinished jobs (bfs): {self.bfsevaluator.num_submitted_tasks()}")
-        print(f"total elapsed time: {time.time() - start_time}")
-        print(f"--- ---\n", flush=True)
-
-
-        if updated_LLB_node or updated_LUB_node:
-          f_scale = max(abs(self.best_node.aq_U), abs(self.best_node.aq_L))
-          if gap  < self.epsilon_gap:
-            print(f"STOP: optimality gap = {gap} < {self.epsilon_gap}")
-            break
-          if gap / f_scale < self.epsilon_rel_gap:
-            print(f"STOP: relative optimality gap / max(|node.LB|, |node.UB|) = {gap / f_scale} < {self.epsilon_gap}")
-        if self.early_stopping_heuristics:
-          if np.linalg.norm(self.best_node.l - self.best_node.u, np.inf) < self.epsilon_gap / 2.:
-            if gap < 0.05 * f_scale:
-              print("STOP: gap < 5% function value and best node diameter sufficiently small")
-              break
-        if np.linalg.norm(self.best_node.l - self.best_node.u, np.inf) < self.min_diam:
-          # choose node with least upper-bound as best node and exit
-          print("STOP: diameter sufficiently small")
-          # determine the node with the least upper-bound
-          children_upper_bounds = [child.aq_U for child in children]
-          arg = np.argmin(children_upper_bounds)
-          self.best_node = children[arg]
-          gap = self.best_node.aq_U - self.best_node.aq_L
-          break
-
-      
-      
-      if time.time() - start_time > self.max_bnbtime: # time limit
-        print(f"STOP: maximum time {self.max_bnbtime} seconds has elapsed")
-        break
-      #
-      # -- submit new tasks --
-      #
-      # if the number of submitted jobs is too large then wait for some jobs to be processed
-      #if self.bbsevaluator.num_submitted_tasks() + self.bfsevaluator.num_submitted_tasks() > 10 * (self.num_bbs_workers + self.num_bfs_workers):
-      # collect nodes to be branched on in list structure
-      # only submit additional tasks if there aren't too many in the Evaluators queue
-      if self.synchronous:
-        num_bbs_tasks_to_submit = len(self.queue)
-      else:
-        num_bbs_tasks_to_submit = 10 * self.num_bbs_workers - self.bbsevaluator.num_submitted_tasks()
-      if num_bbs_tasks_to_submit > 0:
-        print(f"Tasks (bbs) to submit: {num_bbs_tasks_to_submit}")
-        bbsnodes = []
-        for i in range(num_bbs_tasks_to_submit):
-          if (not self.queue):
-            break # no more nodes available to send to evaluator for branching/bound computations
-          _, _, node = heapq.heappop(self.queue)
-          bbsnodes.append(node)
-
-        # parallel branching and upper/lower bound node compuatations
-        brancher = branching_wrapper(self.acqf, LUB = self.LUB, epsilon_prune=self.epsilon_prune, acqf_UB_solver = self.acqf_UB_solver, random_seed=self.random_seed if self.random_seed is not None else None, opt_mode=self.opt_mode,)
-        bbsnodes = np.array(bbsnodes)
-        if len(bbsnodes) > 0:
-          if self.synchronous:
-            bbschildren = self.bbsevaluator.run(brancher.callback, bbsnodes)
-          else:
-            self.bbsevaluator.submit_tasks(brancher.callback, bbsnodes)
-        print(f"Tasks (bbs) {num_bbs_tasks_to_submit} submitted")
-      # only submit additional tasks if there aren't too many in the Evaluators queue
-      if self.synchronous:
-        num_bfs_tasks_to_submit = len(all_bfsnodes)
-      else:
-        num_bfs_tasks_to_submit = 10 * self.num_bfs_workers - self.bfsevaluator.num_submitted_tasks()
-      if num_bfs_tasks_to_submit > 0:
-        print(f"Tasks (bfs) to submit: {num_bfs_tasks_to_submit}")
-        bfsnodes  = []
-        for i in range(num_bfs_tasks_to_submit):
-          if len(all_bfsnodes) == 0: 
-            break # no more nodes available to send to evaluator for branching/bound computations
-          node = all_bfsnodes.pop(0)
-          bfsnodes.append(node)
-        bfsnodes = np.array(bfsnodes)
-        if len(bfsnodes) > 0:
-          if self.synchronous:
-            bfschildren = self.bfsevaluator.submit_tasks(brancher.callback, bfsnodes)
-          else:
-            self.bfsevaluator.submit_tasks(brancher.callback, bfsnodes)
-        print(f"Tasks (bfs) {len(bfsnodes)} submitted")
-
-    self.all_nonpruned_nodes = all_bfsnodes + [n for (L, c, n) in self.queue]
-    self.all_prunednodes = all_prunednodes
-    self.prunedvol_history = prunedvol_history
-    self.pruningratio_history = pruningratio_history
-    self.gap_history = gap_history
-    self.branch_history = branch_history
-    if self.saveData:
-      np.savetxt(self.saveDataDir + "branch_history_BOit"+str(self.BOit)+".dat", self.branch_history)
-      np.savetxt(self.saveDataDir + "gap_history_BOit"+str(self.BOit)+".dat", self.gap_history)
-      np.savetxt(self.saveDataDir + "prunedvol_history_BOit"+str(self.BOit)+".dat", self.prunedvol_history)
-      np.savetxt(self.saveDataDir + "pruningratio_history_BOit"+str(self.BOit)+".dat", self.pruningratio_history)
-      np.savetxt(self.saveDataDir + "pruned_nodes_ls_BOit"+str(self.BOit)+".dat", np.array([node.l for node in all_prunednodes]))
-      np.savetxt(self.saveDataDir + "pruned_nodes_us_BOit"+str(self.BOit)+".dat", np.array([node.u for node in all_prunednodes]))
-      np.savetxt(self.saveDataDir + "pruned_nodes_aqU_BOit"+str(self.BOit)+".dat", np.array([node.aq_U for node in all_prunednodes]))
-      np.savetxt(self.saveDataDir + "pruned_nodes_aqL_BOit"+str(self.BOit)+".dat", np.array([node.aq_L for node in all_prunednodes]))
-      np.savetxt(self.saveDataDir + "nonpruned_nodes_ls_BOit"+str(self.BOit)+".dat", np.array([node.l for node in self.all_nonpruned_nodes]))
-      np.savetxt(self.saveDataDir + "nonpruned_nodes_us_BOit"+str(self.BOit)+".dat", np.array([node.u for node in self.all_nonpruned_nodes]))
-      np.savetxt(self.saveDataDir + "nonpruned_nodes_aqU_BOit"+str(self.BOit)+".dat", np.array([node.aq_U for node in self.all_nonpruned_nodes]))
-      np.savetxt(self.saveDataDir + "nonpruned_nodes_aqL_BOit"+str(self.BOit)+".dat", np.array([node.aq_L for node in self.all_nonpruned_nodes]))
-      np.savetxt(self.saveDataDir + "kriging_weights_BOit"+str(self.BOit)+".dat", self.gamma) 
-
-    ## TODO: sync step and prune
-    ##       get final data
-    ## grab any remaining tasks hanging in the evaluators
-    #self.bbsevaluator.sync()
-    #bbschildren = self.bbsevaluator.retrieve_results()
-
-    ## not all children are return, hence children is a ragged array
-    ## need to flatten this ragged list
-    #bbschildren = [item for sublist in bbschildren for item in sublist]
-
-    #self.bfsevaluator.sync()
-    #bfschildren = self.bfsevaluator.retrieve_results()
-    #bfschildren = [item for sublist in bfschildren for item in sublist]
-
-    #children = bbschildren + bfschildren # join child lists
-    # TODO: determine if any child nodes have a better LUB
-    #       prune
-    #       update pruned_vol
-    #       if ndim == 2 plot pruned node region
-    #                    color pruned node region via plot filling
-    #                    non-pruned points plotted on top
-    #       include another dimension independent measure of spread 
-    # then embed in a BO loop 
-   
-    max_nodes_for_min_diam = int(1 + 2 * ((2. / smallest_diam) ** len(self.best_node.l) - 1.))
-
-    print("\n=== BnB Optimization Finished ===")
-    print(f"Total number of branches: {self.num_branches}")
-    print(f"Max BBS node list size: {max_bbs_node_size}")
-    print(f"Max BFS node list size: {max_bfs_node_size}")
-    print(f"Best (LUB) node bounds: l={self.best_node.l}, u={self.best_node.u}")
-    print(f"total pruned vol: {total_prunedvol}")
-    print(f"domain vol: {initial_vol}")
-    print(f"smallest node diam: {smallest_diam}")
-    print(f"max nodes to reach smallest node diam: {max_nodes_for_min_diam}")
-    print(f"Best feasible acquisition value (LUB): {self.LUB}")
-    print(f"Initial gap: {initial_gap}")
-    print(f"Final gap: {gap}")
-    print(f"Total elapsed time: {time.time() - start_time}")
-    print("===-----------------------------===", flush=True)
-
-    return self.best_node.l, self.best_node.u, self.LUB, self.best_node.aq_U_x
+    """Run the certified asynchronous leaf-partition event loop."""
+    return run_async_search(self, branching_wrapper, l_init, u_init)
 
 
 class branching_wrapper:
@@ -1877,8 +1517,19 @@ class branching_wrapper:
       if self.acqf.has_gradient:
         acqf_callback['grad'] = self.acqf.scalar_eval_g
       opt_evaluator = Evaluator()
-      if self.acqf_UB_solver == "IPOPT": 
-        opt_solver_options = {'max_iter' : 100, 'tol' : 1.e-6, 'honor_original_bounds' : 'yes', 'print_level' : 0, 'sb' : 'yes'}
+      
+      # We need to be carefull here since the errors in the gradient (compared to FD) are in the 1e-4 range
+      # Relax tolerance for dual infeasibility/norm of gradient of the Lagrangian
+      if self.acqf_UB_solver == "IPOPT":
+        opt_solver_options = {
+          'max_iter': 100,
+          'tol': 1.e-5,
+          'honor_original_bounds': 'yes',
+          'print_level': 0,
+          'sb': 'yes',
+          'acceptable_iter': 5,
+          'acceptable_tol': 5e-4,
+        }
       else: #SLSQP
         opt_solver_options = {'maxiter' : 100, 'tol' : 1.e-5}
       acqf_minimizer = minimizer_wrapper(acqf_callback, self.acqf_UB_solver, box_bounds, constraints, opt_solver_options)
@@ -1894,10 +1545,18 @@ class branching_wrapper:
       msg = opt_sol[3]
       acqf_solve_success = opt_sol[2]
       if not acqf_solve_success:
-        print("WARNING: " + self.acqf_UB_solver + " did not converge on BOX: ", l, u, "... trying again with more verbosity and relaxed tol", flush=True)
+        print("WARNING: " + self.acqf_UB_solver + " did not converge on BOX ... trying again with more verbosity and relaxed tol", flush=True)
         print("WARNING: " + self.acqf_UB_solver + " message: ", msg, flush=True)
         if self.acqf_UB_solver == "IPOPT":
-          opt_solver_options = {'max_iter' : 200, 'tol' : 1.e-3, 'honor_original_bounds' : 'yes', 'print_level' : 0, 'sb' : 'yes'}
+          opt_solver_options = {
+            'max_iter': 200,
+            'tol': 1.e-3,
+            'honor_original_bounds': 'yes',
+            'print_level': 0,
+            'sb': 'yes',
+            'acceptable_iter': 5,
+            'acceptable_tol': 1e-2
+          }
         else: # SLSQP
           opt_solver_options = {'maxiter' : 200, 'tol' : 1.e-3, 'disp' : True}
         acqf_minimizer = minimizer_wrapper(acqf_callback, self.acqf_UB_solver, box_bounds, constraints, opt_solver_options)
@@ -1909,7 +1568,7 @@ class branching_wrapper:
         #print("upper-bound comp attempt time = ", UBi_end_time - UBi_start_time)
         acqf_solve_success = opt_sol[2]
         if not acqf_solve_success:
-          print("WARNING: "+ self.acqf_UB_solver + "failed a second time. Will take the minimum of a small number of acqf function evaluations", flush=True)
+          print("WARNING: "+ self.acqf_UB_solver + " failed a second time. Will take the minimum of a small number of acqf function evaluations", flush=True)
       if acqf_solve_success:
         acqf_U = self.acqf.evaluate(np.atleast_2d(opt_sol[0])).flatten()[0]
         #print(f"Upper bound from evaluator {acqf_U} from ipopt {opt_sol[1]}")
@@ -1940,7 +1599,7 @@ class branching_wrapper:
       if abs(acqf_U - acqf_L) / (1+abs(acqf_U)) < 1.e-4:
         acqf_L = acqf_U - 1.e-4
         #acqf_U = acqf_L + 1.e-8
-        print("WARNING: small error in between lower and upper bounds, keeping U")
+        print("WARNING: Bounds: lower slightly > upper, adjusted lower below upper", flush=True)
       else:
         print("WARNING: issue with upper and lower-bound computations...", flush=True)
         print("WARNING: acqf_L = {0:1.16e}, acqf_U = {1:1.16e}".format(acqf_L, acqf_U), flush=True)
@@ -1952,14 +1611,38 @@ class branching_wrapper:
       acqf_U = acqf_U[0]
     return acqf_L, acqf_U, acqf_U_x
   def callback(self, nodes):
-    output = []
-    for parent in nodes.flatten():
-      for child_l, child_u in branch(parent.l, parent.u):
+    parents = list(nodes.flatten())
+    if len(parents) != 1:
+      raise ValueError("Each asynchronous BnB task must contain exactly one parent")
+    parent = parents[0]
+    started = time.time()
+    try:
+      child_boxes = branch(parent.l, parent.u)
+      if len(child_boxes) != 2:
+        raise RuntimeError("branch() did not return exactly two child boxes")
+      children = []
+      for child_l, child_u in child_boxes:
         acqf_L, acqf_U, acqf_U_x = self.compute_acqf_bounds(child_l, child_u)
-        child = BnBNode(child_l, child_u, acqf_L, acqf_U)
-        child.parent_aq_U = parent.aq_U
-        child.parent_aq_L = parent.aq_L
-        child.aq_U_x = acqf_U_x
-        child.parent_aq_U_x = parent.aq_U_x
-        output.append(child)
-    return [output]
+        child = BnBNode(
+          child_l,
+          child_u,
+          acqf_L,
+          acqf_U,
+          aq_U_x=acqf_U_x,
+        )
+        children.append(child)
+      result = BranchResult(
+        parent_id=int(parent.node_id),
+        generation=int(parent.generation),
+        children=tuple(children),
+        worker_metadata={"elapsed": time.time() - started},
+      )
+    except Exception as exc:
+      result = BranchResult(
+        parent_id=int(parent.node_id),
+        generation=int(parent.generation),
+        error=f"{type(exc).__name__}: {exc}",
+        worker_metadata={"elapsed": time.time() - started},
+      )
+    # MPIEvaluator(function_mode=False) removes this one-element wrapper.
+    return [result]

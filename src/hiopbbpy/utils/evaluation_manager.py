@@ -238,7 +238,7 @@ class EvaluationManager:
           future_obj = self.executors[key].submit(fn, *args, **kwargs)
 
         self._queue.append([x, future_obj, key, submit_time])
-        self.logger.info(f"{self.task_name} Submitted f({x})")
+        #self.logger.scalars(f"{self.task_name} Submitted f({x})")
 
   def retrieve_results(self) -> tuple[list, list]:
     """Retrieves the results of completed tasks.
@@ -282,7 +282,6 @@ class EvaluationManager:
       # Optional: only print these if you are comfortable with cross-clock values
       # self._print_timing_stats("Wait times", wait_times)
       # self._print_timing_stats("Turnaround times", turnaround_times)
-
       num_workers = self._get_num_workers()
       total_work = sum(execution_times)
 

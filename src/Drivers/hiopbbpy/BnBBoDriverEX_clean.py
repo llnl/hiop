@@ -230,6 +230,9 @@ class SparseActiveProblem(Problem):
     y = y.reshape(ne, 1)
     return y
 
+class InvalidComputingModelError(RuntimeError):
+    pass
+  
 
 if __name__ == "__main__":
   parser = argparse.ArgumentParser(prog='myprogram')
@@ -245,8 +248,54 @@ if __name__ == "__main__":
   parser.add_argument("--problem", type=str, default="Periodic", help="black-box objective") 
   parser.add_argument("--make_plts", action=argparse.BooleanOptionalAction, type=bool, default=False, help="create plots or not")
   parser.add_argument("--save_data", action=argparse.BooleanOptionalAction, type=bool, default=False, help="save data or not")
+  parser.add_argument("--mpimode", action=argparse.BooleanOptionalAction, type=bool, default=False, help="enable MPI parallelism and use MPI_COMM_WORLD.Get_size()-1 workers.")
+  parser.add_argument("--num_workers", type=int, default=0, help="specify number of workers for non-mpimode with default value zero in which case multiprocessing.cpu_count()-1 will be used.") 
   
   args = parser.parse_args()
+
+  executor = None
+  if args.mpimode:
+    # for MPI mode the number of workers will be MPI_COMM_WORLD.Get_size()-1
+    #
+    # Examples of srun commands with 64 MPI workers on node and on two nodes
+    # srun -N1 -n65 -u -m mpi4py.futures BnBBoDriverEX_clean.py --mpimode [remaining_options]
+    # srun -N2 -n65 -u -m mpi4py.futures BnBBoDriverEX_clean.py --mpimode [remaining_options]
+    
+    if args.num_workers>0:
+      raise ValueError("option --num_workers should not be used or should be zero with --mpimode")
+    from mpi4py import MPI
+    from mpi4py.futures import MPIPoolExecutor
+    import sys
+    comm = MPI.COMM_WORLD
+    rank = comm.Get_rank()
+    if rank != 0:
+      MPIPoolExecutor()  # Workers enter executor loop
+      sys.exit(0)
+
+    # Master (rank 0) continues here
+    executor = MPIPoolExecutor()
+  else:
+    # for non-MPI mode one can specify the number of workers. Ideally this should be set
+    # to total number of cores/threads minus 1
+    #
+    # Example of srun command with 64 workers 
+    # srun -n1 -c65 python -u BnBBoDriverEX_clean.py  --num_workers 64 [remaining_options]
+    
+    from concurrent.futures import ProcessPoolExecutor
+    if args.num_workers>0:
+      executor = ProcessPoolExecutor(max_workers=args.num_workers)
+
+    try:
+      from mpi4py import MPI
+      comm = MPI.COMM_WORLD
+      num_ranks = comm.Get_size()
+      if num_ranks > 1:
+        raise InvalidComputingModelError("Multiple MPI ranks detected without option --mpimode being specified.")
+    except InvalidComputingModelError:
+      raise
+    except Exception:
+      pass
+    
   nx = args.nx # dimension of the problem
   boiter = args.boiter
   bnbtol = args.bnbtol # tolerance for bnb optimizer
@@ -329,18 +378,19 @@ if __name__ == "__main__":
       'max_iter': bnbmaxiter,
       'max_bnbtime': bnbmaxtime,
       'pure_BBS' : True,
-      'synchronous' : True,
+      'synchronous' : False,
       'early_stopping_heuristics' : False,
       'save_data' : save_data,
       'save_data_dir' : save_data_dir,
       'acqf_ub_solver': 'IPOPT',
       'min_diameter': 0.001,
-      'opt_mode': 5,
+      'opt_mode': 4,
       'random_seed': randseed,
   }
+  bnb_solver_options['node_evaluator'] = MPIEvaluator(function_mode=False, executor=executor, task_name="BO_BNB_NODE", profiling=False)
+  
   if problem.name == "Michalewicz":
     bnb_solver_options['min_diameter'] *= np.pi
-
 
   options = {
       'acquisition_type' : acquisition_type,
@@ -354,6 +404,11 @@ if __name__ == "__main__":
     options['opt_solver'] = 'BnB'
     options['solver_options'] = bnb_solver_options 
 
+  options['executor'] = executor
+  options['obj_evaluator'] = MPIEvaluator(function_mode=True, executor=executor, task_name="BO_OBJ", profiling=False)
+  options['opt_evaluator'] = MPIEvaluator(function_mode=True, executor=executor, task_name="BO_OPT", profiling=False)
+  
+    
   start_time = time.perf_counter()
   bo = BOAlgorithm(problem, gp_model, x_train, y_train, options=options)
   bo.optimize()

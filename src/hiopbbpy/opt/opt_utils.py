@@ -53,11 +53,11 @@ class minimizer_wrapper:
     
         status = info.get('status', -999)
         msg = info.get('status_msg', b'unknown error')
-        if status == 0:
-          # ipopt returns 0 as success
+        if status == 0 or status == 1:
+          # ipopt returns 0 as success, and 1 as acceptable success
           success = True
         else:
-          msg = f"Ipopt failed to solve the problem. Status msg: {msg}"
+          msg = f"Ipopt failed to solve the problem. Status: {status}  Status msg: {msg}"
           success = False
     
         yopt = info['obj_val']
