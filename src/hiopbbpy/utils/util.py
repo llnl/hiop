@@ -162,10 +162,7 @@ class MPIEvaluator(Evaluator):
     nevals = Xin.shape[0]
     self.submit_tasks(fun, Xin)
     self.manager.sync()
-    print(f"\n{'='*50}")
-    print(f"Retrieving results for {self.manager.task_name}...")
-    print(f"Profiling enabled: {self.manager.profiling}")
-    print(f"{'='*50}\n", flush=True)
+    #print(f"Retrieving results for {self.manager.task_name}...")
     Xout, Fout = self.manager.retrieve_results()
 
     # restore original order using returned indices
