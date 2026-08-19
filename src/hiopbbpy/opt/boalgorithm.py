@@ -23,6 +23,7 @@ class BOAlgorithmBase:
     self.batch_type = "KB"        # strategy for qEI
     self.xtrain = None            # Training data
     self.ytrain = None            # Training data
+    self.init_ntrain = 0          # Initial (prior to BO optimization) number of GP training pts 
     self.prob   = None            # Problem structure
     self.obj_evaluator = Evaluator()  # (batch) objective function evaluations
     self.opt_evaluator = Evaluator()  # (multi-start) local optimizer evaluations
@@ -74,8 +75,9 @@ class BOAlgorithm(BOAlgorithmBase):
                options = {}):
     super().__init__()
     assert isinstance(gpsurrogate, GaussianProcess)
-
+    assert len(xtrain) == len(ytrain), "xtrain, ytrain must be the same length"
     self.setTrainingData(xtrain, ytrain)
+    self.init_ntrain = len(ytrain)
     self.prob = prob
     self.gpsurrogate = gpsurrogate
     self.bounds = self.gpsurrogate.get_bounds()
@@ -323,9 +325,17 @@ class BOAlgorithm(BOAlgorithmBase):
     self.logger.critical("Bayesian Optimization completed")
     self.logger.critical(f"Total evaluations for initial samples: {len(self.ytrain)-len(self.y_hist)}")
     self.logger.critical(f"Total evaluations for BO iterations: {len(self.y_hist)}")
-    self.logger.critical(f"Optimal at BO iteration: {self.idx_opt//self.batch_size+1} ")
-    self.logger.debug(f"Best point: {self.x_opt.flatten()}")
-    self.logger.critical(f"Best value: {self.y_opt[0]}")
+    train_idx_opt = np.argmin(self.ytrain[:self.init_ntrain])
+    x_train_opt = self.xtrain[train_idx_opt]
+    y_train_opt = self.ytrain[train_idx_opt][0]
+    if self.y_opt < y_train_opt:    
+      self.logger.critical(f"Optimal at BO iteration: {self.idx_opt//self.batch_size+1} ")
+      self.logger.critical(f"Best point: {self.x_opt.flatten()}")
+      self.logger.critical(f"Best objective value: {self.y_opt[0]}")
+    else:
+      self.logger.critical(f"Optimal at training point: {train_idx_opt}")
+      self.logger.critical(f"Best (training) point: {x_train_opt}")
+      self.logger.critical(f"Best (training) point objective value: {y_train_opt}")
     self.logger.critical("===================================")
 
 
