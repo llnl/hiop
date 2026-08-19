@@ -796,10 +796,17 @@ def run_async_search(
   algorithm.pruningratio_history = [
       store.counts()["pruned"] / max(1, store.counts()["total"])
   ]
-  algorithm.print_iter_last = -1
+  algorithm.print_iter_next = 1
   algorithm.print_iter_count = 0
 
-  def print_iter_info(algorithm: Any, store: Any, log: Any, incumb_changed: Bool) -> None:
+  def print_get_next_target(target):
+    if target == 1:
+        return 10
+
+    scale = 10 ** (len(str(target)) - 1)
+    return target + scale
+  
+  def print_iter_info(algorithm: Any, store: Any, log: Any, iter_type: Int) -> None:
     """
     Print a short summary of the search stats
     """
@@ -819,8 +826,10 @@ def run_async_search(
 
     msg = f"{msg} | {vals_str}"
 
-    if incumb_changed:
+    if iter_type==1:
       msg = f"* {msg}      | {store.incumbent_value:12.5e}"
+    elif iter_type==2:      
+      msg = f"f {msg}"
     else:
       msg = f"  {msg}"
       
@@ -938,12 +947,12 @@ def run_async_search(
 
 
     # print iteration info
-    print_interval = np.power(10, min(4, 1 + np.floor(np.log10(algorithm.num_branches)))) / 10
-    if algorithm.num_branches - algorithm.print_iter_last > print_interval or incumbent_changed:
-      print_iter_info(algorithm, store, log, incumbent_changed)
-      if not incumbent_changed: 
-        algorithm.print_iter_last = algorithm.num_branches
-    
+    if algorithm.num_branches >= algorithm.print_iter_next or incumbent_changed:
+      print_iter_info(algorithm, store, log, int(incumbent_changed))
+      #if not incumbent_changed: 
+      while algorithm.num_branches >= algorithm.print_iter_next:
+        algorithm.print_iter_next = print_get_next_target(algorithm.print_iter_next)
+        
     if store.is_certified(algorithm.epsilon_gap, algorithm.epsilon_rel_gap):
       algorithm.certified = True
       algorithm.stop_reason = "optimality_gap"
@@ -1054,7 +1063,7 @@ def run_async_search(
 
   incumbent_x = None if store.incumbent_x is None else store.incumbent_x.copy()
 
-  print_iter_info(algorithm, store, log, False) 
+  print_iter_info(algorithm, store, log, 2) 
   log.info("BnB finished with status [%s] in %g seconds.", algorithm.stop_reason, time.time() - start_time)
   log.info("BnB returned LLB=%14.8e LUB=%14.8e gap=%14.8e.", algorithm.LLB, algorithm.LUB, algorithm.final_gap)
   return best_leaf.l.copy(), best_leaf.u.copy(), store.incumbent_value, incumbent_x

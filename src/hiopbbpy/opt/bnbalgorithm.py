@@ -844,8 +844,19 @@ class BnBAlgorithm(BnBAlgorithmBase):
       if self.acqf.has_gradient:
         acqf_callback['grad'] = self.acqf.scalar_eval_g
       opt_evaluator = Evaluator()
+
+      # We need to be carefull here since the errors in the gradient (compared to FD) are in the 1e-4 range
+      # Relax tolerance for dual infeasibility/norm of gradient of the Lagrangian
       if self.acqf_UB_solver == "IPOPT": 
-        opt_solver_options = {'max_iter' : 100, 'tol' : 1.e-5, 'honor_original_bounds' : 'yes', 'print_level' : 0, 'sb' : 'yes'}
+        opt_solver_options = {
+          'max_iter': 100,
+          'tol': 1.e-5,
+          'honor_original_bounds': 'yes',
+          'print_level': 0,
+          'sb': 'yes',
+          'acceptable_iter': 5,
+          'acceptable_tol': 5e-4,
+        }
       else: #SLSQP
         opt_solver_options = {'maxiter' : 100, 'tol' : 1.e-5}
       acqf_minimizer = minimizer_wrapper(acqf_callback, self.acqf_UB_solver, box_bounds, constraints, opt_solver_options)
@@ -862,7 +873,15 @@ class BnBAlgorithm(BnBAlgorithmBase):
         print(self.acqf_UB_solver + " did not converge on BOX ... trying again with more verbosity and at another initial point", flush=True)
         print(self.acqf_UB_solver + " message: ", msg, flush=True)
         if self.acqf_UB_solver == "IPOPT":
-          opt_solver_options = {'max_iter' : 200, 'tol' : 1.e-3, 'honor_original_bounds' : 'yes', 'print_level' : 0, 'sb' : 'yes'}
+          opt_solver_options = {
+            'max_iter': 200,
+            'tol': 1.e-3,
+            'honor_original_bounds': 'yes',
+            'print_level': 0,
+            'sb': 'yes',
+            'acceptable_iter': 5,
+            'acceptable_tol': 1e-2
+          }
         else: # SLSQP
           opt_solver_options = {'maxiter' : 200, 'tol' : 1.e-3, 'disp' : True}
         acqf_minimizer = minimizer_wrapper(acqf_callback, self.acqf_UB_solver, box_bounds, constraints, opt_solver_options)
@@ -871,7 +890,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
         opt_sol = opt_evaluator.run(acqf_minimizer.minimizer_callback, x0)[0]
         acqf_solve_success = opt_sol[2]
         if not acqf_solve_success:
-          print(self.acqf_UB_solver + "failed a second time. Will take the minimum of a small number of acqf function evaluations", flush=True)
+          print(self.acqf_UB_solver + " failed a second time. Will take the minimum of a small number of acqf function evaluations", flush=True)
       if acqf_solve_success:
         acqf_U = self.acqf.evaluate(np.atleast_2d(opt_sol[0])).flatten()[0]
         acqf_U_x = opt_sol[0]
@@ -1498,8 +1517,19 @@ class branching_wrapper:
       if self.acqf.has_gradient:
         acqf_callback['grad'] = self.acqf.scalar_eval_g
       opt_evaluator = Evaluator()
-      if self.acqf_UB_solver == "IPOPT": 
-        opt_solver_options = {'max_iter' : 100, 'tol' : 1.e-6, 'honor_original_bounds' : 'yes', 'print_level' : 0, 'sb' : 'yes'}
+      
+      # We need to be carefull here since the errors in the gradient (compared to FD) are in the 1e-4 range
+      # Relax tolerance for dual infeasibility/norm of gradient of the Lagrangian
+      if self.acqf_UB_solver == "IPOPT":
+        opt_solver_options = {
+          'max_iter': 100,
+          'tol': 1.e-5,
+          'honor_original_bounds': 'yes',
+          'print_level': 0,
+          'sb': 'yes',
+          'acceptable_iter': 5,
+          'acceptable_tol': 5e-4,
+        }
       else: #SLSQP
         opt_solver_options = {'maxiter' : 100, 'tol' : 1.e-5}
       acqf_minimizer = minimizer_wrapper(acqf_callback, self.acqf_UB_solver, box_bounds, constraints, opt_solver_options)
@@ -1515,11 +1545,18 @@ class branching_wrapper:
       msg = opt_sol[3]
       acqf_solve_success = opt_sol[2]
       if not acqf_solve_success:
-        #print("WARNING: " + self.acqf_UB_solver + " did not converge on BOX: ", l, u, "... trying again with more verbosity and relaxed tol", flush=True)
         print("WARNING: " + self.acqf_UB_solver + " did not converge on BOX ... trying again with more verbosity and relaxed tol", flush=True)
         print("WARNING: " + self.acqf_UB_solver + " message: ", msg, flush=True)
         if self.acqf_UB_solver == "IPOPT":
-          opt_solver_options = {'max_iter' : 200, 'tol' : 1.e-3, 'honor_original_bounds' : 'yes', 'print_level' : 0, 'sb' : 'yes'}
+          opt_solver_options = {
+            'max_iter': 200,
+            'tol': 1.e-3,
+            'honor_original_bounds': 'yes',
+            'print_level': 0,
+            'sb': 'yes',
+            'acceptable_iter': 5,
+            'acceptable_tol': 1e-2
+          }
         else: # SLSQP
           opt_solver_options = {'maxiter' : 200, 'tol' : 1.e-3, 'disp' : True}
         acqf_minimizer = minimizer_wrapper(acqf_callback, self.acqf_UB_solver, box_bounds, constraints, opt_solver_options)
@@ -1531,7 +1568,7 @@ class branching_wrapper:
         #print("upper-bound comp attempt time = ", UBi_end_time - UBi_start_time)
         acqf_solve_success = opt_sol[2]
         if not acqf_solve_success:
-          print("WARNING: "+ self.acqf_UB_solver + "failed a second time. Will take the minimum of a small number of acqf function evaluations", flush=True)
+          print("WARNING: "+ self.acqf_UB_solver + " failed a second time. Will take the minimum of a small number of acqf function evaluations", flush=True)
       if acqf_solve_success:
         acqf_U = self.acqf.evaluate(np.atleast_2d(opt_sol[0])).flatten()[0]
         #print(f"Upper bound from evaluator {acqf_U} from ipopt {opt_sol[1]}")
