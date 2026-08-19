@@ -701,12 +701,30 @@ class BnBAlgorithm(BnBAlgorithmBase):
             cons.append(cp.atoms.sum(alphavars[j]) == 1.0)
             for i in range(len(taus[j])):
               cons.append(alphavars[j][i] >= 0.0)
-        # TODO: choose which constraints get added based on nearest neighbor pairs
-        # both of these options max/min (\phi_i - phi_r) lie on end points
-        # create lambda callback for dphi_ir
-        for pair in self.nearest_neighbor_pairs:
-          i_idx = pair[0]
-          r_idx = pair[1]
+        # add constraints based on downselected nearest neighbor pairs
+        # downselect on available pairs
+        Ei_exp = np.zeros(ntrain)
+        Ai     = np.zeros(ntrain)
+        gamma_floor = 0.05
+        eps_gamma = 1.e-4
+        for i in range(ntrain):
+          #compute Ei_exp
+          if lamU[i] > lamL[i]:
+            # point where gap between exp and its secant is largest
+            lamstar = np.log((np.exp(lamU[i]) - np.exp(lamL[i])) / (lamU[i] - lamL[i]))
+            Ei_exp[i] = np.exp(lamL[i]) + (np.exp(lamU[i]) - np.exp(lamL[i])) / (lamU[i] - lamL[i]) * (lamstar - lamL[i])
+          else:
+            Ei_exp[i] = 0.
+          Ai[i] = Ei_exp[i] * (gamma_floor + (1. - gamma_floor) * np.abs(self.gamma[i]) / (np.max(np.abs(self.gamma)) + eps_gamma))
+        pair_selection_triplets = np.array([[pair[0], pair[1], Ai[pair[0]] + Ai[pair[1]]] for pair in self.nearest_neighbor_pairs])
+        args = np.argsort(pair_selection_triplets[:,-1])[::-1]
+        pair_selection_triplets[:,:] = pair_selection_triplets[args,:]
+        # now find c1 * p pairs
+        c1 = 2
+        ndownselect_pairs = min(len(self.nearest_neighbor_pairs), c1 * ntrain)
+        for pair in pair_selection_triplets[:ndownselect_pairs]:
+          i_idx = int(pair[0])
+          r_idx = int(pair[1])
           lir_min = 0.
           lir_max = 0.
           dphi_ijr = lambda t,j: -th[j] / (self.X_scale[j]**self.p) * (np.abs(t - self.x[i_idx][j])**self.p - np.abs(t - self.x[r_idx][j])**self.p)
