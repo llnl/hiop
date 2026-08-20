@@ -65,6 +65,112 @@ def polynomial_multiply(c1, c2):
   return c3
 
 
+# find min and max of phi_{3/2,ij}(t) - phi_{3/2,rj}(t)
+#              over interval l u
+# 
+# --- this adds the capability to generate numerical
+# --- values needed for accurate "k ratio" constraints
+def dphir_minmax_threehalves(l, u, thj, Xir):
+  assert len(Xir) == 2, "Xir should contact two points"
+  def phi_i(s):
+    z = np.sqrt(3.) * thj * np.abs(s - Xir[0])
+    return np.log(1. + z) - z
+  def phi_r(s):
+    z = np.sqrt(3.) * thj * np.abs(s - Xir[1])
+    return np.log(1. + z) - z
+  def dphi_ir(s):
+    return phi_i(s) - phi_r(s)
+  # Xbrk defines the open intervals in [l, u] where phi_ij(t) - phi_rj(t) is smooth
+  Xbrk = [l]
+  for x in Xir:
+    if x > l and x < u:
+      Xbrk.append(x)
+  Xbrk.append(u)
+  nintervals = len(Xbrk) - 1
+  xroots = []
+  for i in range(nintervals):
+    xl = Xbrk[i]
+    xu = Xbrk[i+1]
+    # use midpoint to determine sign of |t - x^(i)_j| and |t - x^(r)_j| for t in (xl, xu)  
+    midpt = (xl + xu) / 2.
+    cij = np.sqrt(3.) * thj * np.sign(midpt - Xir[0])
+    crj = np.sqrt(3.) * thj * np.sign(midpt - Xir[1])
+    temp_ij = np.array(basis_conversion_2(Xir[0], 0., [cij, 1.])) # 1 + zij
+    temp_rj = np.array(basis_conversion_2(Xir[1], 0., [crj, 1.])) # 1 + zrj 
+    coeffs = np.array(polynomial_multiply(temp_ij.tolist(), temp_rj.tolist()))
+    coeffs *= (crj - cij)
+    coeffs[1:] += cij * temp_ij
+    coeffs[1:] += crj * temp_rj
+    roots = np.polynomial.polynomial.polyroots(coeffs[::-1])
+    for root in roots:
+      if np.allclose(root.imag, 0.0) and root.real > xl and root.real < xu:
+        xroots.append(root.real)
+  xroots = np.array(xroots + Xbrk)
+  yroots = dphi_ir(xroots)
+  i_min = np.argmin(yroots)
+  i_max = np.argmax(yroots)
+  x_max = xroots[i_max]
+  y_max = yroots[i_max]
+  x_min = xroots[i_min]
+  y_min = yroots[i_min]
+  return x_min, x_max, y_min, y_max
+    
+
+# find min and max of phi_{5/2,ij}(t) - phi_{5/2,rj}(t)
+#              over interval l u
+# 
+# --- this adds the capability to generate numerical
+# --- values needed for accurate "k ratio" constraints
+def dphir_minmax_fivehalves(l, u, thj, Xir):
+  assert len(Xir) == 2, "Xir should contact two points"
+  def phi_i(s):
+    z = np.sqrt(5.) * thj * np.abs(s - Xir[0])
+    return np.log(1. + z + (z**2.) / 3.) - z
+  def phi_r(s):
+    z = np.sqrt(5.) * thj * np.abs(s - Xir[1])
+    return np.log(1. + z + (z**2.) / 3.) - z
+  def dphi_ir(s):
+    return phi_i(s) - phi_r(s)
+  # Xbrk defines the open intervals in [l, u] where phi_ij(t) - phi_rj(t) is smooth
+  Xbrk = [l]
+  for x in Xir:
+    if x > l and x < u:
+      Xbrk.append(x)
+  Xbrk.append(u)
+  nintervals = len(Xbrk) - 1
+  xroots = []
+  for i in range(nintervals):
+    xl = Xbrk[i]
+    xu = Xbrk[i+1]
+    # use midpoint to determine sign of |t - x^(i)_j| and |t - x^(r)_j| for t in (xl, xu)  
+    midpt = (xl + xu) / 2.
+    cij = np.sqrt(5.) * thj * np.sign(midpt - Xir[0])
+    crj = np.sqrt(5.) * thj * np.sign(midpt - Xir[1])
+    temp_ij = np.array(basis_conversion_2(Xir[0], 0., [(cij**2.) / 3., cij, 1.])) # 1 + zij + zij**2. / 3.
+    temp_rj = np.array(basis_conversion_2(Xir[1], 0., [(crj**2.) / 3., crj, 1.])) # 1 + zrj + zrj**2 / 3
+    temp_dij = np.array(basis_conversion_2(Xir[0], 0., [2. * cij / 3., 1.])) # cij (1 + 2 *zij / 3.)
+    temp_drj = np.array(basis_conversion_2(Xir[1], 0., [2. * crj / 3., 1.])) # crj (1 + 2 *zrj / 3.)
+    temp_dij *= cij
+    temp_drj *= crj
+    coeffs = np.array(polynomial_multiply(temp_ij.tolist(), temp_rj.tolist()))
+    coeffs *= (crj - cij)
+    coeffs[1:] += cij * np.array(polynomial_multiply(temp_dij, temp_rj))
+    coeffs[1:] += crj * np.array(polynomial_multiply(temp_drj, temp_ij))
+    roots = np.polynomial.polynomial.polyroots(coeffs[::-1])
+    for root in roots:
+      if np.allclose(root.imag, 0.0) and root.real > xl and root.real < xu:
+        xroots.append(root.real)
+  xroots = np.array(xroots + Xbrk)
+  yroots = dphi_ir(xroots)
+  i_min = np.argmin(yroots)
+  i_max = np.argmax(yroots)
+  x_max = xroots[i_max]
+  y_max = yroots[i_max]
+  x_min = xroots[i_min]
+  y_min = yroots[i_min]
+  return x_min, x_max, y_min, y_max
+
+
 class matern_phi:
   nu = 1.5
   X = []
