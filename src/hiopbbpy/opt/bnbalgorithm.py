@@ -701,46 +701,6 @@ class BnBAlgorithm(BnBAlgorithmBase):
             cons.append(cp.atoms.sum(alphavars[j]) == 1.0)
             for i in range(len(taus[j])):
               cons.append(alphavars[j][i] >= 0.0)
-        # add constraints based on downselected nearest neighbor pairs
-        # downselect on available pairs
-        Ei_exp = np.zeros(ntrain)
-        Ai     = np.zeros(ntrain)
-        gamma_floor = 0.05
-        eps_gamma = 1.e-4
-        for i in range(ntrain):
-          #compute Ei_exp
-          if lamU[i] > lamL[i]:
-            # point where gap between exp and its secant is largest
-            lamstar = np.log((np.exp(lamU[i]) - np.exp(lamL[i])) / (lamU[i] - lamL[i]))
-            Ei_exp[i] = np.exp(lamL[i]) + (np.exp(lamU[i]) - np.exp(lamL[i])) / (lamU[i] - lamL[i]) * (lamstar - lamL[i])
-          else:
-            Ei_exp[i] = 0.
-          Ai[i] = Ei_exp[i] * (gamma_floor + (1. - gamma_floor) * np.abs(self.gamma[i]) / (np.max(np.abs(self.gamma)) + eps_gamma))
-        pair_selection_triplets = np.array([[pair[0], pair[1], Ai[pair[0]] + Ai[pair[1]]] for pair in self.nearest_neighbor_pairs])
-        args = np.argsort(pair_selection_triplets[:,-1])[::-1]
-        pair_selection_triplets[:,:] = pair_selection_triplets[args,:]
-        # now find c1 * p pairs
-        c1 = 2
-        ndownselect_pairs = min(len(self.nearest_neighbor_pairs), c1 * ntrain)
-        for pair in pair_selection_triplets[:ndownselect_pairs]:
-          i_idx = int(pair[0])
-          r_idx = int(pair[1])
-          lir_min = 0.
-          lir_max = 0.
-          dphi_ijr = lambda t,j: -th[j] / (self.X_scale[j]**self.p) * (np.abs(t - self.x[i_idx][j])**self.p - np.abs(t - self.x[r_idx][j])**self.p)
-          lijr_mins = [min([dphi_ijr(l[j], j), dphi_ijr(u[j],j)]) for j in range(dimx)]
-          lijr_maxs = [max([dphi_ijr(l[j], j), dphi_ijr(u[j],j)]) for j in range(dimx)]
-          lir_min = sum(lijr_mins)
-          lir_max = sum(lijr_maxs)
-          if lir_max - lir_min > 1.e-6:
-            cons.append(lir_min <= lamvar[i_idx] - lamvar[r_idx])
-            cons.append(lamvar[i_idx] - lamvar[r_idx] <= lir_max) 
-          else:
-            print("lir_max - lir_min = ", lir_max - lir_min)
-          #print("i, r = {0:d}, {1:d}, lir_min, lir_max = {2:1.2e}, {3:1.2e}".format(i_idx, r_idx, lir_min, lir_max))
-        #print("-"*20)
-        #print("-"*20)
-        #print("-"*20)
           
 
 
@@ -755,6 +715,51 @@ class BnBAlgorithm(BnBAlgorithmBase):
           for k in range(len(D_rs)):
             # alpha_m xj + beta_m^T eta_(:, j) <= r_m
             cons.append(D_rs[k][0] * xvar[j] + cp.atoms.scalar_product(D_rs[k][1], etavar[:,j]) <= D_rs[k][2])
+      # add constraints based on downselected nearest neighbor pairs
+      # downselect on available pairs
+      Ei_exp = np.zeros(ntrain)
+      Ai     = np.zeros(ntrain)
+      gamma_floor = 0.05
+      eps_gamma = 1.e-4
+      for i in range(ntrain):
+        #compute Ei_exp
+        if lamU[i] > lamL[i]:
+          # point where gap between exp and its secant is largest
+          lamstar = np.log((np.exp(lamU[i]) - np.exp(lamL[i])) / (lamU[i] - lamL[i]))
+          Ei_exp[i] = np.exp(lamL[i]) + (np.exp(lamU[i]) - np.exp(lamL[i])) / (lamU[i] - lamL[i]) * (lamstar - lamL[i])
+        else:
+          Ei_exp[i] = 0.
+        Ai[i] = Ei_exp[i] * (gamma_floor + (1. - gamma_floor) * np.abs(self.gamma[i]) / (np.max(np.abs(self.gamma)) + eps_gamma))
+      pair_selection_triplets = np.array([[pair[0], pair[1], Ai[pair[0]] + Ai[pair[1]]] for pair in self.nearest_neighbor_pairs])
+      args = np.argsort(pair_selection_triplets[:,-1])[::-1]
+      pair_selection_triplets[:,:] = pair_selection_triplets[args,:]
+      # now find c1 * p pairs
+      c1 = 2
+      ndownselect_pairs = min(len(self.nearest_neighbor_pairs), c1 * ntrain)
+      for pair in pair_selection_triplets[:ndownselect_pairs]:
+        i_idx = int(pair[0])
+        r_idx = int(pair[1])
+        lir_min = 0.
+        lir_max = 0.
+        if self.kernel_spec == "pow_exp":
+          dphi_ijr = lambda t,j: -th[j] / (self.X_scale[j]**self.p) * (np.abs(t - self.x[i_idx][j])**self.p - np.abs(t - self.x[r_idx][j])**self.p)
+          lijr_mins = [min([dphi_ijr(l[j], j), dphi_ijr(u[j],j)]) for j in range(dimx)]
+          lijr_maxs = [max([dphi_ijr(l[j], j), dphi_ijr(u[j],j)]) for j in range(dimx)]
+          lir_min = sum(lijr_mins)
+          lir_max = sum(lijr_maxs)
+        else:
+          lir_min = 0.
+          lir_max = 0.
+          for j in range(dimx): 
+            if self.kernel_spec == "matern32":
+              _, _, lijr_min, lijr_max = dphir_minmax_threehalves(l[j], u[j], th[j] / self.X_scale[j], [self.x[i_idx][j], self.x[r_idx][j]])
+            else: #matern 5/2
+              _, _, lijr_min, lijr_max = dphir_minmax_fivehalves(l[j], u[j], th[j] / self.X_scale[j], [self.x[i_idx][j], self.x[r_idx][j]])
+            lir_min += lijr_min
+            lir_max += lijr_max
+        if lir_max - lir_min > 1.e-12:
+          cons.append(lir_min <= lamvar[i_idx] - lamvar[r_idx])
+          cons.append(lamvar[i_idx] - lamvar[r_idx] <= lir_max) 
     opt_tol = 1.e-8
     opt_rel_tol = 1.e-8
     for i in range(3):
@@ -1242,13 +1247,17 @@ class branching_wrapper:
        mode: 1 --> convex relaxation for maximum of variance        
     """
     assert mode in [0, 1], "mode can only be in 0, 1"
-    assert opt_mode in [0, 1, 2, 3, 4, 5], "opt mode can only be 0, 1, 2, or 3"
+    assert opt_mode in [0, 1, 2, 3, 4, 5], "opt mode can only be 0, 1, 2, 3, 4, or 5"
+    assert not (opt_mode in [0, 1, 2, 3, 4] and self.kernel_spec != "pow_exp"), "opt mode 0,1,2,3, and 4 limited to pow_exp kernel"
     # opt_mode = 0 (previous baseline w ratio constraints)
     # opt_mode = 1 (Convex relaxation w no ratio constraints on k and no affine constraints)
     # opt_mode = 2 (Most recent relaxation w ratio constraints and affine constraints)
     # opt_mode = 3 (Relaxation in w)
     # opt_mode = 4 (opt_mode 3 but with alternative to ratio constraints on k)
-    cons = [self.C2 @ self.X >= kL, self.C2 @ self.X <= kU, self.cons2 >= 0, self.en1 @ self.X >= 0]
+    cons = [self.cons2 >= 0, self.en1 @ self.X >= 0]
+    if opt_mode != 5:
+      cons.append(self.C2 @ self.X >= kL)
+      cons.append(self.C2 @ self.X <= kU)
     if opt_mode != 0 and opt_mode != 5:
       # add x optimization variable constrained to box: l <= x <= u
       xvar = cp.Variable(self.x.shape[1])
@@ -1377,42 +1386,114 @@ class branching_wrapper:
               cons.append(d_lbound <= dvar[k])
               k = k + 1
     elif opt_mode == 5:
-      assert self.p == 2.0, "opt_mode 5 only supports squared exponential kernel"
+      ntrain = self.x.shape[0]
+      dimx = self.x.shape[1]
       # add x optimization variable constrained to box: l <= x <= u
-      xvar = cp.Variable(self.x.shape[1])
+      xvar = cp.Variable(dimx)
       cons.append(l <= xvar)
       cons.append(xvar <= u)
-      ntrain = self.x.shape[0]
+      cons.append(cp.atoms.power(cp.atoms.norm(self.X[:-1]), 2) <= 1.0) # k^T R^-1 k = z^T z <= 1
       # determine bounds for k and lambda
       dmin = np.maximum(0.0, np.maximum((l - self.x) / self.X_scale, (self.x - u)/ self.X_scale))        # (nt,d)
       dmax = np.maximum(np.abs((l - self.x) / self.X_scale), np.abs((u - self.x) / self.X_scale))         # (nt,d)
       th  = self.theta.ravel()     # (d,)
-      # rho is not an optimization variable but
-      # is clearly related to lambda so will be used
-      rhoMin = (th * (dmin**self.p)).sum(axis=1)
-      rhoMax = (th * (dmax**self.p)).sum(axis=1) 
-      #cons.append(kMin <= self.C2 @ self.X) implied by rhovar <= rhomax
-      kMax = np.exp(-rhoMin)
-      kMin = np.exp(-rhoMax)
-      cons.append(kMin <= self.C2 @ self.X)  # k >= kMin     
-      cons.append(self.C2 @ self.X <= kMax)  # k <= kMax
       lamvar = cp.Variable(ntrain)
-      lamMax = -1.0 * rhoMin
-      lamMin = -1.0 * rhoMax
-      #for i in range(ntrain):
-      #  cons.append((self.C2 @ self.X)[i] >= cp.atoms.exp(lamvar[i]))
-      cons.append(self.C2 @ self.X <= kMin + cp.atoms.multiply((kMax - kMin) / (lamMax - lamMin),  (lamvar  - lamMin)))
-      etavar = cp.Variable((ntrain, ntrain))
-      cons.append(lamvar == cp.atoms.sum(etavar, axis=1)) # sum along column of matrix-valued \eta
-      wvar = cp.Variable(self.x.shape[1])
+      lamU = np.log(kU)
+      lamL = np.log(kL)
+      cons.append(lamvar >= lamL)
+      cons.append(lamvar <= lamU)
       for i in range(ntrain):
-        for j in range(self.x.shape[1]):
-          cons.append(etavar[i,j] == (-1.0 * th[j] / self.X_scale[j]) * (wvar[j] - 2 * self.x[i][j] * xvar[j] + self.x[i][j]**2.))
-      for j in range(self.x.shape[1]):
-        cons.append(xvar[j] * xvar[j] <= wvar[j])
-        cons.append(wvar[j] <= (l[j] + u[j]) * xvar[j] - l[j] * u[j])
-      
-        
+        cons.append((self.C2 @ self.X)[i] >= cp.atoms.exp(lamvar[i]))
+      cons.append(self.C2 @ self.X <= kL + cp.atoms.multiply((kU - kL) / (lamU - lamL),  (lamvar  - lamL)))
+      etavar = cp.Variable((ntrain, dimx))
+      cons.append(lamvar == cp.atoms.sum(etavar, axis=1)) # sum along column of matrix-valued \eta
+      if self.kernel_spec == "pow_exp":
+        assert self.p in [1.0, 2.0], "opt_mode 5 only support matern 1/2 (a.k.a. pow exp) and SE kernels"
+        if self.p == 2.0:
+          wvar = cp.Variable(dimx)
+          for i in range(ntrain):
+            for j in range(dimx):
+              cons.append(etavar[i,j] == (-1.0 * th[j] / (self.X_scale[j]**self.p)) * (wvar[j] - 2. * self.x[i][j] * xvar[j] + self.x[i][j]**2))
+          for j in range(dimx):
+            cons.append(xvar[j]**2 <= wvar[j])
+            cons.append(wvar[j] <= (l[j] + u[j]) * xvar[j] - l[j] * u[j])
+        elif self.p == 1.0:
+          # --- tau and alpha are ragged arrays
+          taus = [[] for j in range(dimx)]
+          for j in range(dimx):
+            taus[j].append(l[j])
+            taus[j].append(u[j])
+            for i in range(ntrain):
+              if self.x[i][j] < u[j] and l[j] < self.x[i][j]:
+                taus[j].append(self.x[i][j])
+          alphavars = [cp.Variable(len(taus[j])) for j in range(dimx)]
+          for i in range(ntrain):
+            for j in range(dimx):
+              cons.append(etavar[i][j] == cp.atoms.sum(cp.atoms.multiply(-1.0 * th[j] / (self.X_scale[j]) * np.abs(taus[j] - self.x[i][j]), alphavars[j])))
+          for j in range(dimx):
+            cons.append(xvar[j] == cp.atoms.sum(cp.atoms.multiply(taus[j], alphavars[j])))
+            cons.append(cp.atoms.sum(alphavars[j]) == 1.0)
+            for i in range(len(taus[j])):
+              cons.append(alphavars[j][i] >= 0.0)
+          
+
+
+
+      else: #matern32 or matern52
+        nu = 1.5
+        if self.kernel_spec != "matern32":
+          nu = 2.5
+        for j in range(dimx):
+          component_phi = matern_phi(self.x[:,j].tolist(), th[j] / self.X_scale[j], nu)
+          D_rs = component_phi.generate_alpha_beta_r(l[j], u[j])
+          for k in range(len(D_rs)):
+            # alpha_m xj + beta_m^T eta_(:, j) <= r_m
+            cons.append(D_rs[k][0] * xvar[j] + cp.atoms.scalar_product(D_rs[k][1], etavar[:,j]) <= D_rs[k][2])
+      # add constraints based on downselected nearest neighbor pairs
+      # downselect on available pairs
+      Ei_exp = np.zeros(ntrain)
+      Ai     = np.zeros(ntrain)
+      gamma_floor = 0.05
+      eps_gamma = 1.e-4
+      for i in range(ntrain):
+        #compute Ei_exp
+        if lamU[i] > lamL[i]:
+          # point where gap between exp and its secant is largest
+          lamstar = np.log((np.exp(lamU[i]) - np.exp(lamL[i])) / (lamU[i] - lamL[i]))
+          Ei_exp[i] = np.exp(lamL[i]) + (np.exp(lamU[i]) - np.exp(lamL[i])) / (lamU[i] - lamL[i]) * (lamstar - lamL[i])
+        else:
+          Ei_exp[i] = 0.
+        Ai[i] = Ei_exp[i] * (gamma_floor + (1. - gamma_floor) * np.abs(self.gamma[i]) / (np.max(np.abs(self.gamma)) + eps_gamma))
+      pair_selection_triplets = np.array([[pair[0], pair[1], Ai[pair[0]] + Ai[pair[1]]] for pair in self.nearest_neighbor_pairs])
+      args = np.argsort(pair_selection_triplets[:,-1])[::-1]
+      pair_selection_triplets[:,:] = pair_selection_triplets[args,:]
+      # now find c1 * p pairs
+      c1 = 2
+      ndownselect_pairs = min(len(self.nearest_neighbor_pairs), c1 * ntrain)
+      for pair in pair_selection_triplets[:ndownselect_pairs]:
+        i_idx = int(pair[0])
+        r_idx = int(pair[1])
+        lir_min = 0.
+        lir_max = 0.
+        if self.kernel_spec == "pow_exp":
+          dphi_ijr = lambda t,j: -th[j] / (self.X_scale[j]**self.p) * (np.abs(t - self.x[i_idx][j])**self.p - np.abs(t - self.x[r_idx][j])**self.p)
+          lijr_mins = [min([dphi_ijr(l[j], j), dphi_ijr(u[j],j)]) for j in range(dimx)]
+          lijr_maxs = [max([dphi_ijr(l[j], j), dphi_ijr(u[j],j)]) for j in range(dimx)]
+          lir_min = sum(lijr_mins)
+          lir_max = sum(lijr_maxs)
+        else:
+          lir_min = 0.
+          lir_max = 0.
+          for j in range(dimx): 
+            if self.kernel_spec == "matern32":
+              _, _, lijr_min, lijr_max = dphir_minmax_threehalves(l[j], u[j], th[j] / self.X_scale[j], [self.x[i_idx][j], self.x[r_idx][j]])
+            else: #matern 5/2
+              _, _, lijr_min, lijr_max = dphir_minmax_fivehalves(l[j], u[j], th[j] / self.X_scale[j], [self.x[i_idx][j], self.x[r_idx][j]])
+            lir_min += lijr_min
+            lir_max += lijr_max
+        if lir_max - lir_min > 1.e-12:
+          cons.append(lir_min <= lamvar[i_idx] - lamvar[r_idx])
+          cons.append(lamvar[i_idx] - lamvar[r_idx] <= lir_max) 
     opt_tol = 1.e-8
     opt_rel_tol = 1.e-8
     for i in range(3):
@@ -1428,6 +1509,7 @@ class branching_wrapper:
         if mode == 0:
           prob = cp.Problem(cp.Minimize(self.obj2), cons)
           if not prob.is_dcp():
+            print("is not DCP")
             raise RuntimeError("LCB relaxation is not DCP")
           
           acqf_L = prob.solve(solver=cp.CLARABEL, verbose=verbose, tol_gap_abs=opt_tol, tol_gap_rel=opt_rel_tol, max_iter=max_iters)
@@ -1443,7 +1525,6 @@ class branching_wrapper:
           sig_U = cp.Problem(cp.Maximize(self.obj3), cons).solve(solver=cp.CLARABEL, verbose=verbose, tol_gap_abs=opt_tol, tol_gap_rel=opt_rel_tol, max_iter=max_iters)
           if not (np.all(rhovar.value >= rhomin) and np.all(rhovar.value <= rhomax)):
             print("optimal rho not within rho bounds")
-          #sig_U = cp.Problem(cp.Maximize(self.obj3), cons).solve(solver=cp.SCS, verbose=verbose, eps_abs=opt_tol, max_iters=max_iters)
         pass
       except Exception as e:
         print(f"WARNING: convex solver at attempt {i+1} returned error: {e}", flush=True)
@@ -1468,10 +1549,10 @@ class branching_wrapper:
   def compute_acqf_bounds(self, l, u, skip_LB=False):
     # kernel bounds
     kL, kU = self.ker_bounds(l, u)
-    assert self.p == 1.0 or self.p == 2.0, "not supporting p not equal to 1 or 2"
+    if self.kernel_spec == "pow_exp":
+      assert self.p == 1.0 or self.p == 2.0, "not supporting p not equal to 1 or 2"
     
     failed_LB_opt = False
-    LB_start_time = time.time()
     if isinstance(self.acqf, LCBacquisition):
       # opt_mode = 0 (previous baseline w ratio constraints)
       # opt_mode = 1 (Convex relaxation w no ratio constraints on k and no affine constraints)
@@ -1481,38 +1562,27 @@ class branching_wrapper:
       if not skip_LB:
         with warnings.catch_warnings():
           warnings.simplefilter("ignore", category=UserWarning)
-          LBi_start_time = time.time()
           acqf_L = self.LCB_LB(l, u, kL, kU, opt_mode=opt_mode)
-          LBi_end_time = time.time()
-          #print("lower-bound comp attempt time = ", LBi_end_time - LBi_start_time)
         for i in range(self.opt_mode):
           if not np.isfinite(acqf_L):
             failed_LB_opt = True
-            print("WARNING: was not able to determine lower-bound in previous mode ", opt_mode, "... switching", flush=True)
+            print("Warning: was not able to determine lower-bound in previous mode ", opt_mode, "... switching", flush=True)
             opt_mode -= 1
             with warnings.catch_warnings():
               warnings.simplefilter("ignore", category=UserWarning)
-              LBi_start_time = time.time()
               acqf_L = self.LCB_LB(l, u, kL, kU, opt_mode=opt_mode)
-              LBi_end_time = time.time()
-              #print("lower-bound comp attempt time = ", LBi_end_time - LBi_start_time)
           else:
             failed_LB_opt = False
       else:
         acqf_L = -np.inf 
         failed_LB_opt = False
-
     if not isinstance(self.acqf, LCBacquisition) or failed_LB_opt:
       # mean bounds
-      print("acqf LB via sig UB", flush=True)
       mu_L, mu_U = self.mu_bounds(kL, kU)
       sig_L = self.sig_LB(kL, kU, l=l, u=u)
       with warnings.catch_warnings():
         warnings.simplefilter("ignore", category=UserWarning)
-        sigi_start_time = time.time()
         sig_U = self.sig_UB(l, u, kL, kU)
-        sigi_end_time = time.time()
-        #print("sigma UB comp attempt time = ", sigi_end_time - sigi_start_time)
       if np.isfinite(sig_U):
         var_L = sig_L ** 2.
         var_U = sig_U ** 2.
@@ -1523,11 +1593,8 @@ class branching_wrapper:
       var = np.array([var_U, var_L])
       acqf_bounds = self.acqf.evaluate_meansig2(mu, var)
       acqf_L = acqf_bounds[0]
-    LB_end_time = time.time()
-
-    #print("lower-bound compute cumulative time = ", LB_end_time - LB_start_time)
+    
     acqf_solve_success = False 
-    UB_start_time = time.time()
     if not self.acqf_UB_solver == "MINEVAL": # local gradient-based optimization method
       constraints = []
       box_bounds = np.array([l, u]).T
@@ -1535,10 +1602,10 @@ class branching_wrapper:
       if self.acqf.has_gradient:
         acqf_callback['grad'] = self.acqf.scalar_eval_g
       opt_evaluator = Evaluator()
-      
+
       # We need to be carefull here since the errors in the gradient (compared to FD) are in the 1e-4 range
       # Relax tolerance for dual infeasibility/norm of gradient of the Lagrangian
-      if self.acqf_UB_solver == "IPOPT":
+      if self.acqf_UB_solver == "IPOPT": 
         opt_solver_options = {
           'max_iter': 100,
           'tol': 1.e-5,
@@ -1553,18 +1620,15 @@ class branching_wrapper:
       acqf_minimizer = minimizer_wrapper(acqf_callback, self.acqf_UB_solver, box_bounds, constraints, opt_solver_options)
       alpha = 0.5 #0.05 + 0.9 * self.rng.random(len(u)) # rand numbers in [0.05, 0.95)
       x0 = [alpha * l + (1. - alpha) * u]
-      UBi_start_time = time.time()
       opt_sol = opt_evaluator.run(acqf_minimizer.minimizer_callback, x0)[0]
-      UBi_end_time = time.time()
-      #print("upper-bound comp attempt time = ", UBi_end_time - UBi_start_time)
       if not (np.all(opt_sol[0] >= l) and np.all(opt_sol[0] <= u)):
-        print(f"WARNING: optimizer {opt_sol[0]} not within prescribed bounds: {l}, {u}")
+        print(f"optimizer {opt_sol[0]} not within prescribed bounds: {l}, {u}")
       assert (np.all(opt_sol[0] >= l) and np.all(opt_sol[0] <= u)), f"acqf minimizer not within bounds"
       msg = opt_sol[3]
       acqf_solve_success = opt_sol[2]
       if not acqf_solve_success:
-        print("WARNING: " + self.acqf_UB_solver + " did not converge on BOX ... trying again with more verbosity and relaxed tol", flush=True)
-        print("WARNING: " + self.acqf_UB_solver + " message: ", msg, flush=True)
+        print(self.acqf_UB_solver + " did not converge on BOX ... trying again with more verbosity and at another initial point", flush=True)
+        print(self.acqf_UB_solver + " message: ", msg, flush=True)
         if self.acqf_UB_solver == "IPOPT":
           opt_solver_options = {
             'max_iter': 200,
@@ -1578,28 +1642,18 @@ class branching_wrapper:
         else: # SLSQP
           opt_solver_options = {'maxiter' : 200, 'tol' : 1.e-3, 'disp' : True}
         acqf_minimizer = minimizer_wrapper(acqf_callback, self.acqf_UB_solver, box_bounds, constraints, opt_solver_options)
-        alpha = 0.5 #0.05 + 0.9 * self.rng.random(len(u)) # rand numbers in [0.05, 0.95)
+        alpha = 0.5# 0.05 + 0.9 * self.rng.random(len(u)) # rand numbers in [0.05, 0.95)
         x0 = [alpha * l + (1. - alpha) * u]
-        UBi_start_time = time.time()
         opt_sol = opt_evaluator.run(acqf_minimizer.minimizer_callback, x0)[0]
-        UBi_end_time = time.time()
-        #print("upper-bound comp attempt time = ", UBi_end_time - UBi_start_time)
         acqf_solve_success = opt_sol[2]
         if not acqf_solve_success:
-          print("WARNING: "+ self.acqf_UB_solver + " failed a second time. Will take the minimum of a small number of acqf function evaluations", flush=True)
+          print(self.acqf_UB_solver + " failed a second time. Will take the minimum of a small number of acqf function evaluations", flush=True)
       if acqf_solve_success:
         acqf_U = self.acqf.evaluate(np.atleast_2d(opt_sol[0])).flatten()[0]
-        #print(f"Upper bound from evaluator {acqf_U} from ipopt {opt_sol[1]}")
-        #print("   optimal x:", opt_sol[0])
-        #print("   l:", l)
-        #print("   u:", u, flush=True)
         acqf_U_x = opt_sol[0]
-
     # evaluate the acquisition over a skeleton of the box
     # and choose the smallest value as the upper bound
     # of the minimum over the box
-    UB_end_time = time.time()
-    #print("upper-bound compute cumulative time = ", UB_end_time - UB_start_time)
     if (not acqf_solve_success) or (self.acqf_UB_solver == "MINEVAL"):
       s_per_dim = 3
       n_points = s_per_dim ** self.gpsurrogate.ndim
@@ -1611,17 +1665,15 @@ class branching_wrapper:
       min_arg = np.argmin(acqf_eval.flatten())
       acqf_U_x = x_points[min_arg]
       acqf_U = acqf_eval[min_arg]
-
-
     if acqf_L > acqf_U:
-      if abs(acqf_U - acqf_L) / (1+abs(acqf_U)) < 1.e-4:
-        acqf_L = acqf_U - 1.e-4
-        #acqf_U = acqf_L + 1.e-8
-        print("WARNING: Bounds: lower slightly > upper, adjusted lower below upper", flush=True)
+      if abs(acqf_U - acqf_L) / abs(acqf_U) < 1.e-4:
+        acqf_L = acqf_U - 1.e-8
       else:
-        print("WARNING: issue with upper and lower-bound computations...", flush=True)
-        print("WARNING: acqf_L = {0:1.16e}, acqf_U = {1:1.16e}".format(acqf_L, acqf_U), flush=True)
-        
+        print("issue with upper and lower-bound computations...", flush=True)
+        print("acqf_L = {0:1.12e}, acqf_U = {1:1.12e}".format(acqf_L, acqf_U), flush=True)
+    #make sure output is flush out to get all the info in case code asserts
+    sys.stdout.flush()
+    sys.stderr.flush()
     assert acqf_L <= acqf_U, "error: computed acquisition function bounds: acqf_U < acqf_L"
     if isinstance(acqf_L, (list, np.ndarray)):
       acqf_L = acqf_L[0]
