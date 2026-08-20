@@ -246,7 +246,6 @@ class matern_phi:
         _, _, _, rm = Fjmax_threehalves(l, u, self.X, self.th, alpham, betam)
       else:
         _, _, _, rm = Fjmax_fivehalves(l, u, self.X, self.th, alpham, betam)
-      print(rm)
       abrs.append([alpham, betam, rm])
     return abrs
    
