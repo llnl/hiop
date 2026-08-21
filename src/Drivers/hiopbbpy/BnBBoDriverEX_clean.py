@@ -343,11 +343,11 @@ if __name__ == "__main__":
   x_train = problem.sample(n_samples)
   y_train = problem.evaluate(x_train)
   
-  theta = 2.  # hyperparameter for GP kernel
-  fix_theta = False
-  theta_bounds = [0.4, 2.]
-  pow_exp_power = 1.0 #1. or 2., only relevant for pow_exp kernel
-  corr = "matern52" # "pow_exp", "matern32", "matern52"
+  theta = 5.  # hyperparameter for GP kernel
+  fix_theta = True
+  theta_bounds = [0.4, 10.]
+  pow_exp_power = 2.0 #1. or 2., only relevant for pow_exp kernel
+  corr = "pow_exp" #"matern52" # "pow_exp", "matern32", "matern52"
   eval_noise = False
 
   hyper_opt="Cobyla" #More robust, derivative-free hyperparameter optimization
@@ -382,7 +382,7 @@ if __name__ == "__main__":
       'max_iter': bnbmaxiter,
       'max_bnbtime': bnbmaxtime,
       'pure_BBS' : True,
-      'synchronous' : False,
+      'synchronous' : True,
       'early_stopping_heuristics' : False,
       'save_data' : save_data,
       'save_data_dir' : save_data_dir,
