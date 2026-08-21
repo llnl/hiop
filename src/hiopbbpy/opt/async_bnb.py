@@ -844,6 +844,7 @@ def run_async_search(
         acqf_UB_solver=algorithm.acqf_UB_solver,
         random_seed=algorithm.random_seed,
         opt_mode=algorithm.opt_mode,
+#        nearest_neighbor_pairs=algorithm.nearest_neighbor_pairs,
     )
 
   # A brancher owns mutable relaxation/solver objects.  Keep at most one active
@@ -903,6 +904,7 @@ def run_async_search(
     try:
       children, incumbent_changed = store.accept_result(result)
     except RuntimeError as exc:
+      print(exc)
       parent = store.leaves.get(int(result.parent_id))
       attempts = 0 if parent is None else int(parent.metadata.get("task_attempt", 0))
       if (not allow_retry) or attempts > algorithm.max_task_retries:

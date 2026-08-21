@@ -714,6 +714,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
           for k in range(len(D_rs)):
             # alpha_m xj + beta_m^T eta_(:, j) <= r_m
             cons.append(D_rs[k][0] * xvar[j] + cp.atoms.scalar_product(D_rs[k][1], etavar[:,j]) <= D_rs[k][2])
+
       if opt_mode == 6:
         # add constraints based on downselected nearest neighbor pairs
         # downselect on available pairs
@@ -990,7 +991,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
 
 
 class branching_wrapper:
-  def __init__(self, acqf, LUB=np.inf, epsilon_prune=1.e-14, acqf_UB_solver="SLSQP", random_seed=None, opt_mode=3):
+  def __init__(self, acqf, LUB=np.inf, epsilon_prune=1.e-14, acqf_UB_solver="SLSQP", random_seed=None, opt_mode=3, nearest_neighbor_pairs=None):
     self.LUB = LUB # least upper bound
     self.epsilon_prune = epsilon_prune
     self.acqf = acqf
@@ -998,6 +999,11 @@ class branching_wrapper:
     self.x = self.gpsurrogate.training_x
     self.y = self.gpsurrogate.training_y
     self.acqf_UB_solver = acqf_UB_solver
+
+    if nearest_neighbor_pairs is None:
+      self.nearest_neighbor_pairs = np.empty((0, 2), dtype=np.int64)
+    else:
+      self.nearest_neighbor_pairs = nearest_neighbor_pairs
 
     self.random_seed = random_seed
     if random_seed is None:
@@ -1465,7 +1471,7 @@ class branching_wrapper:
           else:
             Ei_exp[i] = 0.
           Ai[i] = Ei_exp[i] * (gamma_floor + (1. - gamma_floor) * np.abs(self.gamma[i]) / (np.max(np.abs(self.gamma)) + eps_gamma))
-        pair_selection_triplets = np.array([[pair[0], pair[1], Ai[pair[0]] + Ai[pair[1]]] for pair in self.nearest_neighbor_pairs])
+        pair_selection_triplets = np.array([[pair[0], pair[1], Ai[pair[0]] + Ai[pair[1]]] for pair in self.nearest_neighbor_pairs]).reshape(-1, 3)
         args = np.argsort(pair_selection_triplets[:,-1])[::-1]
         pair_selection_triplets[:,:] = pair_selection_triplets[args,:]
         # now find c1 * p pairs
