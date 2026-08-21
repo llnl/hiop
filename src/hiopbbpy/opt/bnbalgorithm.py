@@ -1415,7 +1415,7 @@ class branching_wrapper:
             for j in range(dimx):
               cons.append(etavar[i,j] == (-1.0 * th[j] / (self.X_scale[j]**self.p)) * (wvar[j] - 2. * self.x[i][j] * xvar[j] + self.x[i][j]**2))
           for j in range(dimx):
-            cons.append(xvar[j]**2 <= wvar[j])
+            cons.append(cp.atoms.square(xvar[j]) <= wvar[j])
             cons.append(wvar[j] <= (l[j] + u[j]) * xvar[j] - l[j] * u[j])
         elif self.p == 1.0:
           # --- tau and alpha are ragged arrays
@@ -1451,49 +1451,49 @@ class branching_wrapper:
             cons.append(D_rs[k][0] * xvar[j] + cp.atoms.scalar_product(D_rs[k][1], etavar[:,j]) <= D_rs[k][2])
       # add constraints based on downselected nearest neighbor pairs
       # downselect on available pairs
-      Ei_exp = np.zeros(ntrain)
-      Ai     = np.zeros(ntrain)
-      gamma_floor = 0.05
-      eps_gamma = 1.e-4
-      for i in range(ntrain):
-        #compute Ei_exp
-        if lamU[i] > lamL[i]:
-          # point where gap between exp and its secant is largest
-          lamstar = np.log((np.exp(lamU[i]) - np.exp(lamL[i])) / (lamU[i] - lamL[i]))
-          Ei_exp[i] = np.exp(lamL[i]) + (np.exp(lamU[i]) - np.exp(lamL[i])) / (lamU[i] - lamL[i]) * (lamstar - lamL[i])
-        else:
-          Ei_exp[i] = 0.
-        Ai[i] = Ei_exp[i] * (gamma_floor + (1. - gamma_floor) * np.abs(self.gamma[i]) / (np.max(np.abs(self.gamma)) + eps_gamma))
-      pair_selection_triplets = np.array([[pair[0], pair[1], Ai[pair[0]] + Ai[pair[1]]] for pair in self.nearest_neighbor_pairs])
-      args = np.argsort(pair_selection_triplets[:,-1])[::-1]
-      pair_selection_triplets[:,:] = pair_selection_triplets[args,:]
-      # now find c1 * p pairs
-      c1 = 2
-      ndownselect_pairs = min(len(self.nearest_neighbor_pairs), c1 * ntrain)
-      for pair in pair_selection_triplets[:ndownselect_pairs]:
-        i_idx = int(pair[0])
-        r_idx = int(pair[1])
-        lir_min = 0.
-        lir_max = 0.
-        if self.kernel_spec == "pow_exp":
-          dphi_ijr = lambda t,j: -th[j] / (self.X_scale[j]**self.p) * (np.abs(t - self.x[i_idx][j])**self.p - np.abs(t - self.x[r_idx][j])**self.p)
-          lijr_mins = [min([dphi_ijr(l[j], j), dphi_ijr(u[j],j)]) for j in range(dimx)]
-          lijr_maxs = [max([dphi_ijr(l[j], j), dphi_ijr(u[j],j)]) for j in range(dimx)]
-          lir_min = sum(lijr_mins)
-          lir_max = sum(lijr_maxs)
-        else:
-          lir_min = 0.
-          lir_max = 0.
-          for j in range(dimx): 
-            if self.kernel_spec == "matern32":
-              _, _, lijr_min, lijr_max = dphir_minmax_threehalves(l[j], u[j], th[j] / self.X_scale[j], [self.x[i_idx][j], self.x[r_idx][j]])
-            else: #matern 5/2
-              _, _, lijr_min, lijr_max = dphir_minmax_fivehalves(l[j], u[j], th[j] / self.X_scale[j], [self.x[i_idx][j], self.x[r_idx][j]])
-            lir_min += lijr_min
-            lir_max += lijr_max
-        if lir_max - lir_min > 1.e-12:
-          cons.append(lir_min <= lamvar[i_idx] - lamvar[r_idx])
-          cons.append(lamvar[i_idx] - lamvar[r_idx] <= lir_max) 
+      #Ei_exp = np.zeros(ntrain)
+      #Ai     = np.zeros(ntrain)
+      #gamma_floor = 0.05
+      #eps_gamma = 1.e-4
+      #for i in range(ntrain):
+      #  #compute Ei_exp
+      #  if lamU[i] > lamL[i]:
+      #    # point where gap between exp and its secant is largest
+      #    lamstar = np.log((np.exp(lamU[i]) - np.exp(lamL[i])) / (lamU[i] - lamL[i]))
+      #    Ei_exp[i] = np.exp(lamL[i]) + (np.exp(lamU[i]) - np.exp(lamL[i])) / (lamU[i] - lamL[i]) * (lamstar - lamL[i])
+      #  else:
+      #    Ei_exp[i] = 0.
+      #  Ai[i] = Ei_exp[i] * (gamma_floor + (1. - gamma_floor) * np.abs(self.gamma[i]) / (np.max(np.abs(self.gamma)) + eps_gamma))
+      #pair_selection_triplets = np.array([[pair[0], pair[1], Ai[pair[0]] + Ai[pair[1]]] for pair in self.nearest_neighbor_pairs])
+      #args = np.argsort(pair_selection_triplets[:,-1])[::-1]
+      #pair_selection_triplets[:,:] = pair_selection_triplets[args,:]
+      ## now find c1 * p pairs
+      #c1 = 2
+      #ndownselect_pairs = min(len(self.nearest_neighbor_pairs), c1 * ntrain)
+      #for pair in pair_selection_triplets[:ndownselect_pairs]:
+      #  i_idx = int(pair[0])
+      #  r_idx = int(pair[1])
+      #  lir_min = 0.
+      #  lir_max = 0.
+      #  if self.kernel_spec == "pow_exp":
+      #    dphi_ijr = lambda t,j: -th[j] / (self.X_scale[j]**self.p) * (np.abs(t - self.x[i_idx][j])**self.p - np.abs(t - self.x[r_idx][j])**self.p)
+      #    lijr_mins = [min([dphi_ijr(l[j], j), dphi_ijr(u[j],j)]) for j in range(dimx)]
+      #    lijr_maxs = [max([dphi_ijr(l[j], j), dphi_ijr(u[j],j)]) for j in range(dimx)]
+      #    lir_min = sum(lijr_mins)
+      #    lir_max = sum(lijr_maxs)
+      #  else:
+      #    lir_min = 0.
+      #    lir_max = 0.
+      #    for j in range(dimx): 
+      #      if self.kernel_spec == "matern32":
+      #        _, _, lijr_min, lijr_max = dphir_minmax_threehalves(l[j], u[j], th[j] / self.X_scale[j], [self.x[i_idx][j], self.x[r_idx][j]])
+      #      else: #matern 5/2
+      #        _, _, lijr_min, lijr_max = dphir_minmax_fivehalves(l[j], u[j], th[j] / self.X_scale[j], [self.x[i_idx][j], self.x[r_idx][j]])
+      #      lir_min += lijr_min
+      #      lir_max += lijr_max
+      # # if lir_max - lir_min > 1.e-12:
+      # #   cons.append(lir_min <= lamvar[i_idx] - lamvar[r_idx])
+      # #   cons.append(lamvar[i_idx] - lamvar[r_idx] <= lir_max) 
     opt_tol = 1.e-8
     opt_rel_tol = 1.e-8
     for i in range(3):
