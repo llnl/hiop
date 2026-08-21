@@ -248,6 +248,7 @@ if __name__ == "__main__":
   parser.add_argument("--problem", type=str, default="Periodic", help="black-box objective") 
   parser.add_argument("--make_plts", action=argparse.BooleanOptionalAction, type=bool, default=False, help="create plots or not")
   parser.add_argument("--save_data", action=argparse.BooleanOptionalAction, type=bool, default=False, help="save data or not")
+  parser.add_argument("--optmode", type=int, default=5, help="LCB convex relaxation strategy")
   parser.add_argument("--mpimode", action=argparse.BooleanOptionalAction, type=bool, default=False, help="enable MPI parallelism and use MPI_COMM_WORLD.Get_size()-1 workers.")
   parser.add_argument("--num_workers", type=int, default=0, help="specify number of workers for non-mpimode with default value zero in which case multiprocessing.cpu_count()-1 will be used.") 
   
@@ -342,10 +343,11 @@ if __name__ == "__main__":
   x_train = problem.sample(n_samples)
   y_train = problem.evaluate(x_train)
   
-  theta = 5  # hyperparameter for GP kernel
-  fix_theta = True
-  theta_bounds = [0.3, 10.]
-  pow_exp_power = 2.0
+  theta = 2.  # hyperparameter for GP kernel
+  fix_theta = False
+  theta_bounds = [0.4, 2.]
+  pow_exp_power = 1.0 #1. or 2., only relevant for pow_exp kernel
+  corr = "matern52" # "pow_exp", "matern32", "matern52"
   eval_noise = False
 
   hyper_opt="Cobyla" #More robust, derivative-free hyperparameter optimization
@@ -353,8 +355,10 @@ if __name__ == "__main__":
   # hyper_opt="NoOp" # Freeze theta at theta0, useful for debugging BnB/Clarabel issues
   if fix_theta:
     hyper_opt="NoOp"
-  
-  gp_model = smtKRG(theta, problem.xlimits, nx, pow_exp_power=pow_exp_power, eval_noise=eval_noise, fix_theta=fix_theta, theta_bounds=theta_bounds, hyper_opt=hyper_opt)
+ 
+
+
+  gp_model = smtKRG(theta, problem.xlimits, nx, corr=corr, pow_exp_power=pow_exp_power, eval_noise=eval_noise, fix_theta=fix_theta, theta_bounds=theta_bounds, hyper_opt=hyper_opt)
   gp_model.train(x_train, y_train)
 
   beta = 3
@@ -384,7 +388,7 @@ if __name__ == "__main__":
       'save_data_dir' : save_data_dir,
       'acqf_ub_solver': 'IPOPT',
       'min_diameter': 0.001,
-      'opt_mode': 4,
+      'opt_mode': args.optmode,
       'random_seed': randseed,
   }
   bnb_solver_options['node_evaluator'] = MPIEvaluator(function_mode=False, executor=executor, task_name="BO_BNB_NODE", profiling=False)
