@@ -382,24 +382,3 @@ def Fjmax_fivehalves(lj, uj, X, thj, alpha, beta):
   y_min = yroots[i_min]
   return x_min, x_max, y_min, y_max
 
-
-def get_largest_matrix_element_idxs(matrix, k):
-  arr = np.array(matrix)
-
-  # 1. Flatten the 2D matrix to a 1D array
-  flat = arr.flatten()
-
-  # 2. Get the indices of the top k elements (unsorted partition)
-  # np.argpartition places the k largest elements at the end
-  top_k_flat_indices = np.argpartition(flat, -k)[-k:]
-
-  # 3. Sort the top k indices to get values in descending order
-  top_k_flat_indices = top_k_flat_indices[np.argsort(-flat[top_k_flat_indices])]
-
-  # 4. Extract values and map 1D indices back to 2D (row, col) matrix coordinates
-  values = flat[top_k_flat_indices]
-  row_indices, col_indices = np.unravel_index(top_k_flat_indices, arr.shape)
-
-  # Combine results
-  return [[row_indices[i], col_indices[i]] for i in range(k)]
-

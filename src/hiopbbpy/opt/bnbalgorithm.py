@@ -102,6 +102,49 @@ def branch(l, u, X = None, corner_tol = 1.e-6):
     l2[d] = xsplit[d]
   return [(l1, u1), (l2, u2)]
 
+def add_ratio_constraints(cons, ki, kr, lir_min, lir_max):
+    """
+    Add:
+        exp(lir_min) * kr <= ki <= exp(lir_max) * kr
+
+    Every generated linear row has coefficients with magnitude <= 1.
+    """
+
+    # Lower ratio inequality:
+    # exp(lir_min) * kr <= ki
+    if lir_min <= 0.0:
+        coef = np.exp(lir_min)
+
+        # If coef underflows to zero, omitting this inequality is safe:
+        # it has numerically reduced to the already-present ki >= 0.
+        if coef > 0.0:
+            cons.append(ki >= coef * kr)
+    else:
+        # Divide by exp(lir_min):
+        # kr <= exp(-lir_min) * ki
+        coef = np.exp(-lir_min)
+
+        # Do not impose kr <= 0 if this underflows.
+        # Omitting the inequality preserves the outer-relaxation property.
+        if coef > 0.0:
+            cons.append(kr <= coef * ki)
+
+    # Upper ratio inequality:
+    # ki <= exp(lir_max) * kr
+    if lir_max <= 0.0:
+        coef = np.exp(lir_max)
+
+        # Do not impose ki <= 0 if this underflows.
+        if coef > 0.0:
+            cons.append(ki <= coef * kr)
+    else:
+        # Divide by exp(lir_max):
+        # exp(-lir_max) * ki <= kr
+        coef = np.exp(-lir_max)
+
+        # If this underflows, the inequality reduces numerically to kr >= 0.
+        if coef > 0.0:
+            cons.append(kr >= coef * ki)
 
 class BnBAlgorithmBase:
   def __init__(self, x = None, y = None):
@@ -456,21 +499,21 @@ class BnBAlgorithm(BnBAlgorithmBase):
     # and || th / X_scale * (x^(i) - x^(r)||_1 for all other kernels
     distance_mat = np.zeros((ntrain,ntrain))
     theta = self.theta.ravel()
-    # only fill the upper triangle
+    # only go over the upper triangle
+    pairs = []
     for i in range(ntrain):
       for j in range(i+1, ntrain):
         if self.kernel_spec == "pow_exp" and self.p == 2.0:
-          distance_mat[i, j] = np.linalg.norm(np.sqrt(theta) * (self.x[i] - self.x[j]) / self.X_scale)
+          pairs.append((np.linalg.norm(np.sqrt(theta) * (self.x[i] - self.x[j]) / self.X_scale), i, j))
         else:
-          distance_mat[i, j] = np.linalg.norm(theta * (self.x[i] - self.x[j]) / self.X_scale, ord=1)
-    # now extract largest pairs
+          pairs.append((np.linalg.norm(theta * (self.x[i] - self.x[j]) / self.X_scale, ord=1), i, j))
+    # now extract smallest-distance pairs
+    pairs.sort(key=lambda entry: entry[0])
     self.c0 = 10
-    npairs = min(self.c0 * ntrain, int((ntrain * (ntrain - 1)) / 2))
-    self.nearest_neighbor_pairs = get_largest_matrix_element_idxs(distance_mat, npairs) 
-    #TODO: add more pairs
+    npairs = min(self.c0 * ntrain, len(pairs))
+    
+    self.nearest_neighbor_pairs = np.asarray([(i, r) for _, i, r in pairs[:npairs]], dtype=np.int64).reshape(-1, 2)
 
-
-    #self.c0 = 
 
   # For minimization, we find a feasible function value as the upper bound on the minimum value of the acquisition function.
   def compute_acqf_upper_bound(self, l, u):
@@ -720,6 +763,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
         # downselect on available pairs
         Ei_exp = np.zeros(ntrain)
         Ai     = np.zeros(ntrain)
+        kvec = self.C2 @ self.X
         gamma_floor = 0.05
         eps_gamma = 1.e-4
         for i in range(ntrain):
@@ -758,9 +802,9 @@ class BnBAlgorithm(BnBAlgorithmBase):
                 _, _, lijr_min, lijr_max = dphir_minmax_fivehalves(l[j], u[j], th[j] / self.X_scale[j], [self.x[i_idx][j], self.x[r_idx][j]])
               lir_min += lijr_min
               lir_max += lijr_max
-          if lir_max - lir_min > 1.e-12:
-            cons.append(lir_min <= lamvar[i_idx] - lamvar[r_idx])
-            cons.append(lamvar[i_idx] - lamvar[r_idx] <= lir_max) 
+    
+          add_ratio_constraints(cons, kvec[i_idx], kvec[r_idx], lir_min, lir_max)
+    
     opt_tol = 1.e-8
     opt_rel_tol = 1.e-8
     for i in range(3):
@@ -1460,6 +1504,7 @@ class branching_wrapper:
       if opt_mode == 6:
         Ei_exp = np.zeros(ntrain)
         Ai     = np.zeros(ntrain)
+        kvec = self.C2 @ self.X
         gamma_floor = 0.05
         eps_gamma = 1.e-4
         for i in range(ntrain):
@@ -1498,9 +1543,8 @@ class branching_wrapper:
                 _, _, lijr_min, lijr_max = dphir_minmax_fivehalves(l[j], u[j], th[j] / self.X_scale[j], [self.x[i_idx][j], self.x[r_idx][j]])
               lir_min += lijr_min
               lir_max += lijr_max
-          if lir_max - lir_min > 1.e-12:
-            cons.append(lir_min <= lamvar[i_idx] - lamvar[r_idx])
-            cons.append(lamvar[i_idx] - lamvar[r_idx] <= lir_max) 
+          add_ratio_constraints(cons, kvec[i_idx], kvec[r_idx], lir_min, lir_max)
+          
     opt_tol = 1.e-8
     opt_rel_tol = 1.e-8
     for i in range(3):
@@ -1518,7 +1562,7 @@ class branching_wrapper:
           if not prob.is_dcp():
             print("is not DCP")
             raise RuntimeError("LCB relaxation is not DCP")
-          
+
           acqf_L = prob.solve(solver=cp.CLARABEL, verbose=verbose, tol_gap_abs=opt_tol, tol_gap_rel=opt_rel_tol, max_iter=max_iters)
           #acqf_L = cp.Problem(cp.Minimize(self.obj2), cons).solve(solver=cp.SCS, verbose=verbose, eps_abs=opt_tol, max_iters=max_iters)
 
