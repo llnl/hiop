@@ -8,6 +8,12 @@ set(hiopSparseEx_INTERFACE_HEADERS
 add_executable(NlpSparseEx1.exe NlpSparseEx1.cpp NlpSparseEx1Driver.cpp)
 target_link_libraries(NlpSparseEx1.exe HiOp::HiOp)
 
+# SuperLU example (uses same NlpSparseEx1 problem class)
+if(HIOP_USE_SUPERLU)
+  add_executable(NlpSparseEx1SuperLU.exe NlpSparseEx1.cpp NlpSparseEx1SuperLUDriver.cpp)
+  target_link_libraries(NlpSparseEx1SuperLU.exe HiOp::HiOp)
+endif()
+
 add_executable(NlpSparseEx2.exe NlpSparseEx2.cpp NlpSparseEx2Driver.cpp)
 target_link_libraries(NlpSparseEx2.exe HiOp::HiOp)
 
@@ -68,6 +74,9 @@ if(HIOP_USE_GINKGO)
       add_test(NAME NlpSparse1_7 COMMAND ${RUNCMD} "$<TARGET_FILE:NlpSparseEx1.exe>" "500" "-ginkgo_hip" "-selfcheck")
   endif(HIOP_USE_HIP)
 endif(HIOP_USE_GINKGO)
+if(HIOP_USE_SUPERLU)
+  add_test(NAME NlpSparse1_SuperLU COMMAND ${RUNCMD} "$<TARGET_FILE:NlpSparseEx1SuperLU.exe>" "500" "-selfcheck")
+endif(HIOP_USE_SUPERLU)
 add_test(NAME NlpSparse2_1 COMMAND ${RUNCMD} "$<TARGET_FILE:NlpSparseEx2.exe>" "500" "-selfcheck")
 add_test(NAME NlpSparse2_2 COMMAND ${RUNCMD} "$<TARGET_FILE:NlpSparseEx2.exe>" "500" "-inertiafree" "-selfcheck")
 if(HIOP_USE_CUDA)

@@ -57,11 +57,16 @@
 #ifndef HIOP_LINSOLVER_SUPERLU
 #define HIOP_LINSOLVER_SUPERLU
 
-#include "hiopLinSolver.hpp"
-#include "hiopMatrixSparseTriplet.hpp"
+#include <string>
 
-// SuperLU_DIST headers
-#include "superlu_ddefs.h"
+// Include HiOp headers
+#include "hiopLinSolver.hpp"
+
+// Forward declaration for PIMPL idiom - hides all SuperLU types from header
+// This prevents BLAS declaration conflicts when this header is included elsewhere
+namespace hiop {
+struct SuperLUData;
+}
 
 /**
  * Implements the linear solver class using SuperLU_DIST
@@ -78,8 +83,19 @@ namespace hiop
  * This class uses a triplet sparse matrix (member `M_`) to store the KKT linear system,
  * which is converted internally to CSR format required by SuperLU_DIST.
  *
+ * For symmetric indefinite KKT systems, this solver uses symmetric matching methods:
+ * - SUMAC (GPU-accelerated) when CUDA is enabled
+ * - SUITOR (CPU-based) otherwise
+ * These methods provide better numerical stability than generic row permutations.
+ *
+ * Runtime requirements for SUMAC (GPU):
+ * - NCCL library must be available
+ * - Set environment: export SUPERLU_ACC_OFFLOAD=1
+ * - Set environment: export OMP_NUM_THREADS=<threads per MPI rank>
+ *
  * Note: SuperLU_DIST does not provide inertia information directly, so this solver
  * should be used with the 'inertia_free' factorization acceptor option.
+ *
  */
 class hiopLinSolverSymSparseSuperLU : public hiopLinSolverSymSparse
 {
@@ -99,6 +115,18 @@ public:
    * exit it contains the solution(s).
    */
   bool solve(hiopVector& x) override;
+
+  /**
+   * Set the row permutation strategy for symmetric matching.
+   *
+   * @param method String indicating the matching method:
+   *   - "auto" (default): SUMAC for GPU builds, SUITOR otherwise
+   *   - "sumac": GPU-accelerated symmetric matching (requires CUDA + NCCL)
+   *   - "suitor": CPU-based symmetric matching
+   *   - "mc80": HSL MC80 algorithm (if available)
+   *   - "mc64": Generic LargeDiag_MC64 (not recommended for symmetric systems)
+   */
+  void setRowPermutationMethod(const std::string& method);
 
 protected:
   hiopLinSolverSymSparseSuperLU() = delete;
@@ -125,14 +153,8 @@ private:
   int* colind_;   // Column indices (size nnz_)
   double* values_; // Matrix values (size nnz_)
 
-  // SuperLU_DIST data structures
-  SuperMatrix A_;                    // Matrix descriptor
-  dScalePermstruct_t ScalePermstruct_;  // Scaling and permutation
-  dLUstruct_t LUstruct_;             // LU factors
-  dSOLVEstruct_t SOLVEstruct_;       // Solve structures
-  gridinfo_t grid_;                  // Process grid
-  superlu_dist_options_t options_;   // Solver options
-  SuperLUStat_t stat_;               // Statistics
+  // SuperLU_DIST data structures (hidden via PIMPL idiom)
+  hiop::SuperLUData* superlu_data_;  // Pointer to implementation containing all SuperLU structures
 
   // Status flags
   bool is_first_call_;    // First factorization call
@@ -143,6 +165,9 @@ private:
   double* berr_;          // Backward error bound
 
   int info_;              // Return status from SuperLU
+
+  // Row permutation method configuration
+  std::string row_perm_method_;  // User-specified method ("auto", "sumac", "suitor", "mc80", "mc64")
 };
 
 } // namespace hiop

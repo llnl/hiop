@@ -10,6 +10,7 @@
 #cmakedefine HIOP_USE_COINHSL
 #cmakedefine HIOP_USE_STRUMPACK
 #cmakedefine HIOP_USE_PARDISO
+#cmakedefine HIOP_USE_SUPERLU
 #cmakedefine HIOP_USE_RESOLVE
 #cmakedefine HIOP_USE_GINKGO
 #cmakedefine HIOP_USE_AXOM

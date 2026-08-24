@@ -64,7 +64,12 @@
 #include "hiopLinSolverSparseGinkgo.hpp"
 #endif
 #ifdef HIOP_USE_SUPERLU
-#include "hiopLinSolverSparseSuperLU.hpp"
+// Forward declaration of factory function to avoid including header with BLAS conflicts
+namespace hiop {
+  class hiopLinSolverSymSparse;
+  class hiopNlpFormulation;
+  hiopLinSolverSymSparse* createSuperLUSolver(int n, int nnz, hiopNlpFormulation* nlp);
+}
 #endif
 
 #endif
@@ -349,7 +354,7 @@ hiopLinSolverSymSparse* hiopKKTLinSysCompressedSparseXYcYd::determineAndCreateLi
         // ma57, pardiso and strumpack are not available or user requested superlu
 #ifdef HIOP_USE_SUPERLU
         linsol_actual = "SuperLU_DIST";
-        linSys_ = new hiopLinSolverSymSparseSuperLU(n, nnz, nlp_);
+        linSys_ = createSuperLUSolver(n, nnz, nlp_);
         auto* fact_acceptor_ic = dynamic_cast<hiopFactAcceptorIC*>(fact_acceptor_);
         if(fact_acceptor_ic) {
           nlp_->log->printf(hovError,
@@ -739,7 +744,7 @@ hiopLinSolverSymSparse* hiopKKTLinSysCompressedSparseXDYcYd::determineAndCreateL
       if((nullptr == linSys_ && linear_solver == "auto") || linear_solver == "superlu") {
         // ma57, pardiso and strumpack are not available or user requested superlu
 #ifdef HIOP_USE_SUPERLU
-        linSys_ = new hiopLinSolverSymSparseSuperLU(n, nnz, nlp_);
+        linSys_ = createSuperLUSolver(n, nnz, nlp_);
         actual_lin_solver = "SuperLU_DIST";
         auto* fact_acceptor_ic = dynamic_cast<hiopFactAcceptorIC*>(fact_acceptor_);
         if(fact_acceptor_ic) {

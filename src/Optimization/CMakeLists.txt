@@ -23,6 +23,11 @@ set(hiopOptimization_SPARSE_SRC
   hiopKKTLinSysSparseNormalEqn.cpp
   )
 
+# SuperLU factory in separate compilation unit to avoid BLAS conflicts
+if(HIOP_USE_SUPERLU)
+  list(APPEND hiopOptimization_SPARSE_SRC hiopKKTLinSysSparse_SuperLU.cpp)
+endif()
+
 set(hiopOptimization_INTERFACE_HEADERS
   hiopAlgFilterIPM.hpp
   hiopAlgPrimalDecomp.hpp
@@ -56,3 +61,8 @@ install(
 
 add_library(hiopOptimization OBJECT ${hiopOptimization_SRC})
 target_link_libraries(hiopOptimization PRIVATE hiop_tpl)
+
+# SuperLU BLAS conflict workaround: disable -Werror for BLAS declaration conflicts
+if(HIOP_USE_SUPERLU)
+  target_compile_options(hiopOptimization PRIVATE -Wno-error)
+endif()

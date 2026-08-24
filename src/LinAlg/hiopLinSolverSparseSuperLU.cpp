@@ -1,5 +1,24 @@
+// Include SuperLU headers FIRST
+#include "superlu_ddefs.h"
+
+// After SuperLU is included, prevent HiOp from redefining BLAS/FC_GLOBAL
+// Mark the header guards so HiOp's versions are skipped
+#define HIOP_BLASDEFS  // Prevent hiop_blasdefs.hpp content
+#define FC_HEADER_INCLUDED  // Prevent HiOp's FortranCInterface.hpp
+
+// Also undef FC_GLOBAL so it doesn't interfere with HiOp's usage
+// SuperLU already used it, now we prevent redefinition conflicts
+#undef FC_GLOBAL
+#undef FC_GLOBAL_
+
+// Now include HiOp headers
 #include "hiopLinSolverSparseSuperLU.hpp"
-#include "hiop_blasdefs.hpp"
+#include "hiopMatrixSparseTriplet.hpp"
+
+// Redefine FC_GLOBAL to match what HiOp expects (name##_)
+// This allows any HiOp code that uses FC_GLOBAL to work
+#define FC_GLOBAL(name,NAME) name##_
+#define FC_GLOBAL_(name,NAME) name##_
 
 #include <cassert>
 #include <cstring>
@@ -8,6 +27,19 @@
 
 namespace hiop
 {
+
+// PIMPL struct to hide SuperLU types from header
+struct SuperLUData {
+  SuperMatrix A;                     // Matrix descriptor
+  dScalePermstruct_t ScalePermstruct;  // Scaling and permutation
+  dLUstruct_t LUstruct;              // LU factors
+  dSOLVEstruct_t SOLVEstruct;        // Solve structures
+  gridinfo_t grid;                   // Process grid
+  superlu_dist_options_t options;    // Solver options
+  SuperLUStat_t stat;                // Statistics
+
+  SuperLUData() = default;
+};
 
 hiopLinSolverSymSparseSuperLU::hiopLinSolverSymSparseSuperLU(const int& n, const int& nnz, hiopNlpFormulation* nlp)
     : hiopLinSolverSymSparse(n, nnz, nlp),
@@ -21,7 +53,8 @@ hiopLinSolverSymSparseSuperLU::hiopLinSolverSymSparseSuperLU(const int& n, const
       is_factored_(false),
       rhs_(nullptr),
       berr_(nullptr),
-      info_(0)
+      info_(0),
+      row_perm_method_("auto")  // Default to automatic selection
 {
   // Allocate CSR arrays
   rowptr_ = new int[n_ + 1];
@@ -31,7 +64,8 @@ hiopLinSolverSymSparseSuperLU::hiopLinSolverSymSparseSuperLU(const int& n, const
   // Allocate error bound array
   berr_ = new double[1];
 
-  // Initialize SuperLU_DIST structures will be done in firstCall()
+  // Allocate SuperLU PIMPL structure (will be initialized in firstCall())
+  superlu_data_ = new hiop::SuperLUData;
 }
 
 hiopLinSolverSymSparseSuperLU::~hiopLinSolverSymSparseSuperLU()
@@ -39,25 +73,28 @@ hiopLinSolverSymSparseSuperLU::~hiopLinSolverSymSparseSuperLU()
   // Clean up SuperLU structures if they were initialized
   if(!is_first_call_) {
     // Destroy SuperMatrix
-    Destroy_CompRowLoc_Matrix_dist(&A_);
+    Destroy_CompRowLoc_Matrix_dist(&superlu_data_->A);
 
     // Free scaling and permutation structures
-    dScalePermstructFree(&ScalePermstruct_);
+    dScalePermstructFree(&superlu_data_->ScalePermstruct);
 
     // Free LU structures
-    dLUstructFree(&LUstruct_);
+    dLUstructFree(&superlu_data_->LUstruct);
 
     // Free solve structures
     if(is_factored_) {
-      dSolveFinalize(&options_, &SOLVEstruct_);
+      dSolveFinalize(&superlu_data_->options, &superlu_data_->SOLVEstruct);
     }
 
     // Free statistics
-    PStatFree(&stat_);
+    PStatFree(&superlu_data_->stat);
 
     // Exit process grid
-    superlu_gridexit(&grid_);
+    superlu_gridexit(&superlu_data_->grid);
   }
+
+  // Free SuperLU PIMPL structure
+  delete superlu_data_;
 
   // Free CSR arrays
   delete[] rowptr_;
@@ -67,6 +104,11 @@ hiopLinSolverSymSparseSuperLU::~hiopLinSolverSymSparseSuperLU()
 
   // Free working arrays
   delete rhs_;
+
+  // Free matrix if owned
+  if(sys_mat_owned_) {
+    delete M_;
+  }
 }
 
 void hiopLinSolverSymSparseSuperLU::firstCall()
@@ -86,31 +128,67 @@ void hiopLinSolverSymSparseSuperLU::firstCall()
   npcol = nprocs;
 #endif
 
-  superlu_gridinit(MPI_COMM_WORLD, nprow, npcol, &grid_);
+  superlu_gridinit(MPI_COMM_WORLD, nprow, npcol, &superlu_data_->grid);
 
   // Set default options
-  set_default_options_dist(&options_);
+  set_default_options_dist(&superlu_data_->options);
 
   // Configure options for symmetric indefinite system
-  options_.Fact = DOFACT;                // First factorization
-  options_.Equil = YES;                  // Equilibrate the matrix
-  options_.ParSymbFact = NO;             // Symbolic factorization (NO=sequential)
-  options_.ColPerm = MMD_AT_PLUS_A;      // Column ordering: minimum degree on A'+A
-  options_.RowPerm = LargeDiag_MC64;     // Row permutation for numerical stability
-  options_.ReplaceTinyPivot = YES;       // Replace tiny pivots
-  options_.IterRefine = DOUBLE;          // Iterative refinement
-  options_.Trans = NOTRANS;              // No transpose
-  options_.PrintStat = NO;               // Don't print statistics
-  options_.SymPattern = NO;              // Not symmetric pattern only
+  superlu_data_->options.Fact = DOFACT;                // First factorization
+  superlu_data_->options.Equil = YES;                  // Equilibrate the matrix
+  superlu_data_->options.ParSymbFact = NO;             // Symbolic factorization (NO=sequential)
+  superlu_data_->options.ColPerm = MMD_AT_PLUS_A;      // Column ordering: minimum degree on A'+A
+
+  // Configure row permutation based on user selection or automatic choice
+  if(row_perm_method_ == "auto") {
+    // Automatic selection: SUMAC for GPU builds, SUITOR otherwise
+#ifdef HIOP_USE_CUDA
+    superlu_data_->options.RowPerm = SUMAC;            // GPU-accelerated symmetric matching
+    nlp_->log->printf(hovSummary,
+                      "hiopLinSolverSymSparseSuperLU: Using SUMAC (GPU) symmetric matching\n");
+#else
+    superlu_data_->options.RowPerm = SUITOR;           // CPU-based symmetric matching
+    nlp_->log->printf(hovSummary,
+                      "hiopLinSolverSymSparseSuperLU: Using SUITOR (CPU) symmetric matching\n");
+#endif
+  } else if(row_perm_method_ == "sumac") {
+    superlu_data_->options.RowPerm = SUMAC;
+    nlp_->log->printf(hovSummary,
+                      "hiopLinSolverSymSparseSuperLU: Using SUMAC (GPU) symmetric matching\n");
+  } else if(row_perm_method_ == "suitor") {
+    superlu_data_->options.RowPerm = SUITOR;
+    nlp_->log->printf(hovSummary,
+                      "hiopLinSolverSymSparseSuperLU: Using SUITOR (CPU) symmetric matching\n");
+  } else if(row_perm_method_ == "mc80") {
+    superlu_data_->options.RowPerm = MC80;
+    nlp_->log->printf(hovSummary,
+                      "hiopLinSolverSymSparseSuperLU: Using MC80 (HSL) symmetric matching\n");
+  } else if(row_perm_method_ == "mc64") {
+    superlu_data_->options.RowPerm = LargeDiag_MC64;
+    nlp_->log->printf(hovWarning,
+                      "hiopLinSolverSymSparseSuperLU: Using MC64 (generic, not optimized for symmetric systems)\n");
+  } else {
+    // Invalid option - default to SUITOR with warning
+    superlu_data_->options.RowPerm = SUITOR;
+    nlp_->log->printf(hovWarning,
+                      "hiopLinSolverSymSparseSuperLU: Unknown row permutation method '%s', using SUITOR\n",
+                      row_perm_method_.c_str());
+  }
+
+  superlu_data_->options.ReplaceTinyPivot = YES;       // Replace tiny pivots
+  superlu_data_->options.IterRefine = SLU_DOUBLE;      // Iterative refinement
+  superlu_data_->options.Trans = NOTRANS;              // No transpose
+  superlu_data_->options.PrintStat = NO;               // Don't print statistics
+  superlu_data_->options.SymPattern = NO;              // Not symmetric pattern only
 
   // Initialize scaling and permutation structure
-  dScalePermstructInit(n_, n_, &ScalePermstruct_);
+  dScalePermstructInit(n_, n_, &superlu_data_->ScalePermstruct);
 
   // Initialize LU structure
-  dLUstructInit(n_, &LUstruct_);
+  dLUstructInit(n_, &superlu_data_->LUstruct);
 
   // Initialize statistics
-  PStatInit(&stat_);
+  PStatInit(&superlu_data_->stat);
 
   is_first_call_ = false;
 }
@@ -193,7 +271,7 @@ int hiopLinSolverSymSparseSuperLU::matrixChanged()
   int_t fst_row = 0; // First row index
 
   // Create compressed row storage matrix
-  dCreate_CompRowLoc_Matrix_dist(&A_,
+  dCreate_CompRowLoc_Matrix_dist(&superlu_data_->A,
                                   n_, n_, nnz_, m_loc, fst_row,
                                   values_, colind_, rowptr_,
                                   SLU_NR_loc, SLU_D, SLU_GE);
@@ -201,23 +279,25 @@ int hiopLinSolverSymSparseSuperLU::matrixChanged()
   // Set factorization mode
   if(is_factored_) {
     // Subsequent factorization with same sparsity pattern
-    options_.Fact = SamePattern;
+    superlu_data_->options.Fact = SamePattern;
   } else {
-    options_.Fact = DOFACT;
+    superlu_data_->options.Fact = DOFACT;
   }
 
   // Allocate right-hand side (needed for pdgssvx interface)
+  // We'll create it on first solve, for now just allocate a temporary
   if(rhs_ == nullptr) {
-    rhs_ = M_->alloc_clone_vec();
+    // Create a vector of the right size - will be allocated properly in solve()
+    rhs_ = LinearAlgebraFactory::create_vector(nlp_->options->GetString("mem_space"), n_);
   }
   double* rhs_data = rhs_->local_data();
   std::fill(rhs_data, rhs_data + n_, 0.0); // Zero RHS for factorization
 
   // Perform factorization
   int nrhs = 1;
-  pdgssvx(&options_, &A_, &ScalePermstruct_, rhs_data,
-          m_loc, nrhs, &grid_, &LUstruct_, &SOLVEstruct_,
-          berr_, &stat_, &info_);
+  pdgssvx(&superlu_data_->options, &superlu_data_->A, &superlu_data_->ScalePermstruct, rhs_data,
+          m_loc, nrhs, &superlu_data_->grid, &superlu_data_->LUstruct, &superlu_data_->SOLVEstruct,
+          berr_, &superlu_data_->stat, &info_);
 
   // Check for errors
   if(info_ != 0) {
@@ -262,14 +342,14 @@ bool hiopLinSolverSymSparseSuperLU::solve(hiopVector& x_in)
   double* rhs_data = rhs_->local_data();
 
   // Solve the system using existing factorization
-  options_.Fact = FACTORED;
+  superlu_data_->options.Fact = FACTORED;
 
   int_t m_loc = n_;
   int nrhs = 1;
 
-  pdgssvx(&options_, &A_, &ScalePermstruct_, rhs_data,
-          m_loc, nrhs, &grid_, &LUstruct_, &SOLVEstruct_,
-          berr_, &stat_, &info_);
+  pdgssvx(&superlu_data_->options, &superlu_data_->A, &superlu_data_->ScalePermstruct, rhs_data,
+          m_loc, nrhs, &superlu_data_->grid, &superlu_data_->LUstruct, &superlu_data_->SOLVEstruct,
+          berr_, &superlu_data_->stat, &info_);
 
   // Copy solution back
   x->copyFrom(*rhs_);
@@ -283,6 +363,26 @@ bool hiopLinSolverSymSparseSuperLU::solve(hiopVector& x_in)
   nlp_->runStats.linsolv.tmTriuSolves.stop();
 
   return (info_ == 0);
+}
+
+void hiopLinSolverSymSparseSuperLU::setRowPermutationMethod(const std::string& method)
+{
+  if(method == "auto" || method == "sumac" || method == "suitor" ||
+     method == "mc80" || method == "mc64") {
+    row_perm_method_ = method;
+
+    if(!is_first_call_) {
+      nlp_->log->printf(hovWarning,
+                        "hiopLinSolverSymSparseSuperLU: Row permutation method changed to '%s', "
+                        "but solver already initialized. Change will take effect on next solve.\n",
+                        method.c_str());
+    }
+  } else {
+    nlp_->log->printf(hovError,
+                      "hiopLinSolverSymSparseSuperLU: Invalid row permutation method '%s'. "
+                      "Valid options: auto, sumac, suitor, mc80, mc64\n",
+                      method.c_str());
+  }
 }
 
 } // namespace hiop
