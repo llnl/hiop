@@ -563,9 +563,11 @@ class BnBAlgorithm(BnBAlgorithmBase):
     # opt_mode = 3 (Relaxation in w)
     # opt_mode = 4 (opt_mode 3 but with alternative to ratio constraints on k)
     cons = [self.cons2 >= 0, self.en1 @ self.X >= 0]
-    if opt_mode != 5 and opt_mode != 6:
-      cons.append(self.C2 @ self.X >= kL)
-      cons.append(self.C2 @ self.X <= kU)
+
+    # Let us keep these for now even though they are redundant
+    #if opt_mode != 5 and opt_mode != 6:
+    cons.append(self.C2 @ self.X >= kL)
+    cons.append(self.C2 @ self.X <= kU)
     if opt_mode != 0 and opt_mode != 5 and opt_mode != 6:
       # add x optimization variable constrained to box: l <= x <= u
       xvar = cp.Variable(self.x.shape[1])
@@ -770,8 +772,18 @@ class BnBAlgorithm(BnBAlgorithmBase):
           #compute Ei_exp
           if lamU[i] > lamL[i]:
             # point where gap between exp and its secant is largest
-            lamstar = np.log((np.exp(lamU[i]) - np.exp(lamL[i])) / (lamU[i] - lamL[i]))
-            Ei_exp[i] = np.exp(lamL[i]) + (np.exp(lamU[i]) - np.exp(lamL[i])) / (lamU[i] - lamL[i]) * (lamstar - lamL[i])
+
+            # original code misses  "- exp(lamstar)" for Ei_exp[i]
+            # lamstar = np.log((np.exp(lamU[i]) - np.exp(lamL[i])) / (lamU[i] - lamL[i]))
+            # Ei_exp[i] = np.exp(lamL[i]) + (np.exp(lamU[i]) - np.exp(lamL[i])) / (lamU[i] - lamL[i]) * (lamstar - lamL[i])
+            exp_lamL = np.exp(lamL[i])
+            lam_exp_diff = np.exp(lamU[i]) - exp_lamL
+            slope = lam_exp_diff / (lamU[i] - lamL[i])
+            lamstar = np.log(slope)
+            sec_at_star = exp_lamL + slope*(lamstar - lamL[i])                                                          
+            Ei_exp[i] = sec_at_star - slope
+            if Ei_exp[i] < 0:
+              raise NumericalError("roundoff error: diff between exp and sec should be zero")            
           else:
             Ei_exp[i] = 0.
           Ai[i] = Ei_exp[i] * (gamma_floor + (1. - gamma_floor) * np.abs(self.gamma[i]) / (np.max(np.abs(self.gamma)) + eps_gamma))
@@ -1305,9 +1317,11 @@ class branching_wrapper:
     # opt_mode = 3 (Relaxation in w)
     # opt_mode = 4 (opt_mode 3 but with alternative to ratio constraints on k)
     cons = [self.cons2 >= 0, self.en1 @ self.X >= 0]
-    if opt_mode != 5 and opt_mode != 6:
-      cons.append(self.C2 @ self.X >= kL)
-      cons.append(self.C2 @ self.X <= kU)
+
+    # Let us keep these for now even though they are redundant
+    #if opt_mode != 5 and opt_mode != 6:
+    cons.append(self.C2 @ self.X >= kL)
+    cons.append(self.C2 @ self.X <= kU)
     if opt_mode != 0 and opt_mode != 5 and opt_mode != 6:
       # add x optimization variable constrained to box: l <= x <= u
       xvar = cp.Variable(self.x.shape[1])
@@ -1505,14 +1519,25 @@ class branching_wrapper:
         Ei_exp = np.zeros(ntrain)
         Ai     = np.zeros(ntrain)
         kvec = self.C2 @ self.X
+
         gamma_floor = 0.05
         eps_gamma = 1.e-4
         for i in range(ntrain):
           #compute Ei_exp
           if lamU[i] > lamL[i]:
             # point where gap between exp and its secant is largest
-            lamstar = np.log((np.exp(lamU[i]) - np.exp(lamL[i])) / (lamU[i] - lamL[i]))
-            Ei_exp[i] = np.exp(lamL[i]) + (np.exp(lamU[i]) - np.exp(lamL[i])) / (lamU[i] - lamL[i]) * (lamstar - lamL[i])
+
+            # original code misses  "- exp(lamstar)" for Ei_exp[i]
+            # lamstar = np.log((np.exp(lamU[i]) - np.exp(lamL[i])) / (lamU[i] - lamL[i]))
+            # Ei_exp[i] = np.exp(lamL[i]) + (np.exp(lamU[i]) - np.exp(lamL[i])) / (lamU[i] - lamL[i]) * (lamstar - lamL[i])
+            exp_lamL = np.exp(lamL[i])
+            lam_exp_diff = np.exp(lamU[i]) - exp_lamL
+            slope = lam_exp_diff / (lamU[i] - lamL[i])
+            lamstar = np.log(slope)
+            sec_at_star = exp_lamL + slope*(lamstar - lamL[i])                                                          
+            Ei_exp[i] = sec_at_star - slope
+            if Ei_exp[i] < 0:
+              raise NumericalError("roundoff error: diff between exp and sec should be zero")            
           else:
             Ei_exp[i] = 0.
           Ai[i] = Ei_exp[i] * (gamma_floor + (1. - gamma_floor) * np.abs(self.gamma[i]) / (np.max(np.abs(self.gamma)) + eps_gamma))
