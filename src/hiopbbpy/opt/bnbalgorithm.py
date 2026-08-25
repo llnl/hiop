@@ -139,6 +139,456 @@ def add_ratio_constraints(cons, ki, kr, lir_min, lir_max):
         if coef > 0.0:
             cons.append(kr >= coef * ki)
 
+def add_mccormick_ratio_constraints(
+    cons,
+    ki,
+    kr,
+    lam_i,
+    lam_r,
+    lir_min,
+    lir_max,
+    ki_min,
+    ki_max,
+    kr_min,
+    kr_max,
+    name=None,
+    add_linear_ratio_rows=True,
+):
+    """
+    Add the lifted exponential/McCormick relaxation
+
+        d_ir = lam_i - lam_r
+        q_ir = exp(d_ir)
+        ki   = q_ir * kr
+
+    over
+
+        lir_min <= d_ir <= lir_max,
+        ki_min <= ki <= ki_max,
+        kr_min <= kr <= kr_max.
+
+    The exact equality q_ir = exp(d_ir) is relaxed by its convex hull:
+
+        exp(d_ir) <= q_ir <= sec_exp(d_ir).
+
+    The exact product ki = q_ir * kr is relaxed by the four
+    McCormick inequalities.
+
+    To improve numerical scaling, the pair is automatically reversed
+    when doing so produces a smaller upper bound on q. Thus, internally,
+    the function may represent either
+
+        ki = q * kr
+
+    or the equivalent relation
+
+        kr = q * ki.
+
+    Parameters
+    ----------
+    cons
+        List of CVXPY constraints to which constraints are appended.
+
+    ki, kr
+        Scalar CVXPY expressions for the two kernel variables.
+
+    lam_i, lam_r
+        Scalar CVXPY expressions for the two log-kernel variables.
+
+    lir_min, lir_max
+        Valid bounds on lam_i - lam_r.
+
+    ki_min, ki_max, kr_min, kr_max
+        Individual kernel bounds.
+
+    name
+        Optional suffix for the CVXPY q-variable name.
+
+    add_linear_ratio_rows
+        Also add the two original ratio inequalities. They are
+        theoretically implied by the McCormick system when kernel
+        bounds are nonnegative, but can help the conic solver.
+
+    Returns
+    -------
+    dict
+        Information about the auxiliary variable and its orientation.
+        The entry "q" is None when a numerical fallback or an exact
+        fixed-ratio relation is used.
+    """
+
+    lir_min = float(lir_min)
+    lir_max = float(lir_max)
+
+    ki_min = max(0.0, float(ki_min))
+    ki_max = float(ki_max)
+    kr_min = max(0.0, float(kr_min))
+    kr_max = float(kr_max)
+
+    values = np.asarray(
+        [
+            lir_min,
+            lir_max,
+            ki_min,
+            ki_max,
+            kr_min,
+            kr_max,
+        ],
+        dtype=float,
+    )
+
+    if not np.all(np.isfinite(values)):
+        raise ValueError(
+            "Nonfinite log-ratio or kernel bounds in "
+            "McCormick ratio relaxation"
+        )
+
+    if lir_min > lir_max:
+        raise ValueError(
+            f"Invalid log-ratio interval "
+            f"[{lir_min}, {lir_max}]"
+        )
+
+    if ki_min > ki_max or kr_min > kr_max:
+        raise ValueError(
+            "Invalid individual kernel bounds in "
+            "McCormick ratio relaxation"
+        )
+
+    if ki_max < 0.0 or kr_max < 0.0:
+        raise ValueError(
+            "Kernel upper bounds must be nonnegative"
+        )
+
+    # ---------------------------------------------------------------
+    # Choose the better numerical orientation.
+    #
+    # Original orientation:
+    #     q = ki / kr,
+    #     log(q) in [lir_min, lir_max].
+    #
+    # Reversed orientation:
+    #     q = kr / ki,
+    #     log(q) in [-lir_max, -lir_min].
+    #
+    # Choose the orientation having the smaller upper log bound,
+    # hence the smaller q upper bound.
+    # ---------------------------------------------------------------
+
+    swapped = (lir_min + lir_max > 0.0)
+
+    if not swapped:
+        k_num = ki
+        k_den = kr
+
+        lam_num = lam_i
+        lam_den = lam_r
+
+        d_min = lir_min
+        d_max = lir_max
+
+        k_num_min = ki_min
+        k_num_max = ki_max
+        k_den_min = kr_min
+        k_den_max = kr_max
+    else:
+        k_num = kr
+        k_den = ki
+
+        lam_num = lam_r
+        lam_den = lam_i
+
+        d_min = -lir_max
+        d_max = -lir_min
+
+        k_num_min = kr_min
+        k_num_max = kr_max
+        k_den_min = ki_min
+        k_den_max = ki_max
+
+    d_expr = lam_num - lam_den
+
+    # These pairwise log-ratio bounds are valid independently of the
+    # subsequent exponential and McCormick relaxations.
+    cons.append(d_expr >= d_min)
+    cons.append(d_expr <= d_max)
+
+    def append_normalized_linear_ratio_rows():
+        """
+        Add
+
+            exp(d_min) * k_den <= k_num
+            k_num <= exp(d_max) * k_den
+
+        while keeping every generated coefficient <= 1.
+        """
+
+        # Lower ratio side:
+        #
+        #     exp(d_min) k_den <= k_num.
+        if d_min <= 0.0:
+            coef = float(np.exp(d_min))
+
+            # Underflow to zero makes this equivalent numerically to
+            # k_num >= 0, which is already implied.
+            if coef > 0.0:
+                cons.append(
+                    k_num >= coef * k_den
+                )
+        else:
+            # Divide by exp(d_min):
+            #
+            #     k_den <= exp(-d_min) k_num.
+            coef = float(np.exp(-d_min))
+
+            if coef > 0.0:
+                cons.append(
+                    k_den <= coef * k_num
+                )
+
+        # Upper ratio side:
+        #
+        #     k_num <= exp(d_max) k_den.
+        if d_max <= 0.0:
+            coef = float(np.exp(d_max))
+
+            if coef > 0.0:
+                cons.append(
+                    k_num <= coef * k_den
+                )
+        else:
+            # Divide by exp(d_max):
+            #
+            #     exp(-d_max) k_num <= k_den.
+            coef = float(np.exp(-d_max))
+
+            if coef > 0.0:
+                cons.append(
+                    k_den >= coef * k_num
+                )
+
+    width = d_max - d_min
+
+    # The orientation above usually avoids large q values. If even the
+    # better orientation has an unrepresentable q upper bound, retain
+    # the original normalized linear ratio constraints instead of
+    # constructing an invalid or overflowed exponential/McCormick model.
+    log_max_float = float(
+        np.log(np.finfo(float).max)
+    )
+
+    if d_max >= log_max_float - 4.0:
+        append_normalized_linear_ratio_rows()
+
+        return {
+            "q": None,
+            "swapped": swapped,
+            "fallback": True,
+            "exact": False,
+            "log_bounds": (d_min, d_max),
+            "reason": "q upper bound would overflow",
+        }
+
+    q_max_raw = float(np.exp(d_max))
+
+    # Subnormal q variables are not numerically useful in the conic
+    # model. The normalized linear rows are safer in that regime.
+    if (
+        not np.isfinite(q_max_raw)
+        or q_max_raw < np.finfo(float).tiny
+    ):
+        append_normalized_linear_ratio_rows()
+
+        return {
+            "q": None,
+            "swapped": swapped,
+            "fallback": True,
+            "exact": False,
+            "log_bounds": (d_min, d_max),
+            "reason": "q upper bound is numerically unrepresentable",
+        }
+
+    # exp(d_min) may underflow even though exp(d_max) is representable.
+    # A zero lower bound only enlarges the McCormick rectangle, hence
+    # preserves validity.
+    q_min_raw = float(np.exp(d_min))
+
+    if q_min_raw > 0.0:
+        q_min = float(
+            np.nextafter(q_min_raw, 0.0)
+        )
+    else:
+        q_min = 0.0
+
+    # Round the upper bound outward.
+    q_max = float(
+        np.nextafter(q_max_raw, np.inf)
+    )
+
+    # ---------------------------------------------------------------
+    # Degenerate log-ratio interval.
+    #
+    # If d_min == d_max, the ratio is fixed and the product relation
+    # becomes the exact linear equality
+    #
+    #     k_num = exp(d_min) k_den.
+    # ---------------------------------------------------------------
+
+    if width == 0.0:
+        cons.append(
+            k_num == q_max_raw * k_den
+        )
+
+        if add_linear_ratio_rows:
+            append_normalized_linear_ratio_rows()
+
+        return {
+            "q": None,
+            "swapped": swapped,
+            "fallback": False,
+            "exact": True,
+            "log_bounds": (d_min, d_max),
+            "q_bounds": (q_max_raw, q_max_raw),
+        }
+
+    # ---------------------------------------------------------------
+    # Convex exponential envelope:
+    #
+    #     exp(d_expr) <= q <= sec_exp(d_expr).
+    # ---------------------------------------------------------------
+
+    if name is None:
+        qvar = cp.Variable(
+            nonneg=True
+        )
+    else:
+        qvar = cp.Variable(
+            nonneg=True,
+            name=f"q_{name}",
+        )
+
+    cons.append(qvar >= q_min)
+    cons.append(qvar <= q_max)
+
+    # Convex lower graph.
+    cons.append(
+        qvar >= cp.exp(d_expr)
+    )
+
+    # Stable slope of the exponential secant:
+    #
+    #   [exp(d_max)-exp(d_min)] / [d_max-d_min]
+    #
+    # = exp(d_max) *
+    #   [1-exp(-(d_max-d_min))] / [d_max-d_min].
+    secant_slope_raw = float(
+        q_max_raw
+        * (-np.expm1(-width))
+        / width
+    )
+
+    if not np.isfinite(secant_slope_raw) or secant_slope_raw <= 0.0:
+        append_normalized_linear_ratio_rows()
+
+        return {
+            "q": None,
+            "swapped": swapped,
+            "fallback": True,
+            "exact": False,
+            "log_bounds": (d_min, d_max),
+            "reason": "invalid exponential secant slope",
+        }
+
+    # For the secant endpoint, round upward. If exp(d_min)
+    # underflowed, the smallest positive float is an upper
+    # approximation of the unrepresentably small exact value.
+    if q_min_raw > 0.0:
+        q_min_secant = float(
+            np.nextafter(q_min_raw, np.inf)
+        )
+    else:
+        q_min_secant = float(
+            np.nextafter(0.0, np.inf)
+        )
+
+    secant_slope = float(
+        np.nextafter(
+            secant_slope_raw,
+            np.inf,
+        )
+    )
+
+    cons.append(
+        qvar
+        <= q_min_secant
+        + secant_slope
+        * (d_expr - d_min)
+    )
+
+    # ---------------------------------------------------------------
+    # McCormick relaxation of
+    #
+    #     k_num = qvar * k_den
+    #
+    # over
+    #
+    #     q_min <= qvar <= q_max,
+    #     k_den_min <= k_den <= k_den_max.
+    # ---------------------------------------------------------------
+
+    # Lower McCormick plane at (q_min, k_den_min).
+    cons.append(
+        k_num
+        >= q_min * k_den
+        + k_den_min * qvar
+        - q_min * k_den_min
+    )
+
+    # Lower McCormick plane at (q_max, k_den_max).
+    cons.append(
+        k_num
+        >= q_max * k_den
+        + k_den_max * qvar
+        - q_max * k_den_max
+    )
+
+    # Upper McCormick plane using q_max and k_den_min.
+    cons.append(
+        k_num
+        <= q_max * k_den
+        + k_den_min * qvar
+        - q_max * k_den_min
+    )
+
+    # Upper McCormick plane using q_min and k_den_max.
+    cons.append(
+        k_num
+        <= q_min * k_den
+        + k_den_max * qvar
+        - q_min * k_den_max
+    )
+
+    # These two rows are redundant in exact arithmetic but retain the
+    # original ratio formulation explicitly and may help presolve.
+    if add_linear_ratio_rows:
+        append_normalized_linear_ratio_rows()
+
+    return {
+        "q": qvar,
+        "swapped": swapped,
+        "fallback": False,
+        "exact": False,
+        "log_bounds": (d_min, d_max),
+        "q_bounds": (q_min, q_max),
+        "numerator_bounds": (
+            k_num_min,
+            k_num_max,
+        ),
+        "denominator_bounds": (
+            k_den_min,
+            k_den_max,
+        ),
+    }            
 class BnBAlgorithmBase:
   def __init__(self, x = None, y = None):
     # Node class for priority queue
@@ -405,6 +855,472 @@ def stats_common_se_point(owner, l, u, xvar, wvar, lamvar) -> str:
   )
   return output
 
+def stats_lcb_relaxation_gap(owner, xvar, relaxation_value) -> str:
+  """
+  Decompose the feasible-at-x_conv gap
+
+      LCB(x_conv) - relaxation_value,
+
+  where x_conv = xvar.value and relaxation_value is the objective
+  returned by the conic solver.
+
+  The top-level decomposition is
+
+      LCB(x_conv) - L_rel
+        = [mu(x_conv) - mu(k_rel)]
+        + beta * [s_rel - sigma(x_conv)]
+        + [(mu(k_rel) - beta*s_rel) - L_rel].
+
+  The variance contribution is further decomposed as
+
+      beta * [s_rel - sigma(x_conv)]
+        = beta * [s_rel - sigma_model(k_rel)]
+        + beta * [sigma_model(k_rel) - sigma_exact(k_rel)]
+        + beta * [sigma_exact(k_rel) - sigma(x_conv)].
+
+  Here:
+    sigma_model(k_rel)
+      uses the variance quadratic actually present in the conic
+      constraint after the NSD eigenvalue modification;
+
+    sigma_exact(k_rel)
+      uses the original, unmodified SMT variance quadratic.
+
+  This diagnostic is intended for the squared-exponential relaxation:
+      owner.kernel_spec == "pow_exp" and owner.p == 2.
+  """
+  unavailable = "LCB relaxation gap decomposition unavailable: "
+
+  try:
+    if not isinstance(owner.acqf, LCBacquisition):
+      return unavailable + "acquisition is not LCB\n"
+
+    if owner.kernel_spec != "pow_exp" or float(owner.p) != 2.0:
+      return (
+        unavailable
+        + "diagnostic currently supports only the SE kernel\n"
+      )
+
+    if owner.X.value is None or xvar.value is None:
+      return unavailable + "missing conic primal values\n"
+
+    X_opt = np.asarray(
+      owner.X.value,
+      dtype=float,
+    ).ravel()
+
+    gamma = np.asarray(
+      owner.gamma,
+      dtype=float,
+    ).ravel()
+
+    ntrain = gamma.size
+
+    if X_opt.size != ntrain + 1:
+      return (
+        unavailable
+        + f"expected X to have length {ntrain + 1}, "
+        + f"got {X_opt.size}\n"
+      )
+
+    # X = (z,s), with k = C z.
+    z_rel = X_opt[:ntrain]
+    s_rel = float(X_opt[-1])
+
+    x_rel = np.asarray(
+      xvar.value,
+      dtype=float,
+    ).ravel()
+
+    k_rel = np.asarray(
+      owner.C2 @ X_opt,
+      dtype=float,
+    ).ravel()
+
+    # Exact SE kernel vector generated by the shared spatial point xvar.
+    theta = np.asarray(
+      owner.theta,
+      dtype=float,
+    ).ravel()
+
+    x_scale = np.asarray(
+      owner.X_scale,
+      dtype=float,
+    ).ravel()
+
+    training_x = np.asarray(
+      owner.x,
+      dtype=float,
+    )
+
+    dx = (
+      x_rel[None, :]
+      - training_x
+    ) / x_scale[None, :]
+
+    k_at_x = np.exp(
+      -np.sum(
+        theta[None, :] * dx**2,
+        axis=1,
+      )
+    )
+
+    beta = float(owner.acqf.beta)
+
+    # Relaxed mean represented by k_rel.
+    mu_rel = float(
+      owner.y_mean
+      + owner.y_std
+      * (
+        owner.beta0
+        + np.dot(gamma, k_rel)
+      )
+    )
+
+    # Actual GP mean and variance at the feasible point x_rel.
+    x_row = np.atleast_2d(x_rel)
+
+    mu_at_x = float(
+      np.asarray(
+        owner.gpsurrogate.mean(x_row),
+        dtype=float,
+      ).reshape(-1)[0]
+    )
+
+    var_at_x_raw = float(
+      np.asarray(
+        owner.gpsurrogate.variance(x_row),
+        dtype=float,
+      ).reshape(-1)[0]
+    )
+
+    sigma_at_x = float(
+      np.sqrt(max(0.0, var_at_x_raw))
+    )
+
+    # Exact, unmodified SMT variance quadratic at the relaxed k.
+    #
+    # owner.A_obj, owner.b_obj, and owner.c_obj define
+    #
+    #   variance(k_rel)
+    #     = owner.sigma2 *
+    #       (0.5*z^T*A_obj*z + b_obj^T*z + c_obj).
+    A_obj = np.asarray(
+      owner.A_obj,
+      dtype=float,
+    )
+
+    b_obj = np.asarray(
+      owner.b_obj,
+      dtype=float,
+    ).ravel()
+
+    c_obj = float(
+      np.asarray(
+        owner.c_obj,
+        dtype=float,
+      ).reshape(())
+    )
+
+    var_exact_k_raw = float(
+      owner.sigma2
+      * (
+        0.5 * np.dot(
+          z_rel,
+          A_obj @ z_rel,
+        )
+        + np.dot(
+          b_obj,
+          z_rel,
+        )
+        + c_obj
+      )
+    )
+
+    sigma_exact_k = float(
+      np.sqrt(max(0.0, var_exact_k_raw))
+    )
+
+    # Variance quadratic actually used in the conic constraint after
+    # modifying A_constraint2 to be numerically negative definite.
+    #
+    # owner.cons2 is:
+    #
+    #   variance_model(k_rel) - s_rel^2.
+    #
+    # Hence:
+    #
+    #   variance_model(k_rel) = owner.cons2.value + s_rel^2.
+    cons2_value = getattr(
+      owner.cons2,
+      "value",
+      None,
+    )
+
+    if cons2_value is not None:
+      var_model_k_raw = float(
+        np.asarray(
+          cons2_value,
+          dtype=float,
+        ).reshape(())
+        + s_rel**2
+      )
+    else:
+      # Fallback that evaluates the same conic quadratic directly.
+      A_con = np.asarray(
+        owner.A_constraint2,
+        dtype=float,
+      )
+
+      b_con = np.asarray(
+        owner.b_constraint2,
+        dtype=float,
+      ).ravel()
+
+      c_con = float(
+        np.asarray(
+          owner.c_constraint2,
+          dtype=float,
+        ).reshape(())
+      )
+
+      var_model_k_raw = float(
+        0.5 * np.dot(
+          X_opt,
+          A_con @ X_opt,
+        )
+        + np.dot(
+          b_con,
+          X_opt,
+        )
+        + c_con
+        + s_rel**2
+      )
+
+    sigma_model_k = float(
+      np.sqrt(max(0.0, var_model_k_raw))
+    )
+
+    relaxation_value = float(
+      np.asarray(
+        relaxation_value,
+        dtype=float,
+      ).reshape(())
+    )
+
+    # Reconstruct the conic objective directly from the primal variables.
+    relax_obj_from_X = float(
+      mu_rel - beta * s_rel
+    )
+
+    # Feasible LCB at xvar.value.
+    lcb_at_x = float(
+      mu_at_x - beta * sigma_at_x
+    )
+
+    gap_at_x = float(
+      lcb_at_x - relaxation_value
+    )
+
+    # ---------------------------------------------------------------
+    # Top-level decomposition
+    # ---------------------------------------------------------------
+
+    mean_part = float(
+      mu_at_x - mu_rel
+    )
+
+    variance_part = float(
+      beta * (s_rel - sigma_at_x)
+    )
+
+    # This is normally close to zero. It measures the discrepancy
+    # between the value returned by the solver and the objective
+    # reconstructed from its primal solution.
+    objective_value_part = float(
+      relax_obj_from_X - relaxation_value
+    )
+
+    total_closure = float(
+      gap_at_x
+      - (
+        mean_part
+        + variance_part
+        + objective_value_part
+      )
+    )
+
+    # ---------------------------------------------------------------
+    # Variance-part decomposition
+    # ---------------------------------------------------------------
+
+    # Activity/slack of the conic variance inequality.
+    # This should normally be close to zero and nonpositive:
+    #
+    #     s_rel <= sigma_model(k_rel).
+    variance_cone_part = float(
+      beta
+      * (
+        s_rel
+        - sigma_model_k
+      )
+    )
+
+    # Effect of the numerical NSD eigenvalue modification made in
+    # owner.A_constraint2.
+    variance_projection_part = float(
+      beta
+      * (
+        sigma_model_k
+        - sigma_exact_k
+      )
+    )
+
+    # Effect of replacing the kernel vector generated by x_rel with
+    # the relaxed kernel vector.
+    variance_kernel_part = float(
+      beta
+      * (
+        sigma_exact_k
+        - sigma_at_x
+      )
+    )
+
+    variance_closure = float(
+      variance_part
+      - (
+        variance_cone_part
+        + variance_projection_part
+        + variance_kernel_part
+      )
+    )
+
+    # ---------------------------------------------------------------
+    # Componentwise mean sensitivity
+    # ---------------------------------------------------------------
+
+    delta_k = k_at_x - k_rel
+
+    mean_terms = (
+      owner.y_std
+      * gamma
+      * delta_k
+    )
+
+    mean_terms_sum = float(
+      np.sum(mean_terms)
+    )
+
+    mean_terms_l1 = float(
+      np.sum(np.abs(mean_terms))
+    )
+
+    # This should be close to zero if the manually formed SE kernel
+    # and the SMT posterior-mean formula agree.
+    mean_formula_residual = float(
+      mean_part - mean_terms_sum
+    )
+
+    if mean_terms.size:
+      top_mean_idx = int(
+        np.argmax(np.abs(mean_terms))
+      )
+
+      top_mean_term = float(
+        mean_terms[top_mean_idx]
+      )
+
+      max_mean_term = float(
+        np.max(np.abs(mean_terms))
+      )
+    else:
+      top_mean_idx = -1
+      top_mean_term = 0.0
+      max_mean_term = 0.0
+
+    if mean_terms_l1 == 0.0:
+      cancellation_ratio = 1.0
+    elif abs(mean_terms_sum) <= np.finfo(float).tiny:
+      cancellation_ratio = np.inf
+    else:
+      cancellation_ratio = float(
+        mean_terms_l1
+        / abs(mean_terms_sum)
+      )
+
+    # ---------------------------------------------------------------
+    # Output
+    # ---------------------------------------------------------------
+
+    output = (
+      "LCB relaxation-gap decomposition at x_conv:\n"
+    )
+
+    output += (
+      f"  L_rel={relaxation_value: .6e}  "
+      f"obj(X)={relax_obj_from_X: .6e}  "
+      f"LCB(x_conv)={lcb_at_x: .6e}  "
+      f"gap={gap_at_x: .6e}\n"
+    )
+
+    output += (
+      f"  gap parts: "
+      f"mean={mean_part: .6e}  "
+      f"variance={variance_part: .6e}  "
+      f"obj-value={objective_value_part: .3e}  "
+      f"closure={total_closure: .3e}\n"
+    )
+
+    output += (
+      f"  variance parts: "
+      f"cone={variance_cone_part: .6e}  "
+      f"NSD-proj={variance_projection_part: .6e}  "
+      f"k-decoupling={variance_kernel_part: .6e}  "
+      f"closure={variance_closure: .3e}\n"
+    )
+
+    output += (
+      f"  states: "
+      f"mu_rel={mu_rel: .6e}  "
+      f"mu(x_conv)={mu_at_x: .6e}  "
+      f"s={s_rel: .6e}  "
+      f"sigma_model(k)={sigma_model_k: .6e}  "
+      f"sigma_exact(k)={sigma_exact_k: .6e}  "
+      f"sigma(x_conv)={sigma_at_x: .6e}\n"
+    )
+
+    output += (
+      f"  mean k-terms: "
+      f"sum={mean_terms_sum: .6e}  "
+      f"L1={mean_terms_l1: .6e}  "
+      f"maxabs={max_mean_term: .6e}  "
+      f"top=({top_mean_idx},{top_mean_term: .6e})  "
+      f"cancel={cancellation_ratio: .3e}  "
+      f"formula-resid={mean_formula_residual: .3e}\n"
+    )
+
+    output += (
+      f"  kernel mismatch: "
+      f"||k(x_conv)-k_rel||_inf="
+      f"{np.linalg.norm(delta_k, ord=np.inf): .6e}  "
+      f"||.||_2={np.linalg.norm(delta_k): .6e};  "
+      f"raw variances: "
+      f"model={var_model_k_raw: .6e}  "
+      f"exact-k={var_exact_k_raw: .6e}  "
+      f"x_conv={var_at_x_raw: .6e}\n"
+    )
+
+    return output
+
+  except Exception as exc:
+    # This function is currently called inside the conic-solver retry
+    # try-block. A diagnostics failure should not cause a successful
+    # conic solve to be retried with looser tolerances.
+    return (
+      unavailable
+      + f"{type(exc).__name__}: {exc}\n"
+    )
+
 class BnBAlgorithm(BnBAlgorithmBase):
   def __init__(self, acqf, options = {}, BOit=0):
     self.acqf = acqf
@@ -548,7 +1464,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
           pairs.append((np.linalg.norm(theta * (self.x[i] - self.x[j]) / self.X_scale, ord=1), i, j))
     # now extract smallest-distance pairs
     pairs.sort(key=lambda entry: entry[0])
-    self.c0 = 10
+    self.c0 = 2
     npairs = min(self.c0 * ntrain, len(pairs))
     
     self.nearest_neighbor_pairs = np.asarray([(i, r) for _, i, r in pairs[:npairs]], dtype=np.int64).reshape(-1, 2)
@@ -854,8 +1770,10 @@ class BnBAlgorithm(BnBAlgorithmBase):
                 _, _, lijr_min, lijr_max = dphir_minmax_fivehalves(l[j], u[j], th[j] / self.X_scale[j], [self.x[i_idx][j], self.x[r_idx][j]])
               lir_min += lijr_min
               lir_max += lijr_max
-    
-          add_ratio_constraints(cons, kvec[i_idx], kvec[r_idx], lir_min, lir_max)
+
+          add_mccormick_ratio_constraints(cons=cons, ki=kvec[i_idx], kr=kvec[r_idx], lam_i=lamvar[i_idx], lam_r=lamvar[r_idx],
+                                          lir_min=lir_min, lir_max=lir_max, ki_min=kL[i_idx], ki_max=kU[i_idx], kr_min=kL[r_idx], kr_max=kU[r_idx], name=f"{i_idx}_{r_idx}")
+          #add_ratio_constraints(cons, kvec[i_idx], kvec[r_idx], lir_min, lir_max)
     
     opt_tol = 1.e-8
     opt_rel_tol = 1.e-8
@@ -867,7 +1785,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
         max_iters = 300
       if i == 2:
         opt_rel_tol = 1.e-4
-        verbose = False
+        verbose = True
       try:
         if mode == 0:
           prob = cp.Problem(cp.Minimize(self.obj2), cons)
@@ -877,15 +1795,16 @@ class BnBAlgorithm(BnBAlgorithmBase):
           acqf_L = prob.solve(solver=cp.CLARABEL, verbose=verbose, tol_gap_abs=opt_tol, tol_gap_rel=opt_rel_tol, max_iter=max_iters)
           #acqf_L = cp.Problem(cp.Minimize(self.obj2), cons).solve(solver=cp.SCS, verbose=verbose, eps_abs=opt_tol, max_iters=max_iters)
 
-          if self.diagnostics:
-            diagnostics_output = stats_common_se_point(owner=self, l=l, u=u, xvar=xvar, wvar=wvar, lamvar=lamvar)
-          
           if prob.status != cp.OPTIMAL:
             if prob.status == cp.OPTIMAL_INACCURATE:
               # be conservative
               acqf_L -= 10*opt_tol
             else:
               raise RuntimeError("LCB relaxation solver did not return an optimal solution")
+          if self.diagnostics and opt_mode==6:
+            diagnostics_output = stats_common_se_point(owner=self, l=l, u=u, xvar=xvar, wvar=wvar, lamvar=lamvar)
+            diagnostics_output = stats_lcb_relaxation_gap(owner=self, xvar=xvar, relaxation_value=acqf_L) + diagnostics_output
+            
         else:
           sig_U = cp.Problem(cp.Maximize(self.obj3), cons).solve(solver=cp.CLARABEL, verbose=verbose, tol_gap_abs=opt_tol, tol_gap_rel=opt_rel_tol, max_iter=max_iters)
           if not (np.all(rhovar.value >= rhomin) and np.all(rhovar.value <= rhomax)):
@@ -893,6 +1812,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
           #sig_U = cp.Problem(cp.Maximize(self.obj3), cons).solve(solver=cp.SCS, verbose=verbose, eps_abs=opt_tol, max_iters=max_iters)
         pass
       except Exception as e:
+        pass
         print(f"WARNING: convex solver at attempt {i+1} returned error: {e}", flush=True)
         if i == 0:
           opt_tol *= 1.e4
@@ -939,6 +1859,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
               warnings.simplefilter("ignore", category=UserWarning)
               acqf_L, d_str = self.LCB_LB(l, u, kL, kU, opt_mode=opt_mode)
               diagnostics_str += f"{d_str}"
+              print(f"finished in mode {opt_mode}!!!!!!!!!!!!!!!!!!")
           else:
             failed_LB_opt = False
       else:
@@ -1616,7 +2537,11 @@ class branching_wrapper:
                 _, _, lijr_min, lijr_max = dphir_minmax_fivehalves(l[j], u[j], th[j] / self.X_scale[j], [self.x[i_idx][j], self.x[r_idx][j]])
               lir_min += lijr_min
               lir_max += lijr_max
-          add_ratio_constraints(cons, kvec[i_idx], kvec[r_idx], lir_min, lir_max)
+
+          add_mccormick_ratio_constraints(cons=cons, ki=kvec[i_idx], kr=kvec[r_idx], lam_i=lamvar[i_idx], lam_r=lamvar[r_idx],
+                                          lir_min=lir_min, lir_max=lir_max, ki_min=kL[i_idx], ki_max=kU[i_idx], kr_min=kL[r_idx], kr_max=kU[r_idx], name=f"{i_idx}_{r_idx}")
+
+          #add_ratio_constraints(cons, kvec[i_idx], kvec[r_idx], lir_min, lir_max)
           
     opt_tol = 1.e-8
     opt_rel_tol = 1.e-8
@@ -1624,11 +2549,12 @@ class branching_wrapper:
       verbose = False
       if i > 0:
         max_iters = 1000
+        #verbose = True
       else:
         max_iters = 300
       if i == 2:
         opt_rel_tol = 1.e-4
-        verbose = False
+        
       try:
         if mode == 0:
           prob = cp.Problem(cp.Minimize(self.obj2), cons)
@@ -1639,21 +2565,24 @@ class branching_wrapper:
           acqf_L = prob.solve(solver=cp.CLARABEL, verbose=verbose, tol_gap_abs=opt_tol, tol_gap_rel=opt_rel_tol, max_iter=max_iters)
           #acqf_L = cp.Problem(cp.Minimize(self.obj2), cons).solve(solver=cp.SCS, verbose=verbose, eps_abs=opt_tol, max_iters=max_iters)
 
-          if self.diagnostics:
-            diagnostics_output = stats_common_se_point(owner=self, l=l, u=u, xvar=xvar, wvar=wvar, lamvar=lamvar)
-            
           if prob.status != cp.OPTIMAL:
             if prob.status == cp.OPTIMAL_INACCURATE:
               # be conservative
               acqf_L -= 10*opt_tol
             else:
               raise RuntimeError("LCB relaxation solver did not return an optimal solution")
+
+          if self.diagnostics and opt_mode==6:
+            diagnostics_output = stats_common_se_point(owner=self, l=l, u=u, xvar=xvar, wvar=wvar, lamvar=lamvar)
+            diagnostics_output = stats_lcb_relaxation_gap(owner=self, xvar=xvar, relaxation_value=acqf_L) + diagnostics_output
+
         else:
           sig_U = cp.Problem(cp.Maximize(self.obj3), cons).solve(solver=cp.CLARABEL, verbose=verbose, tol_gap_abs=opt_tol, tol_gap_rel=opt_rel_tol, max_iter=max_iters)
           if not (np.all(rhovar.value >= rhomin) and np.all(rhovar.value <= rhomax)):
             print("optimal rho not within rho bounds")
         pass
       except Exception as e:
+        pass
         print(f"WARNING: convex solver at attempt {i+1} returned error: {e}", flush=True)
         if i == 0:
           opt_tol *= 1.e4
@@ -1701,6 +2630,7 @@ class branching_wrapper:
               warnings.simplefilter("ignore", category=UserWarning)
               acqf_L, d_str = self.LCB_LB(l, u, kL, kU, opt_mode=opt_mode)
               diagnostics_str += f"{d_str}"
+              print(f"finished in mode {opt_mode}!!!!!!!!!!!!!!!!!!")
           else:
             failed_LB_opt = False
       else:
