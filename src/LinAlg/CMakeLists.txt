@@ -11,6 +11,7 @@ set(hiopLinAlg_INTERFACE_HEADERS
   hiopLinSolverSparseGinkgo.hpp
   hiopLinSolverSparseSTRUMPACK.hpp
   hiopLinSolverSparsePARDISO.hpp
+  hiopLinSolverSparseSuperLU.hpp
   hiopLinSolverSparseReSolve.hpp
   hiopLinSolverUMFPACKZ.hpp
   hiopLinSolverCholCuSparse.hpp
@@ -97,6 +98,10 @@ set(hiopLinAlg_PARDISO_SRC
   hiopLinSolverSparsePARDISO.cpp
 )
 
+set(hiopLinAlg_SUPERLU_SRC
+  hiopLinSolverSparseSuperLU.cpp
+)
+
 set(hiopLinAlg_CUSOLVER_LU_SRC
   hiopLinSolverSparseReSolve.cpp
 )
@@ -141,13 +146,20 @@ set(hiopLinAlg_Ginkgo_SRC
 if(HIOP_SPARSE)
     if(HIOP_USE_COINHSL)
       list(APPEND hiopLinAlg_SRC ${hiopLinAlg_MA57_SRC})
-    endif(HIOP_USE_COINHSL)      
+    endif(HIOP_USE_COINHSL)
     if(HIOP_USE_STRUMPACK)
       list(APPEND hiopLinAlg_SRC ${hiopLinAlg_STRUMPACK_SRC})
     endif(HIOP_USE_STRUMPACK)
     if(HIOP_USE_PARDISO)
       list(APPEND hiopLinAlg_SRC ${hiopLinAlg_PARDISO_SRC})
     endif(HIOP_USE_PARDISO)
+    if(HIOP_USE_SUPERLU)
+      list(APPEND hiopLinAlg_SRC ${hiopLinAlg_SUPERLU_SRC})
+      # SuperLU headers declare BLAS functions which conflict with HiOp's BLAS declarations
+      # Use fpermissive to allow the conflicting declarations
+      set_source_files_properties(${hiopLinAlg_SUPERLU_SRC}
+        PROPERTIES COMPILE_FLAGS "-Wno-error -fpermissive")
+    endif(HIOP_USE_SUPERLU)
     if(HIOP_USE_RESOLVE)
       add_subdirectory(ReSolve) 
       list(APPEND hiopLinAlg_SRC ${hiopLinAlg_CUSOLVER_LU_SRC})

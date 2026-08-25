@@ -63,6 +63,14 @@
 #ifdef HIOP_USE_GINKGO
 #include "hiopLinSolverSparseGinkgo.hpp"
 #endif
+#ifdef HIOP_USE_SUPERLU
+// Forward declaration of factory function to avoid including header with BLAS conflicts
+namespace hiop {
+  class hiopLinSolverSymSparse;
+  class hiopNlpFormulation;
+  hiopLinSolverSymSparse* createSuperLUSolver(int n, int nnz, hiopNlpFormulation* nlp);
+}
+#endif
 
 #endif
 
@@ -342,8 +350,24 @@ hiopLinSolverSymSparse* hiopKKTLinSysCompressedSparseXYcYd::determineAndCreateLi
 #endif  // HIOP_USE_STRUMPACK
       }
 
+      if((nullptr == linSys_ && linear_solver == "auto") || linear_solver == "superlu") {
+        // ma57, pardiso and strumpack are not available or user requested superlu
+#ifdef HIOP_USE_SUPERLU
+        linsol_actual = "SuperLU_DIST";
+        linSys_ = createSuperLUSolver(n, nnz, nlp_);
+        auto* fact_acceptor_ic = dynamic_cast<hiopFactAcceptorIC*>(fact_acceptor_);
+        if(fact_acceptor_ic) {
+          nlp_->log->printf(hovError,
+                            "KKT_SPARSE_XYcYd linsys with SuperLU_DIST does not support inertia correction. "
+                            "Please set option 'fact_acceptor' to 'inertia_free'.\n");
+          assert(false);
+          return nullptr;
+        }
+#endif  // HIOP_USE_SUPERLU
+      }
+
       if((nullptr == linSys_ && linear_solver == "auto") || linear_solver == "ginkgo") {
-        // ma57, pardiso and strumpack are not available or user requested ginkgo
+        // ma57, pardiso, strumpack and superlu are not available or user requested ginkgo
 #ifdef HIOP_USE_GINKGO
         nlp_->log->printf(hovScalars,
                           "KKT_SPARSE_XYcYd linsys: alloc GINKGO with matrix size %d (%d cons)\n",
@@ -717,8 +741,24 @@ hiopLinSolverSymSparse* hiopKKTLinSysCompressedSparseXDYcYd::determineAndCreateL
 #endif  // HIOP_USE_STRUMPACK
       }
 
+      if((nullptr == linSys_ && linear_solver == "auto") || linear_solver == "superlu") {
+        // ma57, pardiso and strumpack are not available or user requested superlu
+#ifdef HIOP_USE_SUPERLU
+        linSys_ = createSuperLUSolver(n, nnz, nlp_);
+        actual_lin_solver = "SuperLU_DIST";
+        auto* fact_acceptor_ic = dynamic_cast<hiopFactAcceptorIC*>(fact_acceptor_);
+        if(fact_acceptor_ic) {
+          nlp_->log->printf(hovError,
+                            "KKT_SPARSE_XDYcYd linsys with SuperLU_DIST does not support inertia correction. "
+                            "Please set option 'fact_acceptor' to 'inertia_free'.\n");
+          assert(false);
+          return nullptr;
+        }
+#endif  // HIOP_USE_SUPERLU
+      }
+
       if((nullptr == linSys_ && linear_solver == "auto") || linear_solver == "ginkgo") {
-        // ma57, pardiso and strumpack are not available or user requested ginkgo
+        // ma57, pardiso, strumpack and superlu are not available or user requested ginkgo
 #ifdef HIOP_USE_GINKGO
         linSys_ = new hiopLinSolverSymSparseGinkgo(n, nnz, nlp_);
         actual_lin_solver = "GINKGO";

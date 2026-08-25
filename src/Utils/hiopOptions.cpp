@@ -922,12 +922,12 @@ void hiopOptionsNLP::register_options()
   //     - 'gpu' compute mode: work in progress
 
   {
-    vector<string> range{"auto", "ma57", "pardiso", "strumpack", "resolve", "ginkgo", "cusolver-chol"};
+    vector<string> range{"auto", "ma57", "pardiso", "strumpack", "resolve", "ginkgo", "cusolver-chol", "superlu"};
 
     register_str_option("linear_solver_sparse",
                         "auto",
                         range,
-                        "Selects among MA57, PARDISO, STRUMPACK, cuSOLVER's Cholesky or LU, and GINKGO for the "
+                        "Selects among MA57, PARDISO, STRUMPACK, SuperLU_DIST, cuSOLVER's Cholesky or LU, and GINKGO for the "
                         "sparse linear solves.");
   }
 
@@ -936,12 +936,12 @@ void hiopOptionsNLP::register_options()
   //  - when GPU mode is on, STRUMPACK is chosen by 'auto' if available
   //  - choosing option ma57 or pardiso with GPU being on, it results in no device being used in the linear solve!
   {
-    vector<string> range{"auto", "ma57", "pardiso", "resolve", "strumpack", "ginkgo"};
+    vector<string> range{"auto", "ma57", "pardiso", "resolve", "strumpack", "ginkgo", "superlu"};
 
     register_str_option("duals_init_linear_solver_sparse",
                         "auto",
                         range,
-                        "Selects among MA57, PARDISO, cuSOLVER, STRUMPACK, and GINKGO for the sparse linear solves.");
+                        "Selects among MA57, PARDISO, cuSOLVER, STRUMPACK, SuperLU_DIST, and GINKGO for the sparse linear solves.");
   }
 
   // choose hardware backend for the Ginkgo solver to run on.
