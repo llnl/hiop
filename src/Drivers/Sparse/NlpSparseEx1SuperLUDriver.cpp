@@ -30,50 +30,30 @@ int main(int argc, char** argv)
   size_type n = 50;
   double scal = 1.0;
   bool selfCheck = false;
-  std::string matching_method = "auto";  // Default: auto-select
+  std::string matching_method = "auto";
 
   // Parse command line arguments
-  if(argc >= 2) {
-    n = std::atoi(argv[1]);
-    if(n <= 0 || n < 3) {
-      printf("Problem size must be >= 3. Using default n=50.\n");
-      n = 50;
-    }
-  }
-  if(argc >= 3) {
-    if(std::string(argv[2]) == "-selfcheck") {
+  for(int i = 1; i < argc; ++i) {
+    std::string arg(argv[i]);
+
+    if(arg == "-selfcheck") {
       selfCheck = true;
-      scal = 1.0;
-    } else if(std::string(argv[2]) == "-sumac" || std::string(argv[2]) == "sumac") {
+    } else if(arg == "-sumac" || arg == "sumac") {
       matching_method = "SUMAC";
-    } else if(std::string(argv[2]) == "-suitor" || std::string(argv[2]) == "suitor") {
+    } else if(arg == "-suitor" || arg == "suitor") {
       matching_method = "SUITOR";
-    } else if(std::string(argv[2]) == "-mc80" || std::string(argv[2]) == "mc80") {
+    } else if(arg == "-mc80" || arg == "mc80") {
       matching_method = "MC80";
-    } else {
-      scal = std::atof(argv[2]);
-    }
-  }
-  if(argc >= 4) {
-    if(std::string(argv[3]) == "-selfcheck") {
-      selfCheck = true;
-    } else if(std::string(argv[3]) == "-sumac" || std::string(argv[3]) == "sumac") {
-      matching_method = "SUMAC";
-    } else if(std::string(argv[3]) == "-suitor" || std::string(argv[3]) == "suitor") {
-      matching_method = "SUITOR";
-    } else if(std::string(argv[3]) == "-mc80" || std::string(argv[3]) == "mc80") {
-      matching_method = "MC80";
-    }
-  }
-  if(argc >= 5) {
-    if(std::string(argv[4]) == "-selfcheck") {
-      selfCheck = true;
-    } else if(std::string(argv[4]) == "-sumac" || std::string(argv[4]) == "sumac") {
-      matching_method = "SUMAC";
-    } else if(std::string(argv[4]) == "-suitor" || std::string(argv[4]) == "suitor") {
-      matching_method = "SUITOR";
-    } else if(std::string(argv[4]) == "-mc80" || std::string(argv[4]) == "mc80") {
-      matching_method = "MC80";
+    } else if(i == 1) {
+      // First argument is problem size
+      n = std::atoi(argv[i]);
+      if(n <= 0 || n < 3) {
+        printf("Problem size must be >= 3. Using default n=50.\n");
+        n = 50;
+      }
+    } else if(i == 2 && matching_method == "auto" && !selfCheck) {
+      // Second argument could be scaling factor
+      scal = std::atof(argv[i]);
     }
   }
 
