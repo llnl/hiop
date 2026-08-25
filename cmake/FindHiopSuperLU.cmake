@@ -62,6 +62,24 @@ if(SUPERLU_LIBRARY AND SUPERLU_INCLUDE_DIR)
   # SuperLU_DIST requires METIS - will be linked via hiop_tpl
   # SuperLU_DIST requires BLAS/LAPACK - will be linked via hiop_tpl
 
+  # OpenBLAS requires pthread and gfortran runtime libraries
+  # These must be explicitly linked when using OpenBLAS
+  find_package(Threads REQUIRED)
+  target_link_libraries(SUPERLU INTERFACE Threads::Threads)
+
+  # Find and link gfortran (required by OpenBLAS)
+  execute_process(
+    COMMAND gfortran -print-file-name=libgfortran.so
+    OUTPUT_VARIABLE GFORTRAN_LIBRARY
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+  )
+  if(EXISTS "${GFORTRAN_LIBRARY}")
+    target_link_libraries(SUPERLU INTERFACE ${GFORTRAN_LIBRARY})
+    message(STATUS "Linking SuperLU with gfortran: ${GFORTRAN_LIBRARY}")
+  else()
+    message(WARNING "gfortran library not found - OpenBLAS may fail to load")
+  endif()
+
   # If SuperLU_DIST was built with symmetric matching support (SUITOR/SUMAC/MC80),
   # we need to link the matching libraries
   get_filename_component(SUPERLU_ROOT ${SUPERLU_INCLUDE_DIR} DIRECTORY)

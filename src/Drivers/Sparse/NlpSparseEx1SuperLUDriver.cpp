@@ -30,6 +30,7 @@ int main(int argc, char** argv)
   size_type n = 50;
   double scal = 1.0;
   bool selfCheck = false;
+  std::string matching_method = "auto";  // Default: auto-select
 
   // Parse command line arguments
   if(argc >= 2) {
@@ -43,12 +44,37 @@ int main(int argc, char** argv)
     if(std::string(argv[2]) == "-selfcheck") {
       selfCheck = true;
       scal = 1.0;
+    } else if(std::string(argv[2]) == "-sumac" || std::string(argv[2]) == "sumac") {
+      matching_method = "SUMAC";
+    } else if(std::string(argv[2]) == "-suitor" || std::string(argv[2]) == "suitor") {
+      matching_method = "SUITOR";
+    } else if(std::string(argv[2]) == "-mc80" || std::string(argv[2]) == "mc80") {
+      matching_method = "MC80";
     } else {
       scal = std::atof(argv[2]);
     }
   }
-  if(argc >= 4 && std::string(argv[3]) == "-selfcheck") {
-    selfCheck = true;
+  if(argc >= 4) {
+    if(std::string(argv[3]) == "-selfcheck") {
+      selfCheck = true;
+    } else if(std::string(argv[3]) == "-sumac" || std::string(argv[3]) == "sumac") {
+      matching_method = "SUMAC";
+    } else if(std::string(argv[3]) == "-suitor" || std::string(argv[3]) == "suitor") {
+      matching_method = "SUITOR";
+    } else if(std::string(argv[3]) == "-mc80" || std::string(argv[3]) == "mc80") {
+      matching_method = "MC80";
+    }
+  }
+  if(argc >= 5) {
+    if(std::string(argv[4]) == "-selfcheck") {
+      selfCheck = true;
+    } else if(std::string(argv[4]) == "-sumac" || std::string(argv[4]) == "sumac") {
+      matching_method = "SUMAC";
+    } else if(std::string(argv[4]) == "-suitor" || std::string(argv[4]) == "suitor") {
+      matching_method = "SUITOR";
+    } else if(std::string(argv[4]) == "-mc80" || std::string(argv[4]) == "mc80") {
+      matching_method = "MC80";
+    }
   }
 
   printf("=========================================================\n");
@@ -56,6 +82,7 @@ int main(int argc, char** argv)
   printf("=========================================================\n");
   printf("Problem size: n=%d\n", n);
   printf("Scaling factor: scal=%g\n", scal);
+  printf("Matching method: %s\n", matching_method.c_str());
   printf("\n");
 
 #ifndef HIOP_USE_SUPERLU
@@ -88,6 +115,11 @@ int main(int argc, char** argv)
   // Must use inertia-free factorization acceptor
   nlp.options->SetStringValue("fact_acceptor", "inertia_free");
 
+  // Set matching method if specified
+  if(matching_method != "auto") {
+    nlp.options->SetStringValue("superlu_row_perm", matching_method.c_str());
+  }
+
   // Increase verbosity to see SuperLU messages
   nlp.options->SetIntegerValue("verbosity_level", 3);
 
@@ -95,7 +127,11 @@ int main(int argc, char** argv)
   printf("Key Settings:\n");
   printf("  - Linear solver: superlu\n");
   printf("  - Factorization acceptor: inertia_free (REQUIRED for SuperLU)\n");
-  printf("  - Matching method: Auto-selected (SUMAC for GPU, SUITOR for CPU)\n");
+  if(matching_method == "auto") {
+    printf("  - Matching method: Auto-selected (SUMAC for GPU, SUITOR for CPU)\n");
+  } else {
+    printf("  - Matching method: %s\n", matching_method.c_str());
+  }
   printf("\n");
   printf("Note: SuperLU_DIST does NOT provide inertia information.\n");
   printf("      The KKT system correctness is verified using the\n");
