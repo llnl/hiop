@@ -704,8 +704,8 @@ def initialize_async_search(
   algorithm.leaf_partition = store
 
   if partition is None:
-    aq_L, aq_U, aq_U_x = algorithm.compute_acqf_bounds(l_init, u_init)
-    root = BnBNode(l_init, u_init, aq_L, aq_U, aq_U_x=aq_U_x)
+    aq_L, aq_U, aq_U_x, diagnostics = algorithm.compute_acqf_bounds(l_init, u_init)
+    root = BnBNode(l_init, u_init, aq_L, aq_U, aq_U_x=aq_U_x, metadata={"diagnostics" : diagnostics})
     store.initialize_root(root)
     print(f"\nInitial acquisition bounds: lower: {aq_L}   upper: {aq_U}")
     print(f"\nInitial  bounds: lower: {l_init}   upper: {u_init}")
@@ -731,7 +731,7 @@ def initialize_async_search(
       # Correct fallback: recompute every lower bound.  The Section-3.5 transfer
       # callback should replace this when available to retain the speed benefit.
       def transfer_lower_bound(old_leaf: BnBNode) -> float:
-        lower, _, _ = algorithm.compute_acqf_bounds(old_leaf.l, old_leaf.u)
+        lower, _, _, _ = algorithm.compute_acqf_bounds(old_leaf.l, old_leaf.u)
         return float(lower)
 
     def evaluate_upper_point(point: np.ndarray) -> float:
@@ -805,7 +805,17 @@ def run_async_search(
 
     scale = 10 ** (len(str(target)) - 1)
     return target + scale
-  
+
+  def gap_diagnostic(store: Any) -> str:
+    return f"GAP: global {store.gap():11.4e}   LLB {store.global_lower_bound():11.4e} LUB={store.incumbent_value:11.4e}"
+
+  def leaf_diagnostic(l: BnBNode, prefix="") -> str:
+    output = f"{prefix} id={l.node_id} depth={l.depth} state={l.state} LB={l.aq_L:11.4e} UB={l.aq_U:11.4e} diam={l.diam:11.4e}\n"
+    output += f"         {prefix} l        {np.array2string(l.l, max_line_width=100000, formatter={'float_kind': lambda x: f'{x:11.4e}'})}\n"
+    output += f"         {prefix} feasib x {np.array2string(l.aq_U_x, max_line_width=100000, formatter={'float_kind': lambda x: f'{x:11.4e}'})}\n"
+    output += f"         {prefix} u        {np.array2string(l.u, max_line_width=100000, formatter={'float_kind': lambda x: f'{x:11.4e}'})}"
+    return output
+    
   def print_iter_info(algorithm: Any, store: Any, log: Any, iter_type: Int) -> None:
     """
     Print a short summary of the search stats
@@ -835,16 +845,28 @@ def run_async_search(
       
     log.info(msg)
 
+    if algorithm.diagnostics and iter_type>=1:
+      glb_leaf = min(store.leaves.values(), key=lambda leaf: (float(leaf.aq_L), int(leaf.node_id)))
+      inc_leaf = store.incumbent_leaf()
+      
+      log.info(gap_diagnostic(store))
+      log.info(leaf_diagnostic(glb_leaf, "LLB    leaf:"))
+      log.info(leaf_diagnostic(inc_leaf, "INCUMB leaf:"))
+      
+      log.info("LLB    leaf conic relax\n" + " "*8 + glb_leaf.metadata["diagnostics"].replace("\n", "\n"+" "*8))
+      log.info("INCUMB leaf conic relax\n" + " "*8 + inc_leaf.metadata["diagnostics"].replace("\n", "\n"+" "*8))
+
   
   def make_brancher() -> Any:
     return brancher_type(
-        algorithm.acqf,
-        LUB=store.incumbent_value,
-        epsilon_prune=algorithm.epsilon_prune,
-        acqf_UB_solver=algorithm.acqf_UB_solver,
-        random_seed=algorithm.random_seed,
-        opt_mode=algorithm.opt_mode,
-        nearest_neighbor_pairs=algorithm.nearest_neighbor_pairs,
+      algorithm.acqf,
+      LUB=store.incumbent_value,
+      epsilon_prune=algorithm.epsilon_prune,
+      acqf_UB_solver=algorithm.acqf_UB_solver,
+      random_seed=algorithm.random_seed,
+      opt_mode=algorithm.opt_mode,
+      nearest_neighbor_pairs=algorithm.nearest_neighbor_pairs,
+      diagnostics=algorithm.diagnostics,
     )
 
   # A brancher owns mutable relaxation/solver objects.  Keep at most one active
@@ -954,6 +976,7 @@ def run_async_search(
       #if not incumbent_changed: 
       while algorithm.num_branches >= algorithm.print_iter_next:
         algorithm.print_iter_next = print_get_next_target(algorithm.print_iter_next)
+    
         
     if store.is_certified(algorithm.epsilon_gap, algorithm.epsilon_rel_gap):
       algorithm.certified = True
@@ -1030,6 +1053,7 @@ def run_async_search(
 
   algorithm.LUB = store.incumbent_value
   algorithm.LLB = store.global_lower_bound()
+
   algorithm.final_gap = store.gap()
   algorithm.elapsed_bnb_time = time.time() - start_time
   algorithm.best_node = store.incumbent_leaf()

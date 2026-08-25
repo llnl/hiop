@@ -7,7 +7,7 @@ from scipy.stats import qmc
 from .acquisition import EIacquisition, LCBacquisition
 from ..utils.util import Evaluator, MPIEvaluator, Logger
 from .bnb_utils import * 
-from .opt_utils import minimizer_wrapper
+from .opt_utils import minimizer_wrapper, fit_common_se_point_from_ratios
 from .async_bnb import (
   BnBNode, BranchResult, CloseReason, LeafState,
   initialize_async_search, run_async_search,
@@ -44,13 +44,6 @@ class variance_U_problem:
     return self.C.dot(z)
   def constraintJacobian(self, z):
     return self.C[:,:]
-
-
-
-# BnBNode
-# corners of interval [l, u]
-# upper and lower bounds of acquisition function
-
 
 def dist_to_corner(l, u, x):
   box = np.array([l, u])
@@ -173,7 +166,8 @@ class BnBAlgorithmBase:
     self.ntrain = self.x.shape[0]
 
     self.log = Logger()
-
+    self.diagnostics = False
+    
   def sync_from_smt(self):
     sm = self.gpsurrogate.surrogatesmt
     par = sm.optimal_par
@@ -215,7 +209,13 @@ class BnBAlgorithmBase:
     self.X_offset, self.X_scale = sm.X_offset, sm.X_scale
     self.Xc = (self.x - self.X_offset) / self.X_scale
     self._normalize = lambda x: (np.asarray(x, float) - self.X_offset) / self.X_scale
+    
+    
+    ell = 1.0 / np.sqrt(2.0 * self.theta)
 
+    print("SMT theta =", theta, flush=True)
+    print("equivalent conventional ell =", ell, flush=True)
+    
     y_mean = getattr(sm, "y_mean", None)
     y_std  = getattr(sm, "y_std",  None)
     if y_mean is None or y_std is None:
@@ -367,6 +367,43 @@ class BnBAlgorithmBase:
     return s2_L, s2_U
 
 
+# diagnostics statistics related to the "common" x to all k kernels
+def stats_common_se_point(owner, l, u, xvar, wvar, lamvar) -> str:
+  output = ""
+  k_sol = np.asarray((owner.C2 @ owner.X).value, dtype=float).ravel()
+  common = fit_common_se_point_from_ratios(owner=owner, k_values=k_sol, l=l, u=u)
+  output += f" l:      {np.array2string(l, max_line_width=100000, formatter={'float_kind': lambda x: f'{x:.3e}'})}\n"
+  output += f" x_lsq:  {np.array2string(common['x_common'], max_line_width=100000, formatter={'float_kind': lambda x: f'{x:.3e}'})}\n"
+  output += f" x_conv: {np.array2string(np.asarray(xvar.value, dtype=float).ravel(), max_line_width=100000, formatter={'float_kind': lambda x: f'{x:.3e}'})}\n"
+  output += f" u:      {np.array2string(u, max_line_width=100000, formatter={'float_kind': lambda x: f'{x:.3e}'})}\n"
+  output += (
+    f'Ratio resid: RMS {common["pair_rms"]:10.3e}  '
+    f'max={common["pair_max"]:10.3e}     '
+  )
+  output += (
+    f'Abs log-kernel resid:  RMS {common["absolute_rms"]:10.3e}  '
+    f'max={common["absolute_max"]:10.3e}  '
+    f'mean={common["absolute_mean"]:10.3e}  '
+    f'std={common["absolute_std"]:10.3e}\n'
+  )
+
+  x_opt = np.asarray(xvar.value).ravel()
+  w_opt = np.asarray(wvar.value).ravel()
+  lam_opt = np.asarray(lamvar.value).ravel()
+  k_opt = np.asarray((owner.C2 @ owner.X).value).ravel()
+
+  vals = w_opt - x_opt**2
+  output += (
+    "w-x^2= "
+    f"{np.array2string(vals, max_line_width=100000, formatter={'float_kind': lambda x: f'{x:.3e}'})}\n"
+  )
+
+  vals = np.log(np.maximum(k_opt, np.finfo(float).tiny)) - lam_opt
+  output += (
+    "log(k) - lambda: "
+    f"{np.array2string(vals,  max_line_width=100000, formatter={'float_kind': lambda x: f'{x:.3e}'})}\n"
+  )
+  return output
 
 class BnBAlgorithm(BnBAlgorithmBase):
   def __init__(self, acqf, options = {}, BOit=0):
@@ -451,6 +488,8 @@ class BnBAlgorithm(BnBAlgorithmBase):
     else:
       self.node_evaluator = supplied_evaluator
 
+    self.diagnostics = options.get('diagnostics',  self.diagnostics)
+      
     # improved optimization problem to determine LCB lower bound
     ntrain = len(self.gamma)
     self.b_obj2 = np.zeros(ntrain + 1)
@@ -563,6 +602,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
     # opt_mode = 3 (Relaxation in w)
     # opt_mode = 4 (opt_mode 3 but with alternative to ratio constraints on k)
     cons = [self.cons2 >= 0, self.en1 @ self.X >= 0]
+    diagnostics_output = ""
 
     # Let us keep these for now even though they are redundant
     #if opt_mode != 5 and opt_mode != 6:
@@ -783,7 +823,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
             sec_at_star = exp_lamL + slope*(lamstar - lamL[i])                                                          
             Ei_exp[i] = sec_at_star - slope
             if Ei_exp[i] < 0:
-              raise NumericalError("roundoff error: diff between exp and sec should be zero")            
+              raise RuntimeError("roundoff error: diff between exp and sec should be zero")            
           else:
             Ei_exp[i] = 0.
           Ai[i] = Ei_exp[i] * (gamma_floor + (1. - gamma_floor) * np.abs(self.gamma[i]) / (np.max(np.abs(self.gamma)) + eps_gamma))
@@ -837,6 +877,9 @@ class BnBAlgorithm(BnBAlgorithmBase):
           acqf_L = prob.solve(solver=cp.CLARABEL, verbose=verbose, tol_gap_abs=opt_tol, tol_gap_rel=opt_rel_tol, max_iter=max_iters)
           #acqf_L = cp.Problem(cp.Minimize(self.obj2), cons).solve(solver=cp.SCS, verbose=verbose, eps_abs=opt_tol, max_iters=max_iters)
 
+          if self.diagnostics:
+            diagnostics_output = stats_common_se_point(owner=self, l=l, u=u, xvar=xvar, wvar=wvar, lamvar=lamvar)
+          
           if prob.status != cp.OPTIMAL:
             if prob.status == cp.OPTIMAL_INACCURATE:
               # be conservative
@@ -865,10 +908,11 @@ class BnBAlgorithm(BnBAlgorithmBase):
       else:
         break # exit loop acqf_L successfully computed :)
     if mode == 0:
-      return acqf_L
+      return acqf_L, diagnostics_output
     else:
-      return sig_U
+      return sig_U, diagnostics_output
   def compute_acqf_bounds(self, l, u, skip_LB=False):
+    diagnostics_str = ""
     # kernel bounds
     kL, kU = self.ker_bounds(l, u)
     if self.kernel_spec == "pow_exp":
@@ -884,7 +928,8 @@ class BnBAlgorithm(BnBAlgorithmBase):
       if not skip_LB:
         with warnings.catch_warnings():
           warnings.simplefilter("ignore", category=UserWarning)
-          acqf_L = self.LCB_LB(l, u, kL, kU, opt_mode=opt_mode)
+          acqf_L, d_str = self.LCB_LB(l, u, kL, kU, opt_mode=opt_mode)
+          diagnostics_str += f"{d_str}"
         for i in range(self.opt_mode):
           if not np.isfinite(acqf_L):
             failed_LB_opt = True
@@ -892,7 +937,8 @@ class BnBAlgorithm(BnBAlgorithmBase):
             opt_mode -= 1
             with warnings.catch_warnings():
               warnings.simplefilter("ignore", category=UserWarning)
-              acqf_L = self.LCB_LB(l, u, kL, kU, opt_mode=opt_mode)
+              acqf_L, d_str = self.LCB_LB(l, u, kL, kU, opt_mode=opt_mode)
+              diagnostics_str += f"{d_str}"
           else:
             failed_LB_opt = False
       else:
@@ -1002,7 +1048,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
       acqf_L = acqf_L[0]
     if isinstance(acqf_U, (list, np.ndarray)):
       acqf_U = acqf_U[0]
-    return acqf_L, acqf_U, acqf_U_x
+    return acqf_L, acqf_U, acqf_U_x, diagnostics_str
 
   def _refresh_legacy_views(self):
     """Expose compatibility views without duplicating authoritative records."""
@@ -1045,9 +1091,8 @@ class BnBAlgorithm(BnBAlgorithmBase):
     """Run the certified asynchronous leaf-partition event loop."""
     return run_async_search(self, branching_wrapper, l_init, u_init)
 
-
 class branching_wrapper:
-  def __init__(self, acqf, LUB=np.inf, epsilon_prune=1.e-14, acqf_UB_solver="SLSQP", random_seed=None, opt_mode=3, nearest_neighbor_pairs=None):
+  def __init__(self, acqf, LUB=np.inf, epsilon_prune=1.e-14, acqf_UB_solver="SLSQP", random_seed=None, opt_mode=3, nearest_neighbor_pairs=None, diagnostics=False):
     self.LUB = LUB # least upper bound
     self.epsilon_prune = epsilon_prune
     self.acqf = acqf
@@ -1073,6 +1118,7 @@ class branching_wrapper:
     self.cvxpy_problem = None
 
     self.opt_mode = opt_mode
+    self.diagnostics = diagnostics
   
   def sync_from_smt(self):
     sm = self.gpsurrogate.surrogatesmt
@@ -1318,6 +1364,8 @@ class branching_wrapper:
     # opt_mode = 4 (opt_mode 3 but with alternative to ratio constraints on k)
     cons = [self.cons2 >= 0, self.en1 @ self.X >= 0]
 
+    diagnostics_output = ""
+    
     # Let us keep these for now even though they are redundant
     #if opt_mode != 5 and opt_mode != 6:
     cons.append(self.C2 @ self.X >= kL)
@@ -1537,7 +1585,7 @@ class branching_wrapper:
             sec_at_star = exp_lamL + slope*(lamstar - lamL[i])                                                          
             Ei_exp[i] = sec_at_star - slope
             if Ei_exp[i] < 0:
-              raise NumericalError("roundoff error: diff between exp and sec should be zero")            
+              raise RuntimeError("roundoff error: diff between exp and sec should be zero")            
           else:
             Ei_exp[i] = 0.
           Ai[i] = Ei_exp[i] * (gamma_floor + (1. - gamma_floor) * np.abs(self.gamma[i]) / (np.max(np.abs(self.gamma)) + eps_gamma))
@@ -1591,6 +1639,9 @@ class branching_wrapper:
           acqf_L = prob.solve(solver=cp.CLARABEL, verbose=verbose, tol_gap_abs=opt_tol, tol_gap_rel=opt_rel_tol, max_iter=max_iters)
           #acqf_L = cp.Problem(cp.Minimize(self.obj2), cons).solve(solver=cp.SCS, verbose=verbose, eps_abs=opt_tol, max_iters=max_iters)
 
+          if self.diagnostics:
+            diagnostics_output = stats_common_se_point(owner=self, l=l, u=u, xvar=xvar, wvar=wvar, lamvar=lamvar)
+            
           if prob.status != cp.OPTIMAL:
             if prob.status == cp.OPTIMAL_INACCURATE:
               # be conservative
@@ -1618,11 +1669,12 @@ class branching_wrapper:
       else:
         break # exit loop acqf_L successfully computed :)
     if mode == 0:
-      return acqf_L
+      return acqf_L, diagnostics_output
     else:
-      return sig_U
+      return sig_U, diagnostics_output
   
   def compute_acqf_bounds(self, l, u, skip_LB=False):
+    diagnostics_str = ""
     # kernel bounds
     kL, kU = self.ker_bounds(l, u)
     if self.kernel_spec == "pow_exp":
@@ -1638,7 +1690,8 @@ class branching_wrapper:
       if not skip_LB:
         with warnings.catch_warnings():
           warnings.simplefilter("ignore", category=UserWarning)
-          acqf_L = self.LCB_LB(l, u, kL, kU, opt_mode=opt_mode)
+          acqf_L, d_str = self.LCB_LB(l, u, kL, kU, opt_mode=opt_mode)
+          diagnostics_str += f"{d_str}"
         for i in range(self.opt_mode):
           if not np.isfinite(acqf_L):
             failed_LB_opt = True
@@ -1646,7 +1699,8 @@ class branching_wrapper:
             opt_mode -= 1
             with warnings.catch_warnings():
               warnings.simplefilter("ignore", category=UserWarning)
-              acqf_L = self.LCB_LB(l, u, kL, kU, opt_mode=opt_mode)
+              acqf_L, d_str = self.LCB_LB(l, u, kL, kU, opt_mode=opt_mode)
+              diagnostics_str += f"{d_str}"
           else:
             failed_LB_opt = False
       else:
@@ -1755,7 +1809,7 @@ class branching_wrapper:
       acqf_L = acqf_L[0]
     if isinstance(acqf_U, (list, np.ndarray)):
       acqf_U = acqf_U[0]
-    return acqf_L, acqf_U, acqf_U_x
+    return acqf_L, acqf_U, acqf_U_x, diagnostics_str
   def callback(self, nodes):
     parents = list(nodes.flatten())
     if len(parents) != 1:
@@ -1768,13 +1822,14 @@ class branching_wrapper:
         raise RuntimeError("branch() did not return exactly two child boxes")
       children = []
       for child_l, child_u in child_boxes:
-        acqf_L, acqf_U, acqf_U_x = self.compute_acqf_bounds(child_l, child_u)
+        acqf_L, acqf_U, acqf_U_x, d_str = self.compute_acqf_bounds(child_l, child_u)
         child = BnBNode(
           child_l,
           child_u,
           acqf_L,
           acqf_U,
           aq_U_x=acqf_U_x,
+          metadata={"diagnostics" : d_str.rstrip("\n")},
         )
         children.append(child)
       result = BranchResult(
