@@ -95,6 +95,46 @@ def branch(l, u, X = None, corner_tol = 1.e-6):
     l2[d] = xsplit[d]
   return [(l1, u1), (l2, u2)]
 
+def lcb_gradient_at_single_reference(owner, x_ref, sigma_floor=None):
+  """Return the full LCB gradient with respect to k at one feasible kernel vector k_ref=k(x_ref)."""
+  if not isinstance(owner.acqf, LCBacquisition):
+    raise TypeError("lcb_gradient_at_single_reference requires an LCB acquisition")
+  x_ref = np.asarray(x_ref, dtype=float).ravel()
+  training_x = np.asarray(owner.x, dtype=float)
+  x_scale = np.asarray(owner.X_scale, dtype=float).ravel()
+  theta = np.asarray(owner.theta, dtype=float).ravel()
+  dx = np.abs((x_ref[None, :] - training_x) / x_scale[None, :])
+  if owner.kernel_spec == "pow_exp":
+    k_ref = np.exp(-np.sum(theta[None, :] * dx**float(owner.p), axis=1))
+  elif owner.kernel_spec == "matern32":
+    t = np.sqrt(3.0) * theta[None, :] * dx; k_ref = np.prod((1.0 + t) * np.exp(-t), axis=1)
+  elif owner.kernel_spec == "matern52":
+    t = np.sqrt(5.0) * theta[None, :] * dx; k_ref = np.prod((1.0 + t + t**2 / 3.0) * np.exp(-t), axis=1)
+  else:
+    raise ValueError(f"Unsupported kernel specification '{owner.kernel_spec}'")
+  gamma = np.asarray(owner.gamma, dtype=float).ravel()
+  C = np.asarray(owner.C, dtype=float)
+  A = np.asarray(owner.A_obj, dtype=float)
+  A = 0.5 * (A + A.T)
+  b = np.asarray(owner.b_obj, dtype=float).ravel()
+  c = float(np.asarray(owner.c_obj, dtype=float).reshape(()))
+  sigma2 = float(owner.sigma2)
+  z_ref = np.linalg.solve(C, k_ref)
+  variance_ref_raw = sigma2 * (0.5 * np.dot(z_ref, A @ z_ref) + np.dot(b, z_ref) + c)
+  variance_scale = max(1.0, abs(sigma2 * c), abs(variance_ref_raw))
+  if variance_ref_raw < -1.0e-10 * variance_scale:
+    raise RuntimeError(f"Reference kernel produces negative variance {variance_ref_raw:.16e}")
+  sigma_ref = float(np.sqrt(max(0.0, variance_ref_raw)))
+  sigma_floor = 1.0e-8 * max(1.0, np.sqrt(abs(sigma2))) if sigma_floor is None else float(sigma_floor)
+  grad_variance_z = sigma2 * (A @ z_ref + b)
+  grad_variance_k = np.linalg.solve(C.T, grad_variance_z)
+  grad_mean_k = float(owner.y_std) * gamma
+  grad_variance_lcb_k = -float(owner.acqf.beta) * grad_variance_k / (2.0 * max(sigma_ref, sigma_floor))
+  grad_lcb_k = grad_mean_k + grad_variance_lcb_k
+  if not np.all(np.isfinite(grad_lcb_k)):
+    raise RuntimeError("Nonfinite LCB kernel gradient")
+  return grad_lcb_k, k_ref, sigma_ref, grad_mean_k, grad_variance_lcb_k
+
 def add_ratio_constraints(cons, ki, kr, lir_min, lir_max):
     """
     Add:
@@ -140,455 +180,187 @@ def add_ratio_constraints(cons, ki, kr, lir_min, lir_max):
             cons.append(kr >= coef * ki)
 
 def add_mccormick_ratio_constraints(
-    cons,
-    ki,
-    kr,
-    lam_i,
-    lam_r,
-    lir_min,
-    lir_max,
-    ki_min,
-    ki_max,
-    kr_min,
-    kr_max,
-    name=None,
+    cons, ki, kr, lam_i, lam_r, lir_min, lir_max,
+    ki_min, ki_max, kr_min, kr_max, name=None,
     add_linear_ratio_rows=True,
 ):
-    """
-    Add the lifted exponential/McCormick relaxation
+    lir_min, lir_max = float(lir_min), float(lir_max)
+    ki_min, ki_max = max(0.0, float(ki_min)), float(ki_max)
+    kr_min, kr_max = max(0.0, float(kr_min)), float(kr_max)
 
-        d_ir = lam_i - lam_r
-        q_ir = exp(d_ir)
-        ki   = q_ir * kr
-
-    over
-
-        lir_min <= d_ir <= lir_max,
-        ki_min <= ki <= ki_max,
-        kr_min <= kr <= kr_max.
-
-    The exact equality q_ir = exp(d_ir) is relaxed by its convex hull:
-
-        exp(d_ir) <= q_ir <= sec_exp(d_ir).
-
-    The exact product ki = q_ir * kr is relaxed by the four
-    McCormick inequalities.
-
-    To improve numerical scaling, the pair is automatically reversed
-    when doing so produces a smaller upper bound on q. Thus, internally,
-    the function may represent either
-
-        ki = q * kr
-
-    or the equivalent relation
-
-        kr = q * ki.
-
-    Parameters
-    ----------
-    cons
-        List of CVXPY constraints to which constraints are appended.
-
-    ki, kr
-        Scalar CVXPY expressions for the two kernel variables.
-
-    lam_i, lam_r
-        Scalar CVXPY expressions for the two log-kernel variables.
-
-    lir_min, lir_max
-        Valid bounds on lam_i - lam_r.
-
-    ki_min, ki_max, kr_min, kr_max
-        Individual kernel bounds.
-
-    name
-        Optional suffix for the CVXPY q-variable name.
-
-    add_linear_ratio_rows
-        Also add the two original ratio inequalities. They are
-        theoretically implied by the McCormick system when kernel
-        bounds are nonnegative, but can help the conic solver.
-
-    Returns
-    -------
-    dict
-        Information about the auxiliary variable and its orientation.
-        The entry "q" is None when a numerical fallback or an exact
-        fixed-ratio relation is used.
-    """
-
-    lir_min = float(lir_min)
-    lir_max = float(lir_max)
-
-    ki_min = max(0.0, float(ki_min))
-    ki_max = float(ki_max)
-    kr_min = max(0.0, float(kr_min))
-    kr_max = float(kr_max)
-
-    values = np.asarray(
-        [
-            lir_min,
-            lir_max,
-            ki_min,
-            ki_max,
-            kr_min,
-            kr_max,
-        ],
-        dtype=float,
-    )
+    values = np.asarray([lir_min, lir_max, ki_min, ki_max, kr_min, kr_max], dtype=float)
 
     if not np.all(np.isfinite(values)):
-        raise ValueError(
-            "Nonfinite log-ratio or kernel bounds in "
-            "McCormick ratio relaxation"
-        )
-
+        raise ValueError("Nonfinite log-ratio or kernel bounds in McCormick ratio relaxation")
     if lir_min > lir_max:
-        raise ValueError(
-            f"Invalid log-ratio interval "
-            f"[{lir_min}, {lir_max}]"
-        )
-
+        raise ValueError(f"Invalid log-ratio interval [{lir_min}, {lir_max}]")
     if ki_min > ki_max or kr_min > kr_max:
-        raise ValueError(
-            "Invalid individual kernel bounds in "
-            "McCormick ratio relaxation"
-        )
-
+        raise ValueError("Invalid individual kernel bounds in McCormick ratio relaxation")
     if ki_max < 0.0 or kr_max < 0.0:
-        raise ValueError(
-            "Kernel upper bounds must be nonnegative"
-        )
+        raise ValueError("Kernel upper bounds must be nonnegative")
 
-    # ---------------------------------------------------------------
-    # Choose the better numerical orientation.
-    #
-    # Original orientation:
-    #     q = ki / kr,
-    #     log(q) in [lir_min, lir_max].
-    #
-    # Reversed orientation:
-    #     q = kr / ki,
-    #     log(q) in [-lir_max, -lir_min].
-    #
-    # Choose the orientation having the smaller upper log bound,
-    # hence the smaller q upper bound.
-    # ---------------------------------------------------------------
-
-    swapped = (lir_min + lir_max > 0.0)
+    swapped = lir_min + lir_max > 0.0
 
     if not swapped:
-        k_num = ki
-        k_den = kr
-
-        lam_num = lam_i
-        lam_den = lam_r
-
-        d_min = lir_min
-        d_max = lir_max
-
-        k_num_min = ki_min
-        k_num_max = ki_max
-        k_den_min = kr_min
-        k_den_max = kr_max
+        k_num, k_den = ki, kr
+        lam_num, lam_den = lam_i, lam_r
+        d_min, d_max = lir_min, lir_max
+        k_num_min, k_num_max = ki_min, ki_max
+        k_den_min, k_den_max = kr_min, kr_max
     else:
-        k_num = kr
-        k_den = ki
-
-        lam_num = lam_r
-        lam_den = lam_i
-
-        d_min = -lir_max
-        d_max = -lir_min
-
-        k_num_min = kr_min
-        k_num_max = kr_max
-        k_den_min = ki_min
-        k_den_max = ki_max
+        k_num, k_den = kr, ki
+        lam_num, lam_den = lam_r, lam_i
+        d_min, d_max = -lir_max, -lir_min
+        k_num_min, k_num_max = kr_min, kr_max
+        k_den_min, k_den_max = ki_min, ki_max
 
     d_expr = lam_num - lam_den
-
-    # These pairwise log-ratio bounds are valid independently of the
-    # subsequent exponential and McCormick relaxations.
-    cons.append(d_expr >= d_min)
-    cons.append(d_expr <= d_max)
+    cons += [d_expr >= d_min, d_expr <= d_max]
 
     def append_normalized_linear_ratio_rows():
-        """
-        Add
-
-            exp(d_min) * k_den <= k_num
-            k_num <= exp(d_max) * k_den
-
-        while keeping every generated coefficient <= 1.
-        """
-
-        # Lower ratio side:
-        #
-        #     exp(d_min) k_den <= k_num.
         if d_min <= 0.0:
             coef = float(np.exp(d_min))
-
-            # Underflow to zero makes this equivalent numerically to
-            # k_num >= 0, which is already implied.
-            if coef > 0.0:
-                cons.append(
-                    k_num >= coef * k_den
-                )
+            if coef > 0.0: cons.append(k_num >= coef * k_den)
         else:
-            # Divide by exp(d_min):
-            #
-            #     k_den <= exp(-d_min) k_num.
             coef = float(np.exp(-d_min))
+            if coef > 0.0: cons.append(k_den <= coef * k_num)
 
-            if coef > 0.0:
-                cons.append(
-                    k_den <= coef * k_num
-                )
-
-        # Upper ratio side:
-        #
-        #     k_num <= exp(d_max) k_den.
         if d_max <= 0.0:
             coef = float(np.exp(d_max))
-
-            if coef > 0.0:
-                cons.append(
-                    k_num <= coef * k_den
-                )
+            if coef > 0.0: cons.append(k_num <= coef * k_den)
         else:
-            # Divide by exp(d_max):
-            #
-            #     exp(-d_max) k_num <= k_den.
             coef = float(np.exp(-d_max))
-
-            if coef > 0.0:
-                cons.append(
-                    k_den >= coef * k_num
-                )
+            if coef > 0.0: cons.append(k_den >= coef * k_num)
 
     width = d_max - d_min
-
-    # The orientation above usually avoids large q values. If even the
-    # better orientation has an unrepresentable q upper bound, retain
-    # the original normalized linear ratio constraints instead of
-    # constructing an invalid or overflowed exponential/McCormick model.
-    log_max_float = float(
-        np.log(np.finfo(float).max)
-    )
+    log_max_float = float(np.log(np.finfo(float).max))
 
     if d_max >= log_max_float - 4.0:
         append_normalized_linear_ratio_rows()
-
         return {
-            "q": None,
-            "swapped": swapped,
-            "fallback": True,
-            "exact": False,
-            "log_bounds": (d_min, d_max),
-            "reason": "q upper bound would overflow",
+            "q": None, "swapped": swapped, "fallback": True, "exact": False,
+            "log_bounds": (d_min, d_max), "reason": "q upper bound would overflow",
         }
 
     q_max_raw = float(np.exp(d_max))
 
-    # Subnormal q variables are not numerically useful in the conic
-    # model. The normalized linear rows are safer in that regime.
-    if (
-        not np.isfinite(q_max_raw)
-        or q_max_raw < np.finfo(float).tiny
-    ):
+    if not np.isfinite(q_max_raw) or q_max_raw < np.finfo(float).tiny:
         append_normalized_linear_ratio_rows()
-
         return {
-            "q": None,
-            "swapped": swapped,
-            "fallback": True,
-            "exact": False,
+            "q": None, "swapped": swapped, "fallback": True, "exact": False,
             "log_bounds": (d_min, d_max),
             "reason": "q upper bound is numerically unrepresentable",
         }
 
-    # exp(d_min) may underflow even though exp(d_max) is representable.
-    # A zero lower bound only enlarges the McCormick rectangle, hence
-    # preserves validity.
     q_min_raw = float(np.exp(d_min))
-
-    if q_min_raw > 0.0:
-        q_min = float(
-            np.nextafter(q_min_raw, 0.0)
-        )
-    else:
-        q_min = 0.0
-
-    # Round the upper bound outward.
-    q_max = float(
-        np.nextafter(q_max_raw, np.inf)
-    )
-
-    # ---------------------------------------------------------------
-    # Degenerate log-ratio interval.
-    #
-    # If d_min == d_max, the ratio is fixed and the product relation
-    # becomes the exact linear equality
-    #
-    #     k_num = exp(d_min) k_den.
-    # ---------------------------------------------------------------
+    q_min = float(np.nextafter(q_min_raw, 0.0)) if q_min_raw > 0.0 else 0.0
+    q_max = float(np.nextafter(q_max_raw, np.inf))
 
     if width == 0.0:
-        cons.append(
-            k_num == q_max_raw * k_den
-        )
-
-        if add_linear_ratio_rows:
-            append_normalized_linear_ratio_rows()
+        cons.append(k_num == q_max_raw * k_den)
+        if add_linear_ratio_rows: append_normalized_linear_ratio_rows()
 
         return {
-            "q": None,
-            "swapped": swapped,
-            "fallback": False,
-            "exact": True,
-            "log_bounds": (d_min, d_max),
-            "q_bounds": (q_max_raw, q_max_raw),
+            "q": None, "swapped": swapped, "fallback": False, "exact": True,
+            "log_bounds": (d_min, d_max), "q_bounds": (q_max_raw, q_max_raw),
         }
 
-    # ---------------------------------------------------------------
-    # Convex exponential envelope:
-    #
-    #     exp(d_expr) <= q <= sec_exp(d_expr).
-    # ---------------------------------------------------------------
+    qvar = cp.Variable(nonneg=True) if name is None else cp.Variable(nonneg=True, name=f"q_{name}")
 
-    if name is None:
-        qvar = cp.Variable(
-            nonneg=True
-        )
-    else:
-        qvar = cp.Variable(
-            nonneg=True,
-            name=f"q_{name}",
-        )
+    cons += [
+        qvar >= q_min,
+        qvar <= q_max,
+        qvar >= cp.exp(d_expr),
+    ]
 
-    cons.append(qvar >= q_min)
-    cons.append(qvar <= q_max)
-
-    # Convex lower graph.
-    cons.append(
-        qvar >= cp.exp(d_expr)
-    )
-
-    # Stable slope of the exponential secant:
-    #
-    #   [exp(d_max)-exp(d_min)] / [d_max-d_min]
-    #
-    # = exp(d_max) *
-    #   [1-exp(-(d_max-d_min))] / [d_max-d_min].
-    secant_slope_raw = float(
-        q_max_raw
-        * (-np.expm1(-width))
-        / width
-    )
+    secant_slope_raw = float(q_max_raw * (-np.expm1(-width)) / width)
 
     if not np.isfinite(secant_slope_raw) or secant_slope_raw <= 0.0:
         append_normalized_linear_ratio_rows()
-
         return {
-            "q": None,
-            "swapped": swapped,
-            "fallback": True,
-            "exact": False,
+            "q": None, "swapped": swapped, "fallback": True, "exact": False,
             "log_bounds": (d_min, d_max),
             "reason": "invalid exponential secant slope",
         }
 
-    # For the secant endpoint, round upward. If exp(d_min)
-    # underflowed, the smallest positive float is an upper
-    # approximation of the unrepresentably small exact value.
-    if q_min_raw > 0.0:
-        q_min_secant = float(
-            np.nextafter(q_min_raw, np.inf)
-        )
-    else:
-        q_min_secant = float(
-            np.nextafter(0.0, np.inf)
-        )
-
-    secant_slope = float(
-        np.nextafter(
-            secant_slope_raw,
-            np.inf,
-        )
+    q_min_secant = (
+        float(np.nextafter(q_min_raw, np.inf))
+        if q_min_raw > 0.0
+        else float(np.nextafter(0.0, np.inf))
     )
+    secant_slope = float(np.nextafter(secant_slope_raw, np.inf))
 
-    cons.append(
-        qvar
-        <= q_min_secant
-        + secant_slope
-        * (d_expr - d_min)
-    )
+    cons.append(qvar <= q_min_secant + secant_slope * (d_expr - d_min))
 
-    # ---------------------------------------------------------------
-    # McCormick relaxation of
-    #
-    #     k_num = qvar * k_den
-    #
-    # over
-    #
-    #     q_min <= qvar <= q_max,
-    #     k_den_min <= k_den <= k_den_max.
-    # ---------------------------------------------------------------
+    cons += [
+        k_num >= q_min * k_den + k_den_min * qvar - q_min * k_den_min,
+        k_num >= q_max * k_den + k_den_max * qvar - q_max * k_den_max,
+        k_num <= q_max * k_den + k_den_min * qvar - q_max * k_den_min,
+        k_num <= q_min * k_den + k_den_max * qvar - q_min * k_den_max,
+    ]
 
-    # Lower McCormick plane at (q_min, k_den_min).
-    cons.append(
-        k_num
-        >= q_min * k_den
-        + k_den_min * qvar
-        - q_min * k_den_min
-    )
-
-    # Lower McCormick plane at (q_max, k_den_max).
-    cons.append(
-        k_num
-        >= q_max * k_den
-        + k_den_max * qvar
-        - q_max * k_den_max
-    )
-
-    # Upper McCormick plane using q_max and k_den_min.
-    cons.append(
-        k_num
-        <= q_max * k_den
-        + k_den_min * qvar
-        - q_max * k_den_min
-    )
-
-    # Upper McCormick plane using q_min and k_den_max.
-    cons.append(
-        k_num
-        <= q_min * k_den
-        + k_den_max * qvar
-        - q_min * k_den_max
-    )
-
-    # These two rows are redundant in exact arithmetic but retain the
-    # original ratio formulation explicitly and may help presolve.
     if add_linear_ratio_rows:
-        append_normalized_linear_ratio_rows()
+      append_normalized_linear_ratio_rows()
 
     return {
-        "q": qvar,
-        "swapped": swapped,
-        "fallback": False,
-        "exact": False,
-        "log_bounds": (d_min, d_max),
-        "q_bounds": (q_min, q_max),
-        "numerator_bounds": (
-            k_num_min,
-            k_num_max,
-        ),
-        "denominator_bounds": (
-            k_den_min,
-            k_den_max,
-        ),
-    }            
+        "q": qvar, "swapped": swapped, "fallback": False, "exact": False,
+        "log_bounds": (d_min, d_max), "q_bounds": (q_min, q_max),
+        "numerator_bounds": (k_num_min, k_num_max),
+        "denominator_bounds": (k_den_min, k_den_max),
+    }
+
+def add_mccormick_sum_product_constraints(
+    cons, ki, kr, lami, lamr,
+    ki_min, ki_max, kr_min, kr_max,
+    sir_min, sir_max, secant_width_tol=1.0e-12,
+):
+    ki_min, ki_max = float(ki_min), float(ki_max)
+    kr_min, kr_max = float(kr_min), float(kr_max)
+    sir_min, sir_max = float(sir_min), float(sir_max)
+
+    if ki_min < 0.0 or kr_min < 0.0:
+        raise ValueError("Kernel lower bounds must be nonnegative")
+    if ki_min > ki_max or kr_min > kr_max:
+        raise ValueError("Invalid kernel bounds")
+    if not np.isfinite(sir_min) or not np.isfinite(sir_max):
+        raise ValueError("Finite bounds on lambda_i + lambda_r are required")
+    if sir_min > sir_max:
+        raise ValueError("Invalid bounds on lambda_i + lambda_r")
+
+    pir_min, pir_max = float(np.exp(sir_min)), float(np.exp(sir_max))
+
+    if pir_max == 0.0: return None, None
+    if not np.isfinite(pir_max):
+        raise FloatingPointError("exp(sir_max) overflowed in sum/product relaxation")
+
+    sir, pir = cp.Variable(), cp.Variable(nonneg=True)
+
+    cons += [
+        sir == lami + lamr,
+        sir >= sir_min,
+        sir <= sir_max,
+        pir >= cp.exp(sir),
+        pir >= pir_min,
+        pir <= pir_max,
+    ]
+
+    width = sir_max - sir_min
+
+    if width > secant_width_tol:
+        slope = -pir_max * np.expm1(-width) / width
+        cons.append(pir <= pir_min + slope * (sir - sir_min))
+    else:
+        cons.append(pir <= pir_max)
+
+    cons += [
+        pir >= ki_min * kr + kr_min * ki - ki_min * kr_min,
+        pir >= ki_max * kr + kr_max * ki - ki_max * kr_max,
+        pir <= ki_max * kr + kr_min * ki - ki_max * kr_min,
+        pir <= ki_min * kr + kr_max * ki - ki_min * kr_max,
+    ]
+
+    return sir, pir
+  
 class BnBAlgorithmBase:
   def __init__(self, x = None, y = None):
     # Node class for priority queue
@@ -1455,19 +1227,25 @@ class BnBAlgorithm(BnBAlgorithmBase):
     distance_mat = np.zeros((ntrain,ntrain))
     theta = self.theta.ravel()
     # only go over the upper triangle
-    pairs = []
+    self.pairs_dist = []
     for i in range(ntrain):
       for j in range(i+1, ntrain):
         if self.kernel_spec == "pow_exp" and self.p == 2.0:
-          pairs.append((np.linalg.norm(np.sqrt(theta) * (self.x[i] - self.x[j]) / self.X_scale), i, j))
+          self.pairs_dist.append((np.linalg.norm(np.sqrt(theta) * (self.x[i] - self.x[j]) / self.X_scale), i, j))
         else:
-          pairs.append((np.linalg.norm(theta * (self.x[i] - self.x[j]) / self.X_scale, ord=1), i, j))
+          self.pairs_dist.append((np.linalg.norm(theta * (self.x[i] - self.x[j]) / self.X_scale, ord=1), i, j))
     # now extract smallest-distance pairs
-    pairs.sort(key=lambda entry: entry[0])
+    print("pairs     :" + " ".join(f"({i:2d},{j:2d},{val:12.5e})" for val, i, j in self.pairs_dist))
+    self.pairs_dist.sort(key=lambda entry: entry[0])
+    print("pairs sort:" + " ".join(f"({i:2d},{j:2d},{val:12.5e})" for val, i, j in self.pairs_dist))
     self.c0 = 2
-    npairs = min(self.c0 * ntrain, len(pairs))
-    
-    self.nearest_neighbor_pairs = np.asarray([(i, r) for _, i, r in pairs[:npairs]], dtype=np.int64).reshape(-1, 2)
+    npairs = min(self.c0 * ntrain, len(self.pairs_dist))
+    print("pairs slct:" + " ".join(f"({i:2d},{j:2d},{val:12.5e})" for val, i, j in self.pairs_dist[:npairs]))
+    self.nearest_neighbor_pairs = np.asarray([(i, r) for _, i, r in self.pairs_dist[:npairs]], dtype=np.int64).reshape(-1, 2)
+
+    # repurpose pairs_dist
+    pairs = self.pairs_dist
+    self.pairs_dist = {(i, j): dist for dist, i, j in pairs}
 
 
   # For minimization, we find a feasible function value as the upper bound on the minimum value of the acquisition function.
@@ -1722,8 +1500,12 @@ class BnBAlgorithm(BnBAlgorithmBase):
         Ei_exp = np.zeros(ntrain)
         Ai     = np.zeros(ntrain)
         kvec = self.C2 @ self.X
-        gamma_floor = 0.05
-        eps_gamma = 1.e-4
+
+        sensitivity_floor = 0.05
+        x_ref = 0.5 * (np.asarray(l, dtype=float) + np.asarray(u, dtype=float))
+        lcb_grad_k, k_ref, sigma_ref, mean_grad_k, variance_grad_k = lcb_gradient_at_single_reference(self, x_ref)
+        abs_lcb_grad_k = np.abs(lcb_grad_k)
+        normalized_lcb_sensitivity = abs_lcb_grad_k / max(float(np.max(abs_lcb_grad_k)), np.finfo(float).eps)
         for i in range(ntrain):
           #compute Ei_exp
           if lamU[i] > lamL[i]:
@@ -1742,13 +1524,24 @@ class BnBAlgorithm(BnBAlgorithmBase):
               raise RuntimeError("roundoff error: diff between exp and sec should be zero")            
           else:
             Ei_exp[i] = 0.
-          Ai[i] = Ei_exp[i] * (gamma_floor + (1. - gamma_floor) * np.abs(self.gamma[i]) / (np.max(np.abs(self.gamma)) + eps_gamma))
-        pair_selection_triplets = np.array([[pair[0], pair[1], Ai[pair[0]] + Ai[pair[1]]] for pair in self.nearest_neighbor_pairs])
+          #Ai[i] = Ei_exp[i] * (gamma_floor + (1. - gamma_floor) * np.abs(self.gamma[i]) / (np.max(np.abs(self.gamma)) + eps_gamma))
+          Ai[i] = Ei_exp[i] * (sensitivity_floor + (1.0 - sensitivity_floor) * normalized_lcb_sensitivity[i])
+        print("gamma:        :\n" + " ".join(f"({i:2d}, {self.gamma[i]:12.5e})" for i in range(len(self.gamma)))) 
+        print("Ai exp-sec gap:\n" + " ".join(f"({i:2d}, {Ai[i]:12.5e})" for i in range(len(Ai))))
+        pair_selection_triplets = np.array([[pair[0], pair[1], (Ai[pair[0]] + Ai[pair[1]])/self.pairs_dist[pair[0],pair[1]]] for pair in self.nearest_neighbor_pairs])
+        #print(pair_selection_triplets)
         args = np.argsort(pair_selection_triplets[:,-1])[::-1]
         pair_selection_triplets[:,:] = pair_selection_triplets[args,:]
+        print("triplets Ai+Aj:\n" + " ".join(f"({int(i):2d},{int(j):2d},{val:12.5e})" for i, j, val in pair_selection_triplets))
+
+
+
         # now find c1 * p pairs
-        c1 = 2
+        c1 = 1
         ndownselect_pairs = min(len(self.nearest_neighbor_pairs), c1 * ntrain)
+
+        print("triplets Ai+Aj: downselect\n" + " ".join(f"({int(i):2d},{int(j):2d},{val:12.5e})" for i, j, val in pair_selection_triplets[:ndownselect_pairs]))
+        
         for pair in pair_selection_triplets[:ndownselect_pairs]:
           i_idx = int(pair[0])
           r_idx = int(pair[1])
@@ -1773,6 +1566,13 @@ class BnBAlgorithm(BnBAlgorithmBase):
 
           add_mccormick_ratio_constraints(cons=cons, ki=kvec[i_idx], kr=kvec[r_idx], lam_i=lamvar[i_idx], lam_r=lamvar[r_idx],
                                           lir_min=lir_min, lir_max=lir_max, ki_min=kL[i_idx], ki_max=kU[i_idx], kr_min=kL[r_idx], kr_max=kU[r_idx], name=f"{i_idx}_{r_idx}")
+          # Safe, inexpensive bounds. For SE these can later be replaced by the
+          # tighter midpoint-based pair-sum bounds.
+          sir_min = lamL[i_idx] + lamL[r_idx]
+          sir_max = lamU[i_idx] + lamU[r_idx]
+
+          add_mccormick_sum_product_constraints(cons, kvec[i_idx], kvec[r_idx], lamvar[i_idx], lamvar[r_idx], kL[i_idx], kU[i_idx],
+                                                kL[r_idx], kU[r_idx], sir_min, sir_max)
           #add_ratio_constraints(cons, kvec[i_idx], kvec[r_idx], lir_min, lir_max)
     
     opt_tol = 1.e-8
@@ -2489,8 +2289,12 @@ class branching_wrapper:
         Ai     = np.zeros(ntrain)
         kvec = self.C2 @ self.X
 
-        gamma_floor = 0.05
-        eps_gamma = 1.e-4
+        sensitivity_floor = 0.05
+        x_ref = 0.5 * (np.asarray(l, dtype=float) + np.asarray(u, dtype=float))
+        lcb_grad_k, k_ref, sigma_ref, mean_grad_k, variance_grad_k = lcb_gradient_at_single_reference(self, x_ref)
+        abs_lcb_grad_k = np.abs(lcb_grad_k)
+        normalized_lcb_sensitivity = abs_lcb_grad_k / max(float(np.max(abs_lcb_grad_k)), np.finfo(float).eps)
+
         for i in range(ntrain):
           #compute Ei_exp
           if lamU[i] > lamL[i]:
@@ -2509,7 +2313,8 @@ class branching_wrapper:
               raise RuntimeError("roundoff error: diff between exp and sec should be zero")            
           else:
             Ei_exp[i] = 0.
-          Ai[i] = Ei_exp[i] * (gamma_floor + (1. - gamma_floor) * np.abs(self.gamma[i]) / (np.max(np.abs(self.gamma)) + eps_gamma))
+          #Ai[i] = Ei_exp[i] * (gamma_floor + (1. - gamma_floor) * np.abs(self.gamma[i]) / (np.max(np.abs(self.gamma)) + eps_gamma))
+          Ai[i] = Ei_exp[i] * (sensitivity_floor + (1.0 - sensitivity_floor) * normalized_lcb_sensitivity[i])
         pair_selection_triplets = np.array([[pair[0], pair[1], Ai[pair[0]] + Ai[pair[1]]] for pair in self.nearest_neighbor_pairs]).reshape(-1, 3)
         args = np.argsort(pair_selection_triplets[:,-1])[::-1]
         pair_selection_triplets[:,:] = pair_selection_triplets[args,:]
@@ -2540,6 +2345,10 @@ class branching_wrapper:
 
           add_mccormick_ratio_constraints(cons=cons, ki=kvec[i_idx], kr=kvec[r_idx], lam_i=lamvar[i_idx], lam_r=lamvar[r_idx],
                                           lir_min=lir_min, lir_max=lir_max, ki_min=kL[i_idx], ki_max=kU[i_idx], kr_min=kL[r_idx], kr_max=kU[r_idx], name=f"{i_idx}_{r_idx}")
+          sir_min = lamL[i_idx] + lamL[r_idx]
+          sir_max = lamU[i_idx] + lamU[r_idx]
+          add_mccormick_sum_product_constraints(cons, kvec[i_idx], kvec[r_idx], lamvar[i_idx], lamvar[r_idx], kL[i_idx], kU[i_idx],
+                                                kL[r_idx], kU[r_idx], sir_min, sir_max)
 
           #add_ratio_constraints(cons, kvec[i_idx], kvec[r_idx], lir_min, lir_max)
           
