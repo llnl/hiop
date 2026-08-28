@@ -95,6 +95,65 @@ def branch(l, u, X = None, corner_tol = 1.e-6):
     l2[d] = xsplit[d]
   return [(l1, u1), (l2, u2)]
 
+def gradient_branch(l, u, acqf, gradient_floor=0.05):
+    l, u = np.asarray(l,dtype=float),np.asarray(u,dtype=float);
+    w = u-l;
+    #w = np.ones(l.shape, dtype=float)
+    m = .5*(l+u)
+    g = np.abs(np.asarray(acqf.eval_g(np.atleast_2d(m)),dtype=float).reshape(-1));
+    ok = g.size==w.size and np.all(np.isfinite(g)) and np.max(g)>0.
+    s = w*(gradient_floor+(1.-gradient_floor)*g/np.max(g)) if ok else w
+    d = int(np.argmax(s))
+    l0, u0, l1, u1 = l.copy(), u.copy(), l.copy(), u.copy()
+
+    u0[d] = m[d]
+    l1[d] = m[d]
+    #g = np.asarray(acqf.eval_g(np.atleast_2d(m)),dtype=float).reshape(-1);
+    #print("--- g ", g, " || ", d, " | ", l0, " ", u0, " | ", l1, " ", u1) 
+    return [(l0, u0), (l1, u1)]
+
+def minmax_expsec_branch(l, u, bnb,weights=None):
+  l,u = np.asarray(l,float),np.asarray(u,float);
+  n = l.size
+  off,scale = np.asarray(bnb.X_offset).ravel(),np.asarray(bnb.X_scale).ravel()
+  lc,uc = (l-off)/scale,(u-off)/scale
+  X = np.asarray(bnb.Xc,float).reshape(-1,n)
+  th = np.broadcast_to(np.asarray(bnb.theta,float).ravel(),(n,))
+  spec=bnb.kernel_spec
+  if spec not in ("pow_exp","matern32","matern52"):
+    raise ValueError(f"Unsupported kernel {spec}")
+  def q(d,j):
+    if spec=="pow_exp": return -th[j]*d**bnb.p
+    t=np.sqrt(3. if spec=="matern32" else 5.)*th[j]*d
+    return np.log1p(t if spec=="matern32" else t+t*t/3.)-t
+  def gap(a,b):
+    d = np.maximum(b-a,0.);
+    h = np.divide(-np.expm1(-d),d,out=np.ones_like(d),where=d>1.e-4)
+    return np.where(d>1.e-4,np.exp(b)*(1.-h+h*np.log(h)),np.exp((a+b)/2.)*d*d/8.)
+  dn = np.maximum(0.,np.maximum(lc-X,X-uc));
+  df = np.maximum(abs(lc-X),abs(uc-X))
+  L = np.column_stack([q(df[:,j],j) for j in range(n)])
+  U = np.column_stack([q(dn[:,j],j) for j in range(n)])
+  la,lb = L.sum(1),U.sum(1)
+  w = np.ones(X.shape[0]) if weights is None else np.asarray(weights,float).ravel()
+  if w.size != X.shape[0] or np.any(w<0) or not np.all(np.isfinite(w)):
+    raise ValueError("Invalid exp-sec weights")
+  candidates=[]
+  for j in range(n):
+    m = .5*(l[j]+u[j])
+    if not l[j]<m<u[j]: continue
+    z = (m-off[j])/scale[j]
+    scores = []
+    for a,b in ((lc[j],z),(z,uc[j])):
+      dn=np.maximum(0.,np.maximum(a-X[:,j],X[:,j]-b))
+      df=np.maximum(abs(a-X[:,j]),abs(b-X[:,j]))
+      scores.append(w@gap(la-L[:,j]+q(df,j), lb-U[:,j]+q(dn,j)))
+    l1,u1,l2,u2 = l.copy(),u.copy(),l.copy(),u.copy();
+    u1[j]=m;
+    l2[j]=m
+    candidates.append((max(scores),-(uc[j]-lc[j]),j,[(l1,u1),(l2,u2)]))
+  return min(candidates,key=lambda x:x[:3])[3] if candidates else []
+  
 def lcb_gradient_at_single_reference(owner, x_ref, sigma_floor=None):
   """Return the full LCB gradient with respect to k at one feasible kernel vector k_ref=k(x_ref)."""
   if not isinstance(owner.acqf, LCBacquisition):
@@ -107,9 +166,11 @@ def lcb_gradient_at_single_reference(owner, x_ref, sigma_floor=None):
   if owner.kernel_spec == "pow_exp":
     k_ref = np.exp(-np.sum(theta[None, :] * dx**float(owner.p), axis=1))
   elif owner.kernel_spec == "matern32":
-    t = np.sqrt(3.0) * theta[None, :] * dx; k_ref = np.prod((1.0 + t) * np.exp(-t), axis=1)
+    t = np.sqrt(3.0) * theta[None, :] * dx;
+    k_ref = np.prod((1.0 + t) * np.exp(-t), axis=1)
   elif owner.kernel_spec == "matern52":
-    t = np.sqrt(5.0) * theta[None, :] * dx; k_ref = np.prod((1.0 + t + t**2 / 3.0) * np.exp(-t), axis=1)
+    t = np.sqrt(5.0) * theta[None, :] * dx;
+    k_ref = np.prod((1.0 + t + t**2 / 3.0) * np.exp(-t), axis=1)
   else:
     raise ValueError(f"Unsupported kernel specification '{owner.kernel_spec}'")
   gamma = np.asarray(owner.gamma, dtype=float).ravel()
@@ -184,6 +245,27 @@ def add_mccormick_ratio_constraints(
     ki_min, ki_max, kr_min, kr_max, name=None,
     add_linear_ratio_rows=True,
 ):
+    """
+    Add the lifted exponential/McCormick relaxation
+        d_ir = lam_i - lam_r
+        q_ir = exp(d_ir)
+        ki   = q_ir * kr
+    over
+        lir_min <= d_ir <= lir_max,
+        ki_min <= ki <= ki_max,
+        kr_min <= kr <= kr_max.
+
+    The exact equality q_ir = exp(d_ir) is relaxed by its convex hull:
+        exp(d_ir) <= q_ir <= sec_exp(d_ir).
+
+    The exact product ki = q_ir * kr is relaxed by the four  McCormick inequalities.
+
+    To improve numerical scaling, the pair is automatically reversed when doing so 
+    produces a smaller upper bound on q. Thus, internally, the function may represent either
+        ki = q * kr
+    or the equivalent relation
+        kr = q * ki.
+    """
     lir_min, lir_max = float(lir_min), float(lir_max)
     ki_min, ki_max = max(0.0, float(ki_min)), float(ki_max)
     kr_min, kr_max = max(0.0, float(kr_min)), float(kr_max)
@@ -314,6 +396,15 @@ def add_mccormick_sum_product_constraints(
     ki_min, ki_max, kr_min, kr_max,
     sir_min, sir_max, secant_width_tol=1.0e-12,
 ):
+    """
+    Add the complementary lifted sum/product relaxation
+        sir = lami + lamr, pir = exp(sir), pir = ki * kr.
+
+    The graph pir = exp(sir) is relaxed using its convex exponential
+    lower envelope and affine secant upper envelope. The bilinear
+    equality pir = ki * kr is relaxed using the four McCormick
+    inequalities.
+    """
     ki_min, ki_max = float(ki_min), float(ki_max)
     kr_min, kr_max = float(kr_min), float(kr_max)
     sir_min, sir_max = float(sir_min), float(sir_max)
@@ -363,7 +454,6 @@ def add_mccormick_sum_product_constraints(
   
 class BnBAlgorithmBase:
   def __init__(self, x = None, y = None):
-    # Node class for priority queue
     # Kernel info for bounds
     self.kernel_spec = None
     self.y_min = None
@@ -1126,9 +1216,6 @@ class BnBAlgorithm(BnBAlgorithmBase):
 
     self.acqf_UB_solver = "SLSQP"
 
-    self.early_stopping_heuristics = False
-    self.max_queue_size = 10000
-
     # Set options form command 
     self.epsilon_gap = options.get('abs_tol', self.epsilon_gap)
     self.epsilon_node = self.epsilon_gap/100
@@ -1147,7 +1234,6 @@ class BnBAlgorithm(BnBAlgorithmBase):
     self.saveDataDir = options.get('save_data_dir', self.saveDataDir)
     self.saveData = options.get('save_data', self.saveData)
     self.min_diam = options.get('min_diameter', self.min_diam)
-    self.early_stopping_heuristics = options.get('early_stopping_heuristics', self.early_stopping_heuristics)
     self.inflight_factor = options.get('inflight_factor', self.inflight_factor)
     self.poll_interval = options.get('poll_interval', self.poll_interval)
     self.max_task_retries = options.get('max_task_retries', self.max_task_retries)
@@ -1163,7 +1249,6 @@ class BnBAlgorithm(BnBAlgorithmBase):
     assert self.acqf_UB_solver in ["SLSQP", "trust-constr", "IPOPT", "MINEVAL"], "invalid acqf ub solver"
     assert isinstance(self.saveData, bool), "save_data is not of type bool"
     assert isinstance(self.saveDataDir, str), "save_data_dir is not of type string"
-    assert isinstance(self.early_stopping_heuristics, bool), "early stopping heuristics BnB option was set to non boolean value"
 
     supplied_evaluator = options.get("node_evaluator", None)
     if supplied_evaluator is None:
@@ -1235,12 +1320,12 @@ class BnBAlgorithm(BnBAlgorithmBase):
         else:
           self.pairs_dist.append((np.linalg.norm(theta * (self.x[i] - self.x[j]) / self.X_scale, ord=1), i, j))
     # now extract smallest-distance pairs
-    print("pairs     :" + " ".join(f"({i:2d},{j:2d},{val:12.5e})" for val, i, j in self.pairs_dist))
+    ##print("pairs     :" + " ".join(f"({i:2d},{j:2d},{val:12.5e})" for val, i, j in self.pairs_dist))
     self.pairs_dist.sort(key=lambda entry: entry[0])
-    print("pairs sort:" + " ".join(f"({i:2d},{j:2d},{val:12.5e})" for val, i, j in self.pairs_dist))
+    ##print("pairs sort:" + " ".join(f"({i:2d},{j:2d},{val:12.5e})" for val, i, j in self.pairs_dist))
     self.c0 = 2
     npairs = min(self.c0 * ntrain, len(self.pairs_dist))
-    print("pairs slct:" + " ".join(f"({i:2d},{j:2d},{val:12.5e})" for val, i, j in self.pairs_dist[:npairs]))
+    ##print("pairs slct:" + " ".join(f"({i:2d},{j:2d},{val:12.5e})" for val, i, j in self.pairs_dist[:npairs]))
     self.nearest_neighbor_pairs = np.asarray([(i, r) for _, i, r in self.pairs_dist[:npairs]], dtype=np.int64).reshape(-1, 2)
 
     # repurpose pairs_dist
@@ -1526,21 +1611,19 @@ class BnBAlgorithm(BnBAlgorithmBase):
             Ei_exp[i] = 0.
           #Ai[i] = Ei_exp[i] * (gamma_floor + (1. - gamma_floor) * np.abs(self.gamma[i]) / (np.max(np.abs(self.gamma)) + eps_gamma))
           Ai[i] = Ei_exp[i] * (sensitivity_floor + (1.0 - sensitivity_floor) * normalized_lcb_sensitivity[i])
-        print("gamma:        :\n" + " ".join(f"({i:2d}, {self.gamma[i]:12.5e})" for i in range(len(self.gamma)))) 
-        print("Ai exp-sec gap:\n" + " ".join(f"({i:2d}, {Ai[i]:12.5e})" for i in range(len(Ai))))
+        #print("gamma::" + " ".join(f"({i:2d}, {self.gamma[i]:12.5e})" for i in range(len(self.gamma)))) 
+        #print("Ai exp-sec gap:\n" + " ".join(f"({i:2d}, {Ai[i]:12.5e})" for i in range(len(Ai))))
         pair_selection_triplets = np.array([[pair[0], pair[1], (Ai[pair[0]] + Ai[pair[1]])/self.pairs_dist[pair[0],pair[1]]] for pair in self.nearest_neighbor_pairs])
         #print(pair_selection_triplets)
         args = np.argsort(pair_selection_triplets[:,-1])[::-1]
         pair_selection_triplets[:,:] = pair_selection_triplets[args,:]
-        print("triplets Ai+Aj:\n" + " ".join(f"({int(i):2d},{int(j):2d},{val:12.5e})" for i, j, val in pair_selection_triplets))
-
-
+        #print("triplets Ai+Aj:\n" + " ".join(f"({int(i):2d},{int(j):2d},{val:12.5e})" for i, j, val in pair_selection_triplets))
 
         # now find c1 * p pairs
         c1 = 1
         ndownselect_pairs = min(len(self.nearest_neighbor_pairs), c1 * ntrain)
 
-        print("triplets Ai+Aj: downselect\n" + " ".join(f"({int(i):2d},{int(j):2d},{val:12.5e})" for i, j, val in pair_selection_triplets[:ndownselect_pairs]))
+        #print("triplets Ai+Aj: downselect\n" + " ".join(f"({int(i):2d},{int(j):2d},{val:12.5e})" for i, j, val in pair_selection_triplets[:ndownselect_pairs]))
         
         for pair in pair_selection_triplets[:ndownselect_pairs]:
           i_idx = int(pair[0])
@@ -1564,16 +1647,16 @@ class BnBAlgorithm(BnBAlgorithmBase):
               lir_min += lijr_min
               lir_max += lijr_max
 
-          add_mccormick_ratio_constraints(cons=cons, ki=kvec[i_idx], kr=kvec[r_idx], lam_i=lamvar[i_idx], lam_r=lamvar[r_idx],
-                                          lir_min=lir_min, lir_max=lir_max, ki_min=kL[i_idx], ki_max=kU[i_idx], kr_min=kL[r_idx], kr_max=kU[r_idx], name=f"{i_idx}_{r_idx}")
+          #add_mccormick_ratio_constraints(cons=cons, ki=kvec[i_idx], kr=kvec[r_idx], lam_i=lamvar[i_idx], lam_r=lamvar[r_idx],
+          #                                lir_min=lir_min, lir_max=lir_max, ki_min=kL[i_idx], ki_max=kU[i_idx], kr_min=kL[r_idx], kr_max=kU[r_idx], name=f"{i_idx}_{r_idx}")
           # Safe, inexpensive bounds. For SE these can later be replaced by the
           # tighter midpoint-based pair-sum bounds.
           sir_min = lamL[i_idx] + lamL[r_idx]
           sir_max = lamU[i_idx] + lamU[r_idx]
 
-          add_mccormick_sum_product_constraints(cons, kvec[i_idx], kvec[r_idx], lamvar[i_idx], lamvar[r_idx], kL[i_idx], kU[i_idx],
-                                                kL[r_idx], kU[r_idx], sir_min, sir_max)
-          #add_ratio_constraints(cons, kvec[i_idx], kvec[r_idx], lir_min, lir_max)
+          #add_mccormick_sum_product_constraints(cons, kvec[i_idx], kvec[r_idx], lamvar[i_idx], lamvar[r_idx], kL[i_idx], kU[i_idx],
+          #                                      kL[r_idx], kU[r_idx], sir_min, sir_max)
+          add_ratio_constraints(cons, kvec[i_idx], kvec[r_idx], lir_min, lir_max)
     
     opt_tol = 1.e-8
     opt_rel_tol = 1.e-8
@@ -1835,6 +1918,7 @@ class branching_wrapper:
     
     if not (isinstance(self.acqf, LCBacquisition) or isinstance(self.acqf, EIacquisition)):
       raise NotImplementedError("Unrecognized acquisition function type")
+
     self.sync_from_smt()
     self.cvxpy_problem = None
 
@@ -2343,14 +2427,14 @@ class branching_wrapper:
               lir_min += lijr_min
               lir_max += lijr_max
 
-          add_mccormick_ratio_constraints(cons=cons, ki=kvec[i_idx], kr=kvec[r_idx], lam_i=lamvar[i_idx], lam_r=lamvar[r_idx],
-                                          lir_min=lir_min, lir_max=lir_max, ki_min=kL[i_idx], ki_max=kU[i_idx], kr_min=kL[r_idx], kr_max=kU[r_idx], name=f"{i_idx}_{r_idx}")
+          #add_mccormick_ratio_constraints(cons=cons, ki=kvec[i_idx], kr=kvec[r_idx], lam_i=lamvar[i_idx], lam_r=lamvar[r_idx],
+          #                                lir_min=lir_min, lir_max=lir_max, ki_min=kL[i_idx], ki_max=kU[i_idx], kr_min=kL[r_idx], kr_max=kU[r_idx], name=f"{i_idx}_{r_idx}")
           sir_min = lamL[i_idx] + lamL[r_idx]
           sir_max = lamU[i_idx] + lamU[r_idx]
-          add_mccormick_sum_product_constraints(cons, kvec[i_idx], kvec[r_idx], lamvar[i_idx], lamvar[r_idx], kL[i_idx], kU[i_idx],
-                                                kL[r_idx], kU[r_idx], sir_min, sir_max)
+          #add_mccormick_sum_product_constraints(cons, kvec[i_idx], kvec[r_idx], lamvar[i_idx], lamvar[r_idx], kL[i_idx], kU[i_idx],
+          #                                     kL[r_idx], kU[r_idx], sir_min, sir_max)
 
-          #add_ratio_constraints(cons, kvec[i_idx], kvec[r_idx], lir_min, lir_max)
+          add_ratio_constraints(cons, kvec[i_idx], kvec[r_idx], lir_min, lir_max)
           
     opt_tol = 1.e-8
     opt_rel_tol = 1.e-8
@@ -2556,7 +2640,9 @@ class branching_wrapper:
     parent = parents[0]
     started = time.time()
     try:
-      child_boxes = branch(parent.l, parent.u)
+      child_boxes = minmax_expsec_branch(parent.l, parent.u, self)
+      #child_boxes = gradient_branch(parent.l, parent.u, self.acqf)
+      #child_boxes = branch(parent.l, parent.u)
       if len(child_boxes) != 2:
         raise RuntimeError("branch() did not return exactly two child boxes")
       children = []
