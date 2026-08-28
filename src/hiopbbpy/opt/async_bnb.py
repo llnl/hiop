@@ -274,9 +274,7 @@ class AsyncLeafPartition:
     return math.inf
 
   def optimality_tolerance(self, epsilon_abs: float, epsilon_rel: float, lower_bound: float) -> float:
-    return float(epsilon_abs) + float(epsilon_rel) * max(
-        1.0, abs(self.incumbent_value), abs(lower_bound)
-    )
+    return max(float(epsilon_abs), float(epsilon_rel) * max(1.0, abs(self.incumbent_value), abs(lower_bound)))
 
   def gap(self) -> float:
     return self.incumbent_value - self.global_lower_bound()
@@ -735,9 +733,7 @@ def initialize_async_search(
         return float(lower)
 
     def evaluate_upper_point(point: np.ndarray) -> float:
-      return float(
-          np.asarray(algorithm.acqf.evaluate(np.atleast_2d(point))).reshape(-1)[0]
-      )
+      return float(np.asarray(algorithm.acqf.evaluate(np.atleast_2d(point))).reshape(-1)[0])
 
     store.restart_from_partition(
         old_partition,
