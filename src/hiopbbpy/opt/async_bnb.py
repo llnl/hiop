@@ -107,6 +107,13 @@ class BranchResult:
   error: Optional[str] = None
   worker_metadata: Dict[str, Any] = field(default_factory=dict)
 
+@dataclass
+class RestartResult:
+  node_id: int
+  aq_L: float = math.nan
+  aq_U: float = math.nan
+  aq_U_x: Optional[np.ndarray] = None
+  error: Optional[str] = None
 
 @dataclass
 class InFlightRecord:
@@ -514,12 +521,7 @@ class AsyncLeafPartition:
   # ------------------------------------------------------------------------
   # Warm start, views, and diagnostics
   # ------------------------------------------------------------------------
-  def restart_from_partition(
-      self,
-      old_leaves: Iterable[BnBNode],
-      transfer_lower_bound: Callable[[BnBNode], float],
-      evaluate_upper_point: Callable[[np.ndarray], float],
-  ) -> None:
+  def restart_from_partition(self, old_leaves, transfer_lower_bound, evaluate_upper_point, refresh_results=None):
     """Reclassify a retained leaf partition for a new acquisition function.
 
     ``transfer_lower_bound`` is the explicit hook for the Section-3.5 transfer
@@ -562,17 +564,39 @@ class AsyncLeafPartition:
       leaf.generation = self.generation
       leaf.state = LeafState.READY
       leaf.close_reason = None
-      leaf.aq_L = float(transfer_lower_bound(old_leaf))
-      if math.isnan(leaf.aq_L):
-        raise ValueError("Transferred lower bound is NaN")
+#      leaf.aq_L = float(transfer_lower_bound(old_leaf))
 
-      point = leaf.aq_U_x
-      if point is None or not self._contains(leaf, point):
-        point = leaf.midpoint
-      leaf.aq_U_x = np.asarray(point, dtype=float).reshape(-1).copy()
-      leaf.aq_U = float(evaluate_upper_point(leaf.aq_U_x))
-      if math.isnan(leaf.aq_U):
-        raise ValueError("Reevaluated upper bound is NaN")
+#      point = leaf.aq_U_x
+#      if point is None or not self._contains(leaf, point):
+#        point = leaf.midpoint
+#      leaf.aq_U_x = np.asarray(point, dtype=float).reshape(-1).copy()
+#      leaf.aq_U = float(evaluate_upper_point(leaf.aq_U_x))
+#      if math.isnan(leaf.aq_U):
+#        raise ValueError("Reevaluated upper bound is NaN")
+
+      if refresh_results is None:
+        leaf.aq_L = float(transfer_lower_bound(old_leaf))
+        if math.isnan(leaf.aq_L):
+          raise ValueError("Transferred lower bound is NaN")
+        
+        point = old_leaf.aq_U_x
+        if point is None or not self._contains(leaf, point):
+          point = leaf.midpoint
+        leaf.aq_U_x = np.asarray(point, dtype=float).reshape(-1).copy()
+        leaf.aq_U = float(evaluate_upper_point(leaf.aq_U_x))
+      else:
+        result = refresh_results[int(old_leaf.node_id)]
+        if result.error is not None:
+          raise RuntimeError(f"Restart failed for node {result.node_id}: {result.error}")
+        if result.aq_U_x is None:
+          raise RuntimeError(f"Restart returned no upper-bound point for node {result.node_id}")
+
+        leaf.aq_L = float(result.aq_L)
+        leaf.aq_U = float(result.aq_U)
+        leaf.aq_U_x = np.asarray(result.aq_U_x, dtype=float).reshape(-1).copy()
+
+        if not self._contains(leaf, leaf.aq_U_x):
+          raise ValueError(f"Restart upper-bound point is outside node {result.node_id}")
       if leaf.aq_L > leaf.aq_U:
         scale = max(1.0, abs(leaf.aq_L), abs(leaf.aq_U))
         if leaf.aq_L - leaf.aq_U <= self.bound_consistency_tol * scale:
@@ -665,7 +689,51 @@ class AsyncLeafPartition:
       if not any(self._contains(leaf, self.incumbent_x) for leaf in self.leaves.values()):
         raise AssertionError("Incumbent point is outside the retained partition")
 
+def _parallel_restart_results(algorithm, old_leaves, restart_worker):
+  old_leaves = list(old_leaves)
+  if not old_leaves:
+    raise ValueError("Warm-start partition is empty")
+  if any(leaf.node_id is None for leaf in old_leaves):
+    raise ValueError("Parallel restart requires every old leaf to have a node ID")
 
+  ids = [int(leaf.node_id) for leaf in old_leaves]
+  if len(ids) != len(set(ids)):
+    raise ValueError("Warm-start partition contains duplicate node IDs")
+
+  # Shape (number_of_leaves, 1): MPIEvaluator.run submits each row separately.
+  # Therefore each evaluator task receives exactly one leaf.
+  xin = np.empty((len(old_leaves), 1), dtype=object)
+  for i, leaf in enumerate(old_leaves):
+    xin[i, 0] = leaf
+
+  started = time.time()
+  results = list(algorithm.node_evaluator.run(restart_worker.restart_callback, xin))
+
+  if len(results) != len(old_leaves):
+    raise RuntimeError(
+        f"Expected {len(old_leaves)} restart results, received {len(results)}")
+
+  bad = [result for result in results if result.error is not None]
+  if bad:
+    message = "; ".join(f"node {result.node_id}: {result.error}" for result in bad)
+    raise RuntimeError(f"Warm-start bound refresh failed: {message}")
+
+  by_id = {}
+  for result in results:
+    node_id = int(result.node_id)
+    if node_id in by_id:
+      raise RuntimeError(f"Duplicate restart result for node {node_id}")
+    by_id[node_id] = result
+
+  expected, received = set(ids), set(by_id)
+  if expected != received:
+    raise RuntimeError(f"Restart-result ID mismatch: missing={sorted(expected-received)}, "
+                       f"unexpected={sorted(received-expected)}")
+
+  algorithm.log.info("Refreshed %d warm-start leaves, one leaf per task, in %g seconds",
+                     len(old_leaves), time.time()-started)
+  return by_id
+      
 def initialize_async_search(
     algorithm: Any,
     l0: Optional[np.ndarray] = None,
@@ -673,6 +741,7 @@ def initialize_async_search(
     queue: Optional[Sequence[Tuple[float, int, BnBNode]]] = None,
     partition: Optional[Iterable[BnBNode]] = None,
     transfer_lower_bound: Optional[Callable[[BnBNode], float]] = None,
+    restart_worker=None,
 ) -> None:
   """Adapter used by ``BnBAlgorithm.initialize``."""
   if l0 is None or u0 is None:
@@ -725,9 +794,16 @@ def initialize_async_search(
       store._reclassify_ready_after_incumbent_update()
   else:
     old_partition = list(partition)
+
+    refresh_results = None
+    if restart_worker is not None:
+      refresh_results = _parallel_restart_results(algorithm, old_partition, restart_worker)
+    else:
+      print("!!!!!!!!!!!restart_worker is none")
+    # serial fallback when restart_worker is None
     if transfer_lower_bound is None:
       # Correct fallback: recompute every lower bound.  The Section-3.5 transfer
-      # callback should replace this when available to retain the speed benefit.
+      # callback should replace this 
       def transfer_lower_bound(old_leaf: BnBNode) -> float:
         lower, _, _, _ = algorithm.compute_acqf_bounds(old_leaf.l, old_leaf.u)
         return float(lower)
@@ -735,11 +811,10 @@ def initialize_async_search(
     def evaluate_upper_point(point: np.ndarray) -> float:
       return float(np.asarray(algorithm.acqf.evaluate(np.atleast_2d(point))).reshape(-1)[0])
 
-    store.restart_from_partition(
-        old_partition,
-        transfer_lower_bound=transfer_lower_bound,
-        evaluate_upper_point=evaluate_upper_point,
-    )
+    store.restart_from_partition(old_partition,
+                                 transfer_lower_bound=transfer_lower_bound,
+                                 evaluate_upper_point=evaluate_upper_point,
+                                 refresh_results=refresh_results)
 
   algorithm.LUB = store.incumbent_value
   algorithm.LLB = store.global_lower_bound()

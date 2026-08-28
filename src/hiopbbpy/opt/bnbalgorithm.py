@@ -8,10 +8,7 @@ from .acquisition import EIacquisition, LCBacquisition
 from ..utils.util import Evaluator, MPIEvaluator, Logger
 from .bnb_utils import * 
 from .opt_utils import minimizer_wrapper, fit_common_se_point_from_ratios
-from .async_bnb import (
-  BnBNode, BranchResult, CloseReason, LeafState,
-  initialize_async_search, run_async_search,
-)
+from .async_bnb import BnBNode, BranchResult, RestartResult, CloseReason, LeafState, initialize_async_search, run_async_search
 from itertools import count
 try:
   from mpi4py import MPI
@@ -1895,15 +1892,23 @@ class BnBAlgorithm(BnBAlgorithmBase):
     else:
       return aq_U_x
   def initialize(self, l0=None, u0=None, queue=None, partition=None, transfer_lower_bound=None):
-    """Initialize a root or reclassify a retained full leaf partition."""
-    return initialize_async_search(self, l0=l0, u0=u0, queue=queue, partition=partition, transfer_lower_bound=transfer_lower_bound)
+    """Initialize a root or reclassify a full leaf partition from previous iteration."""
+    restart_worker = None
+    if partition is not None:
+      restart_worker = branching_wrapper(self.acqf, LUB=np.inf, epsilon_prune=self.epsilon_prune,
+                                         acqf_UB_solver=self.acqf_UB_solver, random_seed=self.random_seed,
+                                         opt_mode=self.opt_mode, nearest_neighbor_pairs=self.nearest_neighbor_pairs,
+                                         diagnostics=self.diagnostics, restart_lower_bound=transfer_lower_bound)
+      
+    return initialize_async_search(self, l0=l0, u0=u0, queue=queue, partition=partition,
+                                   transfer_lower_bound=transfer_lower_bound, restart_worker=restart_worker)
 
   def bnboptimize(self, l_init, u_init):
     """Run the certified asynchronous leaf-partition event loop."""
     return run_async_search(self, branching_wrapper, l_init, u_init)
 
 class branching_wrapper:
-  def __init__(self, acqf, LUB=np.inf, epsilon_prune=1.e-14, acqf_UB_solver="SLSQP", random_seed=None, opt_mode=3, nearest_neighbor_pairs=None, diagnostics=False):
+  def __init__(self, acqf, LUB=np.inf, epsilon_prune=1.e-14, acqf_UB_solver="SLSQP", random_seed=None, opt_mode=3, nearest_neighbor_pairs=None, diagnostics=False, restart_lower_bound=None):
     self.LUB = LUB # least upper bound
     self.epsilon_prune = epsilon_prune
     self.acqf = acqf
@@ -1931,6 +1936,7 @@ class branching_wrapper:
 
     self.opt_mode = opt_mode
     self.diagnostics = diagnostics
+    self.restart_lower_bound = restart_lower_bound
   
   def sync_from_smt(self):
     sm = self.gpsurrogate.surrogatesmt
@@ -2532,7 +2538,7 @@ class branching_wrapper:
     else:
       return sig_U, diagnostics_output
   
-  def compute_acqf_bounds(self, l, u, skip_LB=False):
+  def compute_acqf_bounds(self, l, u, skip_LB=False, skip_UB=False):
     diagnostics_str = ""
     # kernel bounds
     kL, kU = self.ker_bounds(l, u)
@@ -2549,6 +2555,9 @@ class branching_wrapper:
       if not skip_LB:
         with warnings.catch_warnings():
           warnings.simplefilter("ignore", category=UserWarning)
+          #
+          # Lower bound
+          #
           acqf_L, d_str = self.LCB_LB(l, u, kL, kU, opt_mode=opt_mode)
           diagnostics_str += f"{d_str}"
         for i in range(self.opt_mode):
@@ -2583,6 +2592,9 @@ class branching_wrapper:
       var = np.array([var_U, var_L])
       acqf_bounds = self.acqf.evaluate_meansig2(mu, var)
       acqf_L = acqf_bounds[0]
+
+    if skip_UB:
+      return float(np.asarray(acqf_L).reshape(-1)[0]), np.inf, None, diagnostics_str
     
     acqf_solve_success = False 
     if not self.acqf_UB_solver == "MINEVAL": # local gradient-based optimization method
@@ -2670,6 +2682,39 @@ class branching_wrapper:
     if isinstance(acqf_U, (list, np.ndarray)):
       acqf_U = acqf_U[0]
     return acqf_L, acqf_U, acqf_U_x, diagnostics_str
+
+  def restart_callback(self, nodes):
+    nodes = np.asarray(nodes, dtype=object).reshape(-1)
+    if nodes.size != 1:
+      raise ValueError(f"restart_callback expects exactly one leaf, received {nodes.size}")
+
+    old_leaf = nodes[0]
+    node_id = int(old_leaf.node_id)
+
+    try:
+      if self.restart_lower_bound is None:
+        aq_L, _, _, _ = self.compute_acqf_bounds(old_leaf.l, old_leaf.u, skip_UB=True)
+      else:
+        aq_L = float(self.restart_lower_bound(old_leaf))
+
+      l = np.asarray(old_leaf.l, dtype=float).reshape(-1)
+      u = np.asarray(old_leaf.u, dtype=float).reshape(-1)
+      point = old_leaf.aq_U_x
+
+      if point is not None:
+        point = np.asarray(point, dtype=float).reshape(-1)
+
+      if (point is None or point.size != l.size or not np.all(np.isfinite(point)) or np.any(point < l-1.e-12) or np.any(point > u+1.e-12)):
+        point = 0.5*(l+u)
+
+      point = point.copy()
+      aq_U = float(np.asarray(self.acqf.evaluate(np.atleast_2d(point))).reshape(-1)[0])
+
+      return [RestartResult(node_id=node_id, aq_L=float(aq_L), aq_U=aq_U, aq_U_x=point)]
+
+    except Exception as exc:
+      return [RestartResult(node_id=node_id, error=f"{type(exc).__name__}: {exc}")]
+  
   def callback(self, nodes):
     parents = list(nodes.flatten())
     if len(parents) != 1:
