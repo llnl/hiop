@@ -621,10 +621,7 @@ class BOAlgorithm(BOAlgorithmBase):
         bnb = BnBAlgorithm(acqf, options=self.solver_options, BOit=i)
      
         # Initialize BnB (perhaps use old set of boxes if self.bnb_queue is not None)
-        bnb.initialize(
-          partition=self.bnb_partition,
-          transfer_lower_bound=self.bnb_lower_bound_transfer,
-        )
+        bnb.initialize(partition=self.bnb_partition, transfer_lower_bound=self.bnb_lower_bound_transfer)
         
         # Run BnB optimization
         best_xopt = bnb.optimize()

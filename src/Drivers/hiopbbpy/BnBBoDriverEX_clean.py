@@ -345,7 +345,7 @@ if __name__ == "__main__":
   
   theta = 1  # hyperparameter for GP kernel
   fix_theta = False
-  theta_bounds = [0.05, 1]
+  theta_bounds = [0.9999, 1.0001]
   pow_exp_power = 2.0 #1. or 2., only relevant for pow_exp kernel
   corr = "pow_exp" #"matern52" # "pow_exp", "matern32", "matern52"
   eval_noise = False
@@ -361,7 +361,7 @@ if __name__ == "__main__":
   gp_model = smtKRG(theta, problem.xlimits, nx, corr=corr, pow_exp_power=pow_exp_power, eval_noise=eval_noise, fix_theta=fix_theta, theta_bounds=theta_bounds, hyper_opt=hyper_opt, nugget=nugget)
   gp_model.train(x_train, y_train)
 
-  beta = 3
+  beta = 1
   if acquisition_type == 'LCB':
     acqf = LCBacquisition(gp_model, beta=beta)
   else:
@@ -382,8 +382,7 @@ if __name__ == "__main__":
       'max_iter': bnbmaxiter,
       'max_bnbtime': bnbmaxtime,
       'pure_BBS' : True,
-      'synchronous' : True,
-      'early_stopping_heuristics' : False,
+      'synchronous' : False,
       'save_data' : save_data,
       'save_data_dir' : save_data_dir,
       'acqf_ub_solver': 'IPOPT',
@@ -403,7 +402,7 @@ if __name__ == "__main__":
       'bo_maxiter' : boiter, 
       'batch_size' : batch_size,
       'opt_solver' : 'SLSQP',
-      'BnBWarmStart' : False,
+      'BnBWarmStart' : True,
   }
   if BnB:
     options['opt_solver'] = 'BnB'
