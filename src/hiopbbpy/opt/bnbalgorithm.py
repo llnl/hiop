@@ -112,7 +112,7 @@ def gradient_branch(l, u, acqf, gradient_floor=0.05):
     #print("--- g ", g, " || ", d, " | ", l0, " ", u0, " | ", l1, " ", u1) 
     return [(l0, u0), (l1, u1)]
 
-def minmax_expsec_branch(l, u, bnb,weights=None):
+def minmax_expsec_branch(l, u, bnb, weights=None):
   l,u = np.asarray(l,float),np.asarray(u,float);
   n = l.size
   off,scale = np.asarray(bnb.X_offset).ravel(),np.asarray(bnb.X_scale).ravel()
@@ -137,6 +137,7 @@ def minmax_expsec_branch(l, u, bnb,weights=None):
   la,lb = L.sum(1),U.sum(1)
   w = np.ones(X.shape[0]) if weights is None else np.asarray(weights,float).ravel()
   if w.size != X.shape[0] or np.any(w<0) or not np.all(np.isfinite(w)):
+    print("wwwweights:", weights, flush=True)
     raise ValueError("Invalid exp-sec weights")
   candidates=[]
   for j in range(n):
@@ -153,7 +154,8 @@ def minmax_expsec_branch(l, u, bnb,weights=None):
     l2[j]=m
     candidates.append((max(scores),-(uc[j]-lc[j]),j,[(l1,u1),(l2,u2)]))
   return min(candidates,key=lambda x:x[:3])[3] if candidates else []
-  
+
+
 def lcb_gradient_at_single_reference(owner, x_ref, sigma_floor=None):
   """Return the full LCB gradient with respect to k at one feasible kernel vector k_ref=k(x_ref)."""
   if not isinstance(owner.acqf, LCBacquisition):
@@ -1688,6 +1690,10 @@ class BnBAlgorithm(BnBAlgorithmBase):
             diagnostics_output = stats_common_se_point(owner=self, l=l, u=u, xvar=xvar, wvar=wvar, lamvar=lamvar)
             diagnostics_output = stats_lcb_relaxation_gap(owner=self, xvar=xvar, relaxation_value=acqf_L) + diagnostics_output
             
+          #if opt_mode in (5,6):
+          #  assert mode == 0
+          #  self.save_expsec_weights(cons, lamvar, lamL, lamU)
+
         else:
           sig_U = cp.Problem(cp.Maximize(self.obj3), cons).solve(solver=cp.CLARABEL, verbose=verbose, tol_gap_abs=opt_tol, tol_gap_rel=opt_rel_tol, max_iter=max_iters)
           if not (np.all(rhovar.value >= rhomin) and np.all(rhovar.value <= rhomax)):
@@ -1716,11 +1722,12 @@ class BnBAlgorithm(BnBAlgorithmBase):
       return sig_U, diagnostics_output
   def compute_acqf_bounds(self, l, u, skip_LB=False):
     diagnostics_str = ""
+    self.expsec_weights=np.ones(np.asarray(self.gamma).size)
     # kernel bounds
     kL, kU = self.ker_bounds(l, u)
     if self.kernel_spec == "pow_exp":
       assert self.p == 1.0 or self.p == 2.0, "not supporting p not equal to 1 or 2"
-    
+
     failed_LB_opt = False
     if isinstance(self.acqf, LCBacquisition):
       # opt_mode = 0 (previous baseline w ratio constraints)
@@ -2039,8 +2046,6 @@ class branching_wrapper:
     self.A_constraint2[:,:] = U.dot(np.diag(lam_neg)).dot(U.T)
 
     self.cons2 = 0.5 * cp.quad_form(self.X, self.A_constraint2) + self.b_constraint2 @ self.X + self.c_constraint2
-    
-
 
     # set up a third objective function whose value is s wherein we will include a constraint s^2 <= \sig^2(k) 
     # also in which we will maximize s making s = max sig
@@ -2051,6 +2056,38 @@ class branching_wrapper:
   
   def _normalize(self, x):
     return (np.asarray(x, float) - self.X_offset) / self.X_scale
+
+  def save_expsec_weights(self, cons, lamvar, lamL, lamU, of=.05, rf=.05, eps=1e-12):
+    X = np.asarray(self.X.value,float).ravel()
+    gam = np.asarray(self.gamma,float).ravel()
+    n = gam.size
+    C = np.asarray(self.C,float)
+    A = np.asarray(self.A_constraint2,float)
+    b = np.asarray(self.b_constraint2,float).ravel()
+    z,s = X[:-1],X[-1]
+    k = C@z
+    lam = np.asarray(lamvar.value,float).ravel()
+    dv = cons[0].dual_value
+    nu = float(np.asarray(dv).squeeze()) if dv is not None else np.nan
+    if not np.isfinite(nu) or nu<0:
+      nu = float(self.acqf.beta)/(2*max(abs(s),np.sqrt(eps)))
+    qz = A[:n]@X+b[:n]
+    g = float(np.asarray(self.y_std).ravel()[0])*gam-nu*np.linalg.solve(C.T,qz)
+    #a = np.abs(g)
+    a = np.maximum(-g,0.)
+    a = np.abs(g) if a.max()<=eps else a
+    m = a.max()
+    omega = np.ones(n) if m<=eps else of+(1-of)*a/m
+    lo,up = np.asarray(lamL,float).ravel(),np.asarray(lamU,float).ravel()
+    d = np.maximum(up-lo,0.)
+    h = np.divide(-np.expm1(-d),d,out=np.ones_like(d),where=d>1e-6)
+    E = np.where(d>1e-6,np.exp(up)*(1-h+h*np.log(h)),np.exp((lo+up)/2)*d*d/8)
+    r = np.maximum(k-np.exp(lam),0.)
+    rho = rf+(1-rf)*np.minimum(1,r/(E+eps))
+    self.expsec_omega, self.expsec_rho, self.expsec_weights = omega, rho, omega*rho
+    self.expsec_lcb_gradient, self.expsec_residual, self.expsec_maxgap = g, r, E
+  
+
   
   def ker_bounds(self, l, u):
    
@@ -2111,8 +2148,7 @@ class branching_wrapper:
     mu_L = self.y_mean + self.y_std * mu_L_n
     mu_U = self.y_mean + self.y_std * mu_U_n
     return mu_L, mu_U
- 
-   
+    
   def sigma2_bounds(self, kL, kU, l = None, u = None):
     """
     Variance bounds over r ∈ [kL,kU] for SMT KRG (poly='constant'),
@@ -2353,9 +2389,6 @@ class branching_wrapper:
             for i in range(len(taus[j])):
               cons.append(alphavars[j][i] >= 0.0)
           
-
-
-
       else: #matern32 or matern52
         nu = 1.5
         if self.kernel_spec != "matern32":
@@ -2468,6 +2501,10 @@ class branching_wrapper:
           if self.diagnostics and opt_mode==6:
             diagnostics_output = stats_common_se_point(owner=self, l=l, u=u, xvar=xvar, wvar=wvar, lamvar=lamvar)
             diagnostics_output = stats_lcb_relaxation_gap(owner=self, xvar=xvar, relaxation_value=acqf_L) + diagnostics_output
+
+          if opt_mode in (5,6):
+            assert mode == 0
+            self.save_expsec_weights(cons, lamvar, lamL, lamU)
 
         else:
           sig_U = cp.Problem(cp.Maximize(self.obj3), cons).solve(solver=cp.CLARABEL, verbose=verbose, tol_gap_abs=opt_tol, tol_gap_rel=opt_rel_tol, max_iter=max_iters)
@@ -2638,9 +2675,11 @@ class branching_wrapper:
     if len(parents) != 1:
       raise ValueError("Each asynchronous BnB task must contain exactly one parent")
     parent = parents[0]
+    weights = (parent.metadata or {}).get("expsec_weights")
+    weights = None
     started = time.time()
     try:
-      child_boxes = minmax_expsec_branch(parent.l, parent.u, self)
+      child_boxes = minmax_expsec_branch(parent.l, parent.u, self, weights)
       #child_boxes = gradient_branch(parent.l, parent.u, self.acqf)
       #child_boxes = branch(parent.l, parent.u)
       if len(child_boxes) != 2:
@@ -2648,14 +2687,10 @@ class branching_wrapper:
       children = []
       for child_l, child_u in child_boxes:
         acqf_L, acqf_U, acqf_U_x, d_str = self.compute_acqf_bounds(child_l, child_u)
-        child = BnBNode(
-          child_l,
-          child_u,
-          acqf_L,
-          acqf_U,
-          aq_U_x=acqf_U_x,
-          metadata={"diagnostics" : d_str.rstrip("\n")},
-        )
+
+        metadata={"diagnostics":d_str.rstrip("\n"),
+                  "expsec_weights":self.expsec_weights.copy()}
+        child = BnBNode(child_l, child_u, acqf_L, acqf_U, acqf_U_x, metadata=metadata)
         children.append(child)
       result = BranchResult(
         parent_id=int(parent.node_id),
