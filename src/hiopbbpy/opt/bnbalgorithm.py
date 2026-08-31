@@ -1816,11 +1816,11 @@ class BnBAlgorithm(BnBAlgorithmBase):
           #                                kr_min=kL[r_idx], kr_max=kU[r_idx], name=f"{i_idx}_{r_idx}")
           add_ratio_constraints(cons, kvec[i_idx], kvec[r_idx], lir_min, lir_max)
           
-          #sir_min, sir_max = compute_sigma_ir_bounds(l=l, u=u, theta=th, x_scale=self.X_scale, x_i=self.x[i_idx], x_r=self.x[r_idx],
-          #                                           kernel_spec=self.kernel_spec, p=getattr(self, "p", 2.0))
+          sir_min, sir_max = compute_sigma_ir_bounds(l=l, u=u, theta=th, x_scale=self.X_scale, x_i=self.x[i_idx], x_r=self.x[r_idx],
+                                                     kernel_spec=self.kernel_spec, p=getattr(self, "p", 2.0))
           #add_mccormick_sum_product_constraints(cons, kvec[i_idx], kvec[r_idx], lamvar[i_idx], lamvar[r_idx], kL[i_idx], kU[i_idx],
           #                                      kL[r_idx], kU[r_idx], sir_min, sir_max)
-          #add_product_constraints(cons, kvec[i_idx], kvec[r_idx], sir_min, sir_max)
+          add_product_constraints(cons, kvec[i_idx], kvec[r_idx], sir_min, sir_max)
     
     opt_tol = 1.e-8
     opt_rel_tol = 1.e-8
@@ -2636,11 +2636,11 @@ class branching_wrapper:
           #                                ki_max=kU[i_idx], kr_min=kL[r_idx], kr_max=kU[r_idx], name=f"{i_idx}_{r_idx}")
           add_ratio_constraints(cons, kvec[i_idx], kvec[r_idx], lir_min, lir_max)
           
-          #sir_min, sir_max = compute_sigma_ir_bounds(l=l, u=u, theta=th, x_scale=self.X_scale, x_i=self.x[i_idx], x_r=self.x[r_idx],
-          #                                           kernel_spec=self.kernel_spec, p=getattr(self, "p", 2.0))
+          sir_min, sir_max = compute_sigma_ir_bounds(l=l, u=u, theta=th, x_scale=self.X_scale, x_i=self.x[i_idx], x_r=self.x[r_idx],
+                                                     kernel_spec=self.kernel_spec, p=getattr(self, "p", 2.0))
           #add_mccormick_sum_product_constraints(cons, kvec[i_idx], kvec[r_idx], lamvar[i_idx], lamvar[r_idx], kL[i_idx], kU[i_idx],
           #                                      kL[r_idx], kU[r_idx], sir_min, sir_max)
-          #add_product_constraints(cons, kvec[i_idx], kvec[r_idx], sir_min, sir_max)
+          add_product_constraints(cons, kvec[i_idx], kvec[r_idx], sir_min, sir_max)
           
     opt_tol = 1.e-8
     opt_rel_tol = 1.e-8
