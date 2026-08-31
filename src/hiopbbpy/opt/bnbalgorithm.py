@@ -753,6 +753,9 @@ class BnBAlgorithmBase:
     self.ntrain = self.x.shape[0]
 
     self.log = Logger()
+
+    self.restart = False
+    self.restart_partition_size = False
     self.diagnostics = False
     
   def sync_from_smt(self):
@@ -1536,6 +1539,9 @@ class BnBAlgorithm(BnBAlgorithmBase):
     else:
       self.node_evaluator = supplied_evaluator
 
+    self.restart = options.get('bnb_warmstart', self.restart)
+    self.restart_partition_size = options.get('bnb_warmstart_nodes', self.restart_partition_size)
+                                                
     self.diagnostics = options.get('diagnostics',  self.diagnostics)
       
     # improved optimization problem to determine LCB lower bound

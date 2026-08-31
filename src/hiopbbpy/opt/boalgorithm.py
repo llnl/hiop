@@ -409,8 +409,8 @@ class BOAlgorithm(BOAlgorithmBase):
       self.fun_grad = user_grad
 
     self.bnb_warm_start = True
-    self.bnb_warm_start = options.get('BnBWarmStart', self.bnb_warm_start)
-    assert isinstance(self.bnb_warm_start, bool), "provided BnBWarmStart is not a boolean type"
+    self.bnb_warm_start = options.get('bnb_warmstart', self.bnb_warm_start)
+    assert isinstance(self.bnb_warm_start, bool), "provided bnb_warmstart is not a boolean type"
     
     self.logger.info(f"Problem name: {prob.name}")
     self.logger.info(f"Max BO iter: {self.bo_maxiter}")

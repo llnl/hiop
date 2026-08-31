@@ -251,6 +251,8 @@ if __name__ == "__main__":
   parser.add_argument("--optmode", type=int, default=5, help="LCB convex relaxation strategy")
   parser.add_argument("--mpimode", action=argparse.BooleanOptionalAction, type=bool, default=False, help="enable MPI parallelism and use MPI_COMM_WORLD.Get_size()-1 workers.")
   parser.add_argument("--num_workers", type=int, default=0, help="specify number of workers for non-mpimode with default value zero in which case multiprocessing.cpu_count()-1 will be used.") 
+  parser.add_argument("--bnb_warmstart", action=argparse.BooleanOptionalAction, type=bool, default=False, help="use a partition of BnB node from previous iteration to initialize BnB search.")
+  parser.add_argument("--bnb_warmstart_nodes", type=int, default=1, help="max number of BnB nodes the warmstart partition should have")
   parser.add_argument("--diagnostics", action=argparse.BooleanOptionalAction, type=bool, default=False, help="build and print diagnostics")
   args = parser.parse_args()
 
@@ -389,6 +391,8 @@ if __name__ == "__main__":
       'min_diameter': 0.001,
       'opt_mode': args.optmode,
       'random_seed': randseed,
+      'bnb_warmstart': args.bnb_warmstart,
+      'bnb_warmstart_nodes': args.bnb_warmstart_nodes,
       'diagnostics' : args.diagnostics,
   }
   bnb_solver_options['node_evaluator'] = MPIEvaluator(function_mode=False, executor=executor, task_name="BO_BNB_NODE", profiling=False)
@@ -402,7 +406,7 @@ if __name__ == "__main__":
       'bo_maxiter' : boiter, 
       'batch_size' : batch_size,
       'opt_solver' : 'SLSQP',
-      'BnBWarmStart' : False,
+      'bnb_warmstart' : args.bnb_warmstart,
   }
   if BnB:
     options['opt_solver'] = 'BnB'

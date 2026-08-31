@@ -167,6 +167,52 @@ class AsyncLeafPartition:
     self.accepted_parent_tasks = 0
     self.stale_results = 0
 
+    #
+    # store next-iteration restart partition snapshot
+    #
+    # number of nodes in the partition
+    self.restart_partition_target: Optional[int] = None
+    # the partition
+    self._restart_partition_snapshot: Optional[Tuple[BnBNode, ...]] = None
+
+
+  # ------------------------------------------------------------------------
+  # Restart partition (for next iteration) is stored as soon as it reaches
+  # restart_partition_target nodes (a multiple of the number of workers)
+  # ------------------------------------------------------------------------
+  def _reset_restart_partition_snapshot(self) -> None:
+    self.restart_partition_target = None
+    self._restart_partition_snapshot = None
+
+  def _clone_current_partition(self) -> Tuple[BnBNode, ...]:
+    return tuple(self.leaves[node_id].clone() for node_id in sorted(self.leaves))
+
+  @property
+  def restart_partition_size(self) -> int:
+    return 0 if self._restart_partition_snapshot is None else len(self._restart_partition_snapshot)
+
+  def configure_restart_partition(self, target_leaves: int) -> None:
+    """Retain the first complete partition having at least target_leaves."""
+    target_leaves = int(target_leaves)
+    if target_leaves < 1:
+      raise ValueError("Restart-partition target must be positive")
+    self.restart_partition_target = target_leaves
+    self._restart_partition_snapshot = None
+    self._capture_restart_partition_if_ready()
+
+  def _capture_restart_partition_if_ready(self) -> bool:
+    if (self._restart_partition_snapshot is not None or
+        self.restart_partition_target is None or
+        len(self.leaves) < self.restart_partition_target):
+      return False
+    self._restart_partition_snapshot = self._clone_current_partition()
+    return True
+
+  def finalize_restart_partition(self) -> None:
+    """Use the final partition if the target was never reached."""
+    if self._restart_partition_snapshot is None:
+      self._restart_partition_snapshot = self._clone_current_partition()
+
   # ------------------------------------------------------------------------
   # Construction and indexing
   # ------------------------------------------------------------------------
@@ -211,6 +257,8 @@ class AsyncLeafPartition:
     self.accepted_parent_tasks = 0
     self.stale_results = 0
 
+    self._reset_restart_partition_snapshot()
+    
     root = root.clone()
     root.parent_id = None
     root.depth = 0
@@ -514,6 +562,7 @@ class AsyncLeafPartition:
       self.incumbent_leaf_id = replacement_incumbent_leaf_id
 
     self.accepted_parent_tasks += 1
+    self._capture_restart_partition_if_ready()
     if self.debug_checks:
       self.assert_invariants()
     return tuple(children), incumbent_changed
@@ -534,6 +583,7 @@ class AsyncLeafPartition:
     if not old_leaves:
       raise ValueError("Warm-start partition is empty")
 
+    self._reset_restart_partition_snapshot()
     # A fresh BnBAlgorithm object is normally constructed at every BO
     # iteration.  Derive the new generation from the retained records rather
     # than from this new store's zero-valued counter; otherwise two successive
@@ -618,8 +668,15 @@ class AsyncLeafPartition:
     if self.debug_checks:
       self.assert_invariants()
 
+  def export_full_partition(self) -> List[BnBNode]:
+    """Return the current working partition, including all final refinements."""
+    return list(self._clone_current_partition())
+
   def export_partition(self) -> List[BnBNode]:
-    return [self.leaves[node_id].clone() for node_id in sorted(self.leaves)]
+    """Return the retained warm-start partition, or the current one as fallback."""
+    if self._restart_partition_snapshot is None:
+      return self.export_full_partition()
+    return [leaf.clone() for leaf in self._restart_partition_snapshot]
 
   def ready_nodes(self) -> List[BnBNode]:
     return [leaf for leaf in self.leaves.values() if leaf.state == LeafState.READY]
@@ -843,6 +900,11 @@ def run_async_search(
 
   log = algorithm.log
 
+  store.configure_restart_partition(algorithm.restart_partition_size)
+  if algorithm.restart:
+    log.info("BnB warmstart partition target size: %d leaves for %d workers",
+             algorithm.restart_partition_size, num_workers)
+  
   inflight_limit = max(1, int(math.ceil(algorithm.inflight_factor * num_workers)))
   poll_interval = max(0.0, float(algorithm.poll_interval))
 
@@ -1034,7 +1096,6 @@ def run_async_search(
 
     #print(f"[0]Nodes in READY {len(store.ready_nodes())}  in INFLIGHT {len(store.inflight)}  leaves in partition {len(store.leaves)}")
 
-    
     algorithm.LUB = store.incumbent_value
     algorithm.LLB = store.global_lower_bound()
     algorithm.best_node = store.incumbent_leaf()
@@ -1122,6 +1183,11 @@ def run_async_search(
           "parents %r" % missing
       )
 
+  # If the search stopped before reaching the requested size of the restart partition, retain the final one
+  store.finalize_restart_partition()
+  if algorithm.restart:
+    log.info("BnB retained %d leaves for warmstart (target=%d)", store.restart_partition_size, algorithm.restart_partition_size)
+    
   algorithm.LUB = store.incumbent_value
   algorithm.LLB = store.global_lower_bound()
 
