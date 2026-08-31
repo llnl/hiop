@@ -311,6 +311,117 @@ def compute_sigma_ir_bounds(l, u, theta, x_scale, x_i, x_r, kernel_spec, p=2.0):
   
   return sigma_ir_min, sigma_ir_max
 
+def add_ratio_informed_product_constraints(cons, ki, kr, dirL, dirU, sirL, sirU):
+  """
+    Add linear ratio and ratio-informed product constraints.
+  
+    Bounds:
+        dirL <= lambda_i - lambda_r <= dirU,
+        sirL <= lambda_i + lambda_r <= sirU.
+  
+    Assumes normalized kernels:
+        0 <= ki <= 1,  0 <= kr <= 1.
+  
+    This function calls the existing add_ratio_constraints() and
+    add_product_constraints(), then adds
+        exp(-dm/2) ki + exp(dm/2) kr <= 2 exp(sirU/2) cosh(dw/2),
+    where
+        dm = (dirL + dirU)/2, dw = (dirU - dirL)/2,
+
+    and the lower-product tangent rows
+        exp(-d0/2) ki + exp(d0/2) kr >= 2 exp(sirL/2),
+    for d0 in {dirL, dm, dirU}.
+  """
+  dirL, dirU = float(dirL), float(dirU)
+  sirL, sirU = float(sirL), float(sirU)
+
+  values = np.asarray([dirL, dirU, sirL, sirU])
+  if not np.all(np.isfinite(values)):
+    raise ValueError("Finite log-ratio and log-product bounds are required")
+  
+  if dirL > dirU:
+    raise ValueError(f"Invalid log-ratio interval [{dirL}, {dirU}]")
+  if sirL > sirU:
+    raise ValueError(f"Invalid log-product interval [{sirL}, {sirU}]")
+  if sirL > 0.0:
+    raise ValueError("Normalized kernels require lambda_i + lambda_r <= 0")
+
+  # The universal bound ki*kr <= 1 gives sirU <= 0.
+  sirU = min(sirU, 0.0)
+  dm = 0.5 * dirL + 0.5 * dirU
+  dw = 0.5 * (dirU - dirL)
+
+  def normalized_coefficients(d0):
+    """
+    Return exp(-d0/2) and exp(d0/2), divided by
+    exp(abs(d0)/2). Thus the largest coefficient is one.
+    """
+    small = float(np.exp(-abs(d0)))
+    if d0 >= 0.0:
+      return small, 1.0
+    return 1.0, small
+
+  # --------------------------------------------------------------
+  # Centered ratio-informed upper-product row.
+  #
+  # Before scaling:
+  #   exp(-dm/2) ki + exp(dm/2) kr
+  #       <= 2 exp(sirU/2) cosh(dw/2).
+  #
+  # Divide through by exp(abs(dm)/2).
+  # --------------------------------------------------------------
+  coef_i, coef_r = normalized_coefficients(dm)
+  
+  # Stable evaluation of
+  #
+  # log(2 exp(sirU/2) cosh(dw/2) / exp(abs(dm)/2)).
+  log_upper_rhs = 0.5 * sirU + np.logaddexp(0.5 * dw, -0.5 * dw) - 0.5 * abs(dm)
+  
+  # With ki,kr <= 1, the maximum scaled left-hand side is
+  # coef_i + coef_r. Omit a provably redundant row.
+  if log_upper_rhs < np.log(coef_i + coef_r):
+    upper_rhs = float(np.exp(log_upper_rhs))
+
+    # If the positive RHS underflows, omitting the row preserves
+    # the outer-relaxation property.
+    if upper_rhs > 0.0:
+      # For an upper inequality, round coefficients downward
+      # and the right-hand side upward.
+      coef_i_upper = float(np.nextafter(coef_i, 0.0)) if coef_i > 0.0 else 0.0
+      coef_r_upper = float(np.nextafter(coef_r, 0.0)) if coef_r > 0.0 else 0.0
+      upper_rhs = float(np.nextafter(upper_rhs, np.inf))
+
+      cons.append(coef_i_upper * ki + coef_r_upper * kr <= upper_rhs)
+
+  # --------------------------------------------------------------
+  # Lower-product tangent rows.
+  #
+  # Before scaling:
+  #   exp(-d0/2) ki + exp(d0/2) kr
+  #       >= 2 exp(sirL/2).
+  #
+  # Divide through by exp(abs(d0)/2).
+  # --------------------------------------------------------------
+  tangent_points = np.unique(np.asarray([dirL, dm, dirU], dtype=float))
+
+  for d0 in tangent_points:
+    coef_i, coef_r = normalized_coefficients(d0)
+
+    log_lower_rhs = (np.log(2.0) + 0.5 * sirL - 0.5 * abs(d0))
+    lower_rhs = float(np.exp(log_lower_rhs))
+
+    # If the RHS underflows, the row has numerically reduced to
+    # a nonnegativity constraint.
+    if lower_rhs == 0.0:
+      continue
+
+    # For a lower inequality, round coefficients upward and the
+    # right-hand side downward.
+    coef_i_lower = float(np.nextafter(coef_i, np.inf))
+    coef_r_lower = float(np.nextafter(coef_r, np.inf))
+    lower_rhs = float(np.nextafter(lower_rhs, 0.0))
+
+    cons.append(coef_i_lower * ki + coef_r_lower * kr >= lower_rhs)
 
 def add_product_constraints(cons, ki, kr, sir_min, sir_max):
     """
@@ -1487,7 +1598,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
     ##print("pairs     :" + " ".join(f"({i:2d},{j:2d},{val:12.5e})" for val, i, j in self.pairs_dist))
     self.pairs_dist.sort(key=lambda entry: entry[0])
     ##print("pairs sort:" + " ".join(f"({i:2d},{j:2d},{val:12.5e})" for val, i, j in self.pairs_dist))
-    self.c0 = 2
+    self.c0 = 10
     npairs = min(self.c0 * ntrain, len(self.pairs_dist))
     ##print("pairs slct:" + " ".join(f"({i:2d},{j:2d},{val:12.5e})" for val, i, j in self.pairs_dist[:npairs]))
     self.nearest_neighbor_pairs = np.asarray([(i, r) for _, i, r in self.pairs_dist[:npairs]], dtype=np.int64).reshape(-1, 2)
@@ -1784,7 +1895,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
         #print("triplets Ai+Aj:\n" + " ".join(f"({int(i):2d},{int(j):2d},{val:12.5e})" for i, j, val in pair_selection_triplets))
 
         # now find c1 * p pairs
-        c1 = 1
+        c1 = 5
         ndownselect_pairs = min(len(self.nearest_neighbor_pairs), c1 * ntrain)
 
         #print("triplets Ai+Aj: downselect\n" + " ".join(f"({int(i):2d},{int(j):2d},{val:12.5e})" for i, j, val in pair_selection_triplets[:ndownselect_pairs]))
@@ -1816,11 +1927,13 @@ class BnBAlgorithm(BnBAlgorithmBase):
           #                                kr_min=kL[r_idx], kr_max=kU[r_idx], name=f"{i_idx}_{r_idx}")
           add_ratio_constraints(cons, kvec[i_idx], kvec[r_idx], lir_min, lir_max)
           
-          sir_min, sir_max = compute_sigma_ir_bounds(l=l, u=u, theta=th, x_scale=self.X_scale, x_i=self.x[i_idx], x_r=self.x[r_idx],
-                                                     kernel_spec=self.kernel_spec, p=getattr(self, "p", 2.0))
+          #sir_min, sir_max = compute_sigma_ir_bounds(l=l, u=u, theta=th, x_scale=self.X_scale, x_i=self.x[i_idx], x_r=self.x[r_idx],
+          #                                           kernel_spec=self.kernel_spec, p=getattr(self, "p", 2.0))
+          #add_ratio_informed_product_constraints(cons=cons, ki=kvec[i_idx], kr=kvec[r_idx], dirL=lir_min, dirU=lir_max, sirL=sir_min, sirU=sir_max)
+
           #add_mccormick_sum_product_constraints(cons, kvec[i_idx], kvec[r_idx], lamvar[i_idx], lamvar[r_idx], kL[i_idx], kU[i_idx],
           #                                      kL[r_idx], kU[r_idx], sir_min, sir_max)
-          add_product_constraints(cons, kvec[i_idx], kvec[r_idx], sir_min, sir_max)
+          #add_product_constraints(cons, kvec[i_idx], kvec[r_idx], sir_min, sir_max)
     
     opt_tol = 1.e-8
     opt_rel_tol = 1.e-8
@@ -2607,7 +2720,7 @@ class branching_wrapper:
         args = np.argsort(pair_selection_triplets[:,-1])[::-1]
         pair_selection_triplets[:,:] = pair_selection_triplets[args,:]
         # now find c1 * p pairs
-        c1 = 2
+        c1 = 5
         ndownselect_pairs = min(len(self.nearest_neighbor_pairs), c1 * ntrain)
         for pair in pair_selection_triplets[:ndownselect_pairs]:
           i_idx = int(pair[0])
@@ -2636,11 +2749,12 @@ class branching_wrapper:
           #                                ki_max=kU[i_idx], kr_min=kL[r_idx], kr_max=kU[r_idx], name=f"{i_idx}_{r_idx}")
           add_ratio_constraints(cons, kvec[i_idx], kvec[r_idx], lir_min, lir_max)
           
-          sir_min, sir_max = compute_sigma_ir_bounds(l=l, u=u, theta=th, x_scale=self.X_scale, x_i=self.x[i_idx], x_r=self.x[r_idx],
-                                                     kernel_spec=self.kernel_spec, p=getattr(self, "p", 2.0))
+          #sir_min, sir_max = compute_sigma_ir_bounds(l=l, u=u, theta=th, x_scale=self.X_scale, x_i=self.x[i_idx], x_r=self.x[r_idx],
+          #                                           kernel_spec=self.kernel_spec, p=getattr(self, "p", 2.0))
+          #add_ratio_informed_product_constraints(cons=cons, ki=kvec[i_idx], kr=kvec[r_idx], dirL=lir_min, dirU=lir_max, sirL=sir_min, sirU=sir_max)
           #add_mccormick_sum_product_constraints(cons, kvec[i_idx], kvec[r_idx], lamvar[i_idx], lamvar[r_idx], kL[i_idx], kU[i_idx],
           #                                      kL[r_idx], kU[r_idx], sir_min, sir_max)
-          add_product_constraints(cons, kvec[i_idx], kvec[r_idx], sir_min, sir_max)
+          #add_product_constraints(cons, kvec[i_idx], kvec[r_idx], sir_min, sir_max)
           
     opt_tol = 1.e-8
     opt_rel_tol = 1.e-8
