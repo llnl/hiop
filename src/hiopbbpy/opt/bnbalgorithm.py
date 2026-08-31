@@ -116,18 +116,18 @@ def minmax_expsec_branch(l, u, bnb, weights=None):
   lc,uc = (l-off)/scale,(u-off)/scale
   X = np.asarray(bnb.Xc,float).reshape(-1,n)
   th = np.broadcast_to(np.asarray(bnb.theta,float).ravel(),(n,))
-  spec=bnb.kernel_spec
+  spec = bnb.kernel_spec
   if spec not in ("pow_exp","matern32","matern52"):
     raise ValueError(f"Unsupported kernel {spec}")
   def q(d,j):
     if spec=="pow_exp": return -th[j]*d**bnb.p
-    t=np.sqrt(3. if spec=="matern32" else 5.)*th[j]*d
+    t = np.sqrt(3. if spec=="matern32" else 5.)*th[j]*d
     return np.log1p(t if spec=="matern32" else t+t*t/3.)-t
   def gap(a,b):
     d = np.maximum(b-a,0.);
     h = np.divide(-np.expm1(-d),d,out=np.ones_like(d),where=d>1.e-4)
     return np.where(d>1.e-4,np.exp(b)*(1.-h+h*np.log(h)),np.exp((a+b)/2.)*d*d/8.)
-  dn = np.maximum(0.,np.maximum(lc-X,X-uc));
+  dn = np.maximum(0.,np.maximum(lc-X,X-uc))
   df = np.maximum(abs(lc-X),abs(uc-X))
   L = np.column_stack([q(df[:,j],j) for j in range(n)])
   U = np.column_stack([q(dn[:,j],j) for j in range(n)])
@@ -143,12 +143,12 @@ def minmax_expsec_branch(l, u, bnb, weights=None):
     z = (m-off[j])/scale[j]
     scores = []
     for a,b in ((lc[j],z),(z,uc[j])):
-      dn=np.maximum(0.,np.maximum(a-X[:,j],X[:,j]-b))
-      df=np.maximum(abs(a-X[:,j]),abs(b-X[:,j]))
+      dn = np.maximum(0.,np.maximum(a-X[:,j],X[:,j]-b))
+      df = np.maximum(abs(a-X[:,j]),abs(b-X[:,j]))
       scores.append(w@gap(la-L[:,j]+q(df,j), lb-U[:,j]+q(dn,j)))
-    l1,u1,l2,u2 = l.copy(),u.copy(),l.copy(),u.copy();
-    u1[j]=m;
-    l2[j]=m
+    l1,u1,l2,u2 = l.copy(),u.copy(),l.copy(),u.copy()
+    u1[j] = m
+    l2[j] = m
     candidates.append((max(scores),-(uc[j]-lc[j]),j,[(l1,u1),(l2,u2)]))
   return min(candidates,key=lambda x:x[:3])[3] if candidates else []
 
@@ -195,6 +195,171 @@ def lcb_gradient_at_single_reference(owner, x_ref, sigma_floor=None):
     raise RuntimeError("Nonfinite LCB kernel gradient")
   return grad_lcb_k, k_ref, sigma_ref, grad_mean_k, grad_variance_lcb_k
 
+def compute_sigma_ir_bounds(l, u, theta, x_scale, x_i, x_r, kernel_spec, p=2.0):
+  """
+    Compute outward-rounded bounds
+  
+        sigma_ir_min <= lambda_i(x) + lambda_r(x) <= sigma_ir_max
+
+    over x in [l, u].
+
+    For every supported kernel, the coordinate function
+
+        phi_ij(t) + phi_rj(t)
+
+    is concave and symmetric about (x_i[j] + x_r[j]) / 2. Hence:
+
+      * its minimum over [l_j, u_j] occurs at an endpoint;
+      * its maximum occurs at the projected midpoint.
+
+    Parameters are in the same convention as bnbalgorithm.py:
+    l, u, x_i, and x_r are in original coordinates, while x_scale
+    converts distances to SMT's normalized coordinates.
+
+    Supported kernel_spec values
+    ----------------------------
+    "pow_exp"   with p in {1, 2}
+    "squar_exp"
+    "abs_exp"
+    "matern12"
+    "matern32"
+    "matern52"
+
+    Returns
+    -------
+    sigma_ir_min, sigma_ir_max : float
+        Bounds denoted by underline{Sigma}_{ir} and
+        overline{Sigma}_{ir} in the manuscript.
+  """
+  l = np.asarray(l, dtype=float).ravel()
+  u = np.asarray(u, dtype=float).ravel()
+  theta = np.asarray(theta, dtype=float).ravel()
+  x_scale = np.asarray(x_scale, dtype=float).ravel()
+  x_i = np.asarray(x_i, dtype=float).ravel()
+  x_r = np.asarray(x_r, dtype=float).ravel()
+  
+  arrays = (u, theta, x_scale, x_i, x_r)
+  if any(a.shape != l.shape for a in arrays):
+    raise ValueError("l, u, theta, x_scale, x_i, and x_r must have the same shape")
+  
+  if not all(np.all(np.isfinite(a)) for a in (l,) + arrays):
+    raise ValueError("Nonfinite data in log-kernel-sum bound computation")
+  
+  if np.any(l > u):
+    raise ValueError("Invalid box: some l_j > u_j")
+  
+  if np.any(theta < 0.0):
+    raise ValueError("Kernel parameters theta must be nonnegative")
+  
+  if np.any(x_scale <= 0.0):
+    raise ValueError("Every normalization scale must be positive")
+  
+  # Accept either self.kernel_spec or the original SMT corr name.
+  spec = str(kernel_spec).lower()
+  
+  if spec == "squar_exp":
+    spec = "pow_exp"
+    p = 2.0
+  elif spec in ("abs_exp", "matern12"):
+    spec = "pow_exp"
+    p = 1.0
+  if spec == "pow_exp":
+    p = float(p)
+    if p not in (1.0, 2.0):
+      raise ValueError("pow_exp is supported here only for p in {1, 2}")
+  elif spec not in ("matern32", "matern52"):
+    raise ValueError(f"Unsupported kernel specification '{kernel_spec}'")
+
+  def phi_component(t, center):
+    """Return the vector (phi_{nu,ij}(t_j))_j."""
+    distance = np.abs((t - center) / x_scale)
+    
+    if spec == "pow_exp":
+      return -theta * distance**p
+
+    if spec == "matern32":
+      z = np.sqrt(3.0) * theta * distance
+      return np.log1p(z) - z
+    
+    # Matérn-5/2:
+    # log(1 + z + z^2/3) - z,
+    # where z = sqrt(5) theta_j |t - center| / x_scale_j.
+    z = np.sqrt(5.0) * theta * distance
+    return np.log1p(z + z*z / 3.0) - z
+  
+  # A concave one-dimensional function attains its minimum over an
+  # interval at one of the two endpoints.
+  sum_at_l = phi_component(l, x_i) + phi_component(l, x_r)
+  sum_at_u = phi_component(u, x_i) + phi_component(u, x_r)
+  
+  sigma_ir_min = float(np.sum(np.minimum(sum_at_l, sum_at_u)))
+  
+  # The maximum is attained at the midpoint of the two centers,
+  # projected onto the coordinate interval.
+  projected_midpoint = np.clip(0.5 * (x_i + x_r), l, u)
+  
+  sigma_ir_max = float(np.sum(phi_component(projected_midpoint, x_i) +
+                              phi_component(projected_midpoint, x_r)))
+  
+  # Slight outward rounding protects validity against accumulated
+  # floating-point error. Log correlations are always nonpositive.
+  magnitude = max(1.0, abs(sigma_ir_min), abs(sigma_ir_max))
+  roundoff = 32.0 * np.finfo(float).eps * max(1, l.size) * magnitude
+  
+  sigma_ir_min -= roundoff
+  sigma_ir_max = min(0.0, sigma_ir_max + roundoff)
+  
+  return sigma_ir_min, sigma_ir_max
+
+
+def add_product_constraints(cons, ki, kr, sir_min, sir_max):
+    """
+    Add product cuts
+        2 exp(sir_min / 2) <= ki + kr <= 1 + exp(sir_max).
+
+    Here sir_min and sir_max are valid bounds on
+        lambda_i + lambda_r = log(ki * kr).
+
+    This function assumes normalized correlations:
+        0 <= ki <= 1,  0 <= kr <= 1.
+
+    """
+    sir_min = float(sir_min)
+    sir_max = float(sir_max)
+
+    if not np.all(np.isfinite([sir_min, sir_max])):
+      raise ValueError("Finite bounds on lambda_i + lambda_r are required")
+
+    if sir_min > sir_max:
+      raise ValueError(f"Invalid log-product interval [{sir_min}, {sir_max}]")
+
+    if sir_min > 0.0:
+      raise ValueError("A normalized kernel must have lambda_i + lambda_r <= 0")
+
+    # The universal normalized-kernel bound provides Sigma_ir <= 0.
+    sir_max = min(sir_max, 0.0)
+
+    # If either exponential underflows, its corresponding constraint is omitted rather
+    # than replacing a positive exact quantity by zero.
+
+    
+    # Lower row:
+    #     ki + kr >= 2 sqrt(ki*kr)
+    #             >= 2 exp(sir_min/2).
+    exp_half_min = float(np.exp(0.5 * sir_min))
+    if exp_half_min > 0.0:
+      lower_rhs = float(np.nextafter(2.0 * exp_half_min, 0.0))
+      cons.append(ki + kr >= lower_rhs)
+
+    # Upper row:
+    #     ki + kr <= 1 + ki*kr
+    #             <= 1 + exp(sir_max).
+    product_upper = float(np.exp(sir_max))
+    if product_upper > 0.0:
+      upper_rhs = float(np.nextafter(1.0 + product_upper, np.inf))
+      cons.append(ki + kr <= upper_rhs)
+
+    
 def add_ratio_constraints(cons, ki, kr, lir_min, lir_max):
     """
     Add:
@@ -1647,15 +1812,15 @@ class BnBAlgorithm(BnBAlgorithmBase):
               lir_max += lijr_max
 
           #add_mccormick_ratio_constraints(cons=cons, ki=kvec[i_idx], kr=kvec[r_idx], lam_i=lamvar[i_idx], lam_r=lamvar[r_idx],
-          #                                lir_min=lir_min, lir_max=lir_max, ki_min=kL[i_idx], ki_max=kU[i_idx], kr_min=kL[r_idx], kr_max=kU[r_idx], name=f"{i_idx}_{r_idx}")
-          # Safe, inexpensive bounds. For SE these can later be replaced by the
-          # tighter midpoint-based pair-sum bounds.
-          sir_min = lamL[i_idx] + lamL[r_idx]
-          sir_max = lamU[i_idx] + lamU[r_idx]
-
+          #                                lir_min=lir_min, lir_max=lir_max, ki_min=kL[i_idx], ki_max=kU[i_idx],
+          #                                kr_min=kL[r_idx], kr_max=kU[r_idx], name=f"{i_idx}_{r_idx}")
+          add_ratio_constraints(cons, kvec[i_idx], kvec[r_idx], lir_min, lir_max)
+          
+          #sir_min, sir_max = compute_sigma_ir_bounds(l=l, u=u, theta=th, x_scale=self.X_scale, x_i=self.x[i_idx], x_r=self.x[r_idx],
+          #                                           kernel_spec=self.kernel_spec, p=getattr(self, "p", 2.0))
           #add_mccormick_sum_product_constraints(cons, kvec[i_idx], kvec[r_idx], lamvar[i_idx], lamvar[r_idx], kL[i_idx], kU[i_idx],
           #                                      kL[r_idx], kU[r_idx], sir_min, sir_max)
-          add_ratio_constraints(cons, kvec[i_idx], kvec[r_idx], lir_min, lir_max)
+          #add_product_constraints(cons, kvec[i_idx], kvec[r_idx], sir_min, sir_max)
     
     opt_tol = 1.e-8
     opt_rel_tol = 1.e-8
@@ -2467,13 +2632,15 @@ class branching_wrapper:
               lir_max += lijr_max
 
           #add_mccormick_ratio_constraints(cons=cons, ki=kvec[i_idx], kr=kvec[r_idx], lam_i=lamvar[i_idx], lam_r=lamvar[r_idx],
-          #                                lir_min=lir_min, lir_max=lir_max, ki_min=kL[i_idx], ki_max=kU[i_idx], kr_min=kL[r_idx], kr_max=kU[r_idx], name=f"{i_idx}_{r_idx}")
-          sir_min = lamL[i_idx] + lamL[r_idx]
-          sir_max = lamU[i_idx] + lamU[r_idx]
-          #add_mccormick_sum_product_constraints(cons, kvec[i_idx], kvec[r_idx], lamvar[i_idx], lamvar[r_idx], kL[i_idx], kU[i_idx],
-          #                                     kL[r_idx], kU[r_idx], sir_min, sir_max)
-
+          #                                lir_min=lir_min, lir_max=lir_max, ki_min=kL[i_idx],
+          #                                ki_max=kU[i_idx], kr_min=kL[r_idx], kr_max=kU[r_idx], name=f"{i_idx}_{r_idx}")
           add_ratio_constraints(cons, kvec[i_idx], kvec[r_idx], lir_min, lir_max)
+          
+          #sir_min, sir_max = compute_sigma_ir_bounds(l=l, u=u, theta=th, x_scale=self.X_scale, x_i=self.x[i_idx], x_r=self.x[r_idx],
+          #                                           kernel_spec=self.kernel_spec, p=getattr(self, "p", 2.0))
+          #add_mccormick_sum_product_constraints(cons, kvec[i_idx], kvec[r_idx], lamvar[i_idx], lamvar[r_idx], kL[i_idx], kU[i_idx],
+          #                                      kL[r_idx], kU[r_idx], sir_min, sir_max)
+          #add_product_constraints(cons, kvec[i_idx], kvec[r_idx], sir_min, sir_max)
           
     opt_tol = 1.e-8
     opt_rel_tol = 1.e-8
