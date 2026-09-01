@@ -171,17 +171,17 @@ class AsyncLeafPartition:
     # store next-iteration restart partition snapshot
     #
     # number of nodes in the partition
-    self.restart_partition_target: Optional[int] = None
+    self.restart_partition_target_size: Optional[int] = None
     # the partition
     self._restart_partition_snapshot: Optional[Tuple[BnBNode, ...]] = None
 
 
   # ------------------------------------------------------------------------
   # Restart partition (for next iteration) is stored as soon as it reaches
-  # restart_partition_target nodes (a multiple of the number of workers)
+  # restart_partition_target_size number nodes (a multiple of the number of workers)
   # ------------------------------------------------------------------------
   def _reset_restart_partition_snapshot(self) -> None:
-    self.restart_partition_target = None
+    self.restart_partition_target_size = None
     self._restart_partition_snapshot = None
 
   def _clone_current_partition(self) -> Tuple[BnBNode, ...]:
@@ -196,14 +196,14 @@ class AsyncLeafPartition:
     target_leaves = int(target_leaves)
     if target_leaves < 1:
       raise ValueError("Restart-partition target must be positive")
-    self.restart_partition_target = target_leaves
+    self.restart_partition_target_size = target_leaves
     self._restart_partition_snapshot = None
     self._capture_restart_partition_if_ready()
 
   def _capture_restart_partition_if_ready(self) -> bool:
     if (self._restart_partition_snapshot is not None or
-        self.restart_partition_target is None or
-        len(self.leaves) < self.restart_partition_target):
+        self.restart_partition_target_size is None or
+        len(self.leaves) < self.restart_partition_target_size):
       return False
     self._restart_partition_snapshot = self._clone_current_partition()
     return True
@@ -504,14 +504,14 @@ class AsyncLeafPartition:
     """
     if result.generation != self.generation:
       self.stale_results += 1
-      return tuple()
+      return tuple(), False
 
     parent_id = int(result.parent_id)
     record = self.inflight.get(parent_id)
     parent = self.leaves.get(parent_id)
     if record is None or parent is None or parent.state != LeafState.INFLIGHT:
       self.stale_results += 1
-      return tuple()
+      return tuple(), False
 
     if result.error is not None:
       self.rollback_dispatch(parent_id, result.error)
@@ -614,16 +614,10 @@ class AsyncLeafPartition:
       leaf.generation = self.generation
       leaf.state = LeafState.READY
       leaf.close_reason = None
-#      leaf.aq_L = float(transfer_lower_bound(old_leaf))
-
-#      point = leaf.aq_U_x
-#      if point is None or not self._contains(leaf, point):
-#        point = leaf.midpoint
-#      leaf.aq_U_x = np.asarray(point, dtype=float).reshape(-1).copy()
-#      leaf.aq_U = float(evaluate_upper_point(leaf.aq_U_x))
-#      if math.isnan(leaf.aq_U):
-#        raise ValueError("Reevaluated upper bound is NaN")
-
+      leaf.metadata.pop("task_attempt", None)
+      leaf.metadata.pop("task_errors", None)
+      leaf.metadata.pop("diagnostics", None)
+      
       if refresh_results is None:
         leaf.aq_L = float(transfer_lower_bound(old_leaf))
         if math.isnan(leaf.aq_L):
@@ -841,22 +835,19 @@ def initialize_async_search(
         point = legacy_node.aq_U_x
         if point is None:
           point = legacy_node.midpoint
-        value = float(
-            np.asarray(algorithm.acqf.evaluate(np.atleast_2d(point))).reshape(-1)[0]
-        )
+        value = float(np.asarray(algorithm.acqf.evaluate(np.atleast_2d(point))).reshape(-1)[0])
         if value < store.incumbent_value:
           store.incumbent_value = value
           store.incumbent_x = np.asarray(point, dtype=float).copy()
           store.incumbent_leaf_id = store.incumbent_leaf().node_id
       store._reclassify_ready_after_incumbent_update()
   else:
+    assert algorithm.restart == True, "restart flag is set incorrectly"
     old_partition = list(partition)
 
     refresh_results = None
     if restart_worker is not None:
       refresh_results = _parallel_restart_results(algorithm, old_partition, restart_worker)
-    else:
-      print("!!!!!!!!!!!restart_worker is none")
     # serial fallback when restart_worker is None
     if transfer_lower_bound is None:
       # Correct fallback: recompute every lower bound.  The Section-3.5 transfer
@@ -900,8 +891,8 @@ def run_async_search(
 
   log = algorithm.log
 
-  store.configure_restart_partition(algorithm.restart_partition_size)
   if algorithm.restart:
+    store.configure_restart_partition(algorithm.restart_partition_size)
     log.info("BnB warmstart partition target size: %d leaves for %d workers",
              algorithm.restart_partition_size, num_workers)
   
@@ -1184,9 +1175,10 @@ def run_async_search(
       )
 
   # If the search stopped before reaching the requested size of the restart partition, retain the final one
-  store.finalize_restart_partition()
   if algorithm.restart:
-    log.info("BnB retained %d leaves for warmstart (target=%d)", store.restart_partition_size, algorithm.restart_partition_size)
+    store.finalize_restart_partition()
+    log.info("BnB retained %d leaves for warmstart (target=%d)",
+             store.restart_partition_target_size, algorithm.restart_partition_size)
     
   algorithm.LUB = store.incumbent_value
   algorithm.LLB = store.global_lower_bound()
