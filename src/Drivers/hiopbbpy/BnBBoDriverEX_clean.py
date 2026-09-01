@@ -4,7 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from hiopbbpy.problems import Problem, BraninProblem
-from hiopbbpy.surrogate_modeling import smtKRG 
+from hiopbbpy.surrogate_modeling import smtKRG
 from hiopbbpy.opt import BnBAlgorithm, BOAlgorithm, LCBacquisition, EIacquisition
 from hiopbbpy.utils import MPIEvaluator
 import argparse

@@ -12,6 +12,7 @@ from scipy.optimize import minimize
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 from ..surrogate_modeling.gp import GaussianProcess
+from ..surrogate_modeling.krg import smt_theta_bounds
 from .acquisition import LCBacquisition, EIacquisition
 from ..problems.problem import Problem
 from ..utils.util import Evaluator, Logger
@@ -427,16 +428,27 @@ class BOAlgorithm(BOAlgorithmBase):
     self.logger.info(f"Logger level: {logger_level}")
 
   # Method to train the GP model
-  def _train_surrogate(self, x_train, y_train):
-    self.logger.debug("Training surrogate model with "
-                      f"{x_train.shape[0]} samples...")
-    self.gpsurrogate.train(x_train, y_train)
+  def _train_surrogate(self, x_train, y_train, *, full_retrain):    
+    self.logger.debug(f"Training surrogate model with {x_train.shape[0]} samples...")
+    theta_bounds = None
+
+    if full_retrain:
+      sm = self.gpsurrogate.surrogatesmt
+      corr = sm.options["corr"]
+      power = float(sm.options["pow_exp_power"])
+
+      theta_bounds = smt_theta_bounds(S=x_train.shape[0], N=x_train.shape[1], corr=corr, pow_exp_power=power)
+      self.logger.info(f"Full GP retrain: S={x_train.shape[0]}, theta_bounds={theta_bounds}")
+    else:
+      self.logger.debug("Fixed-theta GP refit")
+
+    self.gpsurrogate.train(x_train, y_train, optimize_theta=full_retrain, theta_bounds=theta_bounds)    
     self.logger.debug("Surrogate training complete.")
 
   # Method to find the best next sampling point via optimizing the acquisition function
   def _find_best_point(self, x_train, y_train, x0 = None, BOit=0):
     self.logger.info(f"Start finding the best sampling point:")
-    self._train_surrogate(x_train, y_train)
+
     if self.acquisition_type == "LCB":
       acqf = LCBacquisition(self.gpsurrogate, beta=self.LCB_beta)
     elif self.acquisition_type == "EI":
@@ -526,8 +538,10 @@ class BOAlgorithm(BOAlgorithmBase):
   def optimize(self):
     x_train = self.xtrain
     y_train = self.ytrain
-    self.logger.iterations(f"Best UNCONSTRAINED objective from {np.size(x_train, 0)} initial samples: {np.min(y_train):.4e} ")
+    self.logger.iterations(f"Best objective from {np.size(x_train, 0)} initial samples: {np.min(y_train):.4e} ")
 
+    self._train_surrogate(x_train, y_train, full_retrain=True)
+    
     # filter feasible points
     fea_idx = self.prob.if_feasible(x_train, y_train)
     y_fea = y_train[fea_idx]
@@ -552,10 +566,7 @@ class BOAlgorithm(BOAlgorithmBase):
       #
       bo_iteration_number = i + 1
 
-      sample_metrics = _sample_set_clustering_metrics(
-          self.gpsurrogate,
-          x_train,
-      )
+      sample_metrics = _sample_set_clustering_metrics(self.gpsurrogate, x_train)
 
       self.logger.scalars(
           f"Sample-set clustering at start of BO iteration "
@@ -605,7 +616,7 @@ class BOAlgorithm(BOAlgorithmBase):
 
             # Update training set with the virtual point
             y_train_virtual = np.vstack([y_train_virtual, y_virtual])
-            self.gpsurrogate.train(x_train, y_train_virtual)
+            self._train_surrogate(x_train, y_train_virtual, full_retrain=False)
 
           mean_val = self.gpsurrogate.mean(np.array([x_new])).item()
           sd_val = np.sqrt(self.gpsurrogate.variance(np.array([x_new])).item())
@@ -677,7 +688,10 @@ class BOAlgorithm(BOAlgorithmBase):
       y_new = self.obj_evaluator.run(self.prob.evaluate, x_train[-self.batch_size:])
       y_new = np.array(y_new)
       y_train = np.vstack([y_train, y_new])
-      self.gpsurrogate.train(x_train, y_train)
+
+      # Full theta optimization after each nretrainGP completed iterations.
+      full_retrain = (i + 1) % 3 == 0
+      self._train_surrogate(x_train, y_train, full_retrain=full_retrain)
 
       feas_new = self.prob.if_feasible(x_train[-self.batch_size:])
       self.logger.debug(f"Feasible samples: {np.sum(feas_new)}/{self.batch_size}")
