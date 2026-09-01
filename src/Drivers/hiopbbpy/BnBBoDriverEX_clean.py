@@ -244,6 +244,7 @@ if __name__ == "__main__":
   parser.add_argument("--bnbmaxtime", type=float, default=180., help="maximum time for bnb opt") 
   parser.add_argument("--bnb", action=argparse.BooleanOptionalAction, type=bool, default=True, help="BnB or multistart")
   parser.add_argument("--nsamples", type=int, default=6, help="number of initial samples")
+  parser.add_argument("--nretraingp", type=int, default=1, help="number of BO iterations after which the GP is fully retrained")
   parser.add_argument("--seed", type=int, default=42, help="random seed")
   parser.add_argument("--problem", type=str, default="Periodic", help="black-box objective") 
   parser.add_argument("--make_plts", action=argparse.BooleanOptionalAction, type=bool, default=False, help="create plots or not")
@@ -345,9 +346,9 @@ if __name__ == "__main__":
   x_train = problem.sample(n_samples)
   y_train = problem.evaluate(x_train)
   
-  theta = 1.0  # hyperparameter for GP kernel
+  theta = 1.  # hyperparameter for GP kernel
   fix_theta = False
-  theta_bounds = [0.05, 1.5]
+  theta_bounds = [0.05, 5]
   pow_exp_power = 2.0 #1. or 2., only relevant for pow_exp kernel
   corr = "pow_exp" #"matern52" # "pow_exp", "matern32", "matern52"
   eval_noise = False
@@ -407,6 +408,7 @@ if __name__ == "__main__":
       'batch_size' : batch_size,
       'opt_solver' : 'SLSQP',
       'bnb_warmstart' : args.bnb_warmstart,
+      'nretraingp' : args.nretraingp,
   }
   if BnB:
     options['opt_solver'] = 'BnB'

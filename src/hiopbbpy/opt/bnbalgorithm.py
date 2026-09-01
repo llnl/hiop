@@ -755,7 +755,7 @@ class BnBAlgorithmBase:
     self.log = Logger()
 
     self.restart = False
-    self.restart_partition_size = False
+    self.restart_partition_size = 1
     self.diagnostics = False
     
   def sync_from_smt(self):
@@ -800,11 +800,9 @@ class BnBAlgorithmBase:
     self.Xc = (self.x - self.X_offset) / self.X_scale
     self._normalize = lambda x: (np.asarray(x, float) - self.X_offset) / self.X_scale
     
-    
     ell = 1.0 / np.sqrt(2.0 * self.theta)
-
     print("SMT theta =", theta, flush=True)
-    print("equivalent conventional ell =", ell, flush=True)
+    #print("equivalent conventional ell =", ell, flush=True)
     
     y_mean = getattr(sm, "y_mean", None)
     y_std  = getattr(sm, "y_std",  None)
@@ -1604,7 +1602,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
     ##print("pairs     :" + " ".join(f"({i:2d},{j:2d},{val:12.5e})" for val, i, j in self.pairs_dist))
     self.pairs_dist.sort(key=lambda entry: entry[0])
     ##print("pairs sort:" + " ".join(f"({i:2d},{j:2d},{val:12.5e})" for val, i, j in self.pairs_dist))
-    self.c0 = 10
+    self.c0 = 2
     npairs = min(self.c0 * ntrain, len(self.pairs_dist))
     ##print("pairs slct:" + " ".join(f"({i:2d},{j:2d},{val:12.5e})" for val, i, j in self.pairs_dist[:npairs]))
     self.nearest_neighbor_pairs = np.asarray([(i, r) for _, i, r in self.pairs_dist[:npairs]], dtype=np.int64).reshape(-1, 2)
@@ -1901,7 +1899,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
         #print("triplets Ai+Aj:\n" + " ".join(f"({int(i):2d},{int(j):2d},{val:12.5e})" for i, j, val in pair_selection_triplets))
 
         # now find c1 * p pairs
-        c1 = 5
+        c1 = 1
         ndownselect_pairs = min(len(self.nearest_neighbor_pairs), c1 * ntrain)
 
         #print("triplets Ai+Aj: downselect\n" + " ".join(f"({int(i):2d},{int(j):2d},{val:12.5e})" for i, j, val in pair_selection_triplets[:ndownselect_pairs]))
@@ -1947,11 +1945,11 @@ class BnBAlgorithm(BnBAlgorithmBase):
       verbose = False
       if i > 0:
         max_iters = 1000
+        verbose = True
       else:
         max_iters = 300
       if i == 2:
         opt_rel_tol = 1.e-4
-        verbose = True
       try:
         if mode == 0:
           prob = cp.Problem(cp.Minimize(self.obj2), cons)
@@ -2768,7 +2766,7 @@ class branching_wrapper:
       verbose = False
       if i > 0:
         max_iters = 1000
-        #verbose = True
+        verbose = True
       else:
         max_iters = 300
       if i == 2:

@@ -300,6 +300,7 @@ class BOAlgorithmBase:
     self.bo_maxiter = 20          # Maximum number of Bayesian optimization steps
     self.n_start = 10             # estimating acquisition global optima by determining local optima n_start times and then determining the discrete max of that set
     self.batch_size = 1           # batch size
+    self.nretraingp = 1           # number of BO iterations after which the GP is fully retrained
     # save some internal member train
     self.y_hist = None            # History of evaluations
     self.x_hist = None            # History of evaluations
@@ -362,6 +363,8 @@ class BOAlgorithm(BOAlgorithmBase):
     self.n_start = options.get('n_start', self.n_start)
     assert self.n_start > 0, f"Invalid n_start: {self.n_start}"
 
+    self.nretraingp = options.get('nretraingp', self.nretraingp)
+    
     acquisition_type = options.get('acquisition_type', "LCB")
     assert acquisition_type in ["LCB", "EI"], f"Invalid acquisition_type: {acquisition_type}"
 
@@ -690,7 +693,7 @@ class BOAlgorithm(BOAlgorithmBase):
       y_train = np.vstack([y_train, y_new])
 
       # Full theta optimization after each nretrainGP completed iterations.
-      full_retrain = (i + 1) % 3 == 0
+      full_retrain = (i + 1) % self.nretraingp == 0
       self._train_surrogate(x_train, y_train, full_retrain=full_retrain)
 
       feas_new = self.prob.if_feasible(x_train[-self.batch_size:])
