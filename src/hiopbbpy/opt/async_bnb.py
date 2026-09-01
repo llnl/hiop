@@ -107,6 +107,13 @@ class BranchResult:
   error: Optional[str] = None
   worker_metadata: Dict[str, Any] = field(default_factory=dict)
 
+@dataclass
+class RestartResult:
+  node_id: int
+  aq_L: float = math.nan
+  aq_U: float = math.nan
+  aq_U_x: Optional[np.ndarray] = None
+  error: Optional[str] = None
 
 @dataclass
 class InFlightRecord:
@@ -160,6 +167,52 @@ class AsyncLeafPartition:
     self.accepted_parent_tasks = 0
     self.stale_results = 0
 
+    #
+    # store next-iteration restart partition snapshot
+    #
+    # number of nodes in the partition
+    self.restart_partition_target_size: Optional[int] = None
+    # the partition
+    self._restart_partition_snapshot: Optional[Tuple[BnBNode, ...]] = None
+
+
+  # ------------------------------------------------------------------------
+  # Restart partition (for next iteration) is stored as soon as it reaches
+  # restart_partition_target_size number nodes (a multiple of the number of workers)
+  # ------------------------------------------------------------------------
+  def _reset_restart_partition_snapshot(self) -> None:
+    self.restart_partition_target_size = None
+    self._restart_partition_snapshot = None
+
+  def _clone_current_partition(self) -> Tuple[BnBNode, ...]:
+    return tuple(self.leaves[node_id].clone() for node_id in sorted(self.leaves))
+
+  @property
+  def restart_partition_size(self) -> int:
+    return 0 if self._restart_partition_snapshot is None else len(self._restart_partition_snapshot)
+
+  def configure_restart_partition(self, target_leaves: int) -> None:
+    """Retain the first complete partition having at least target_leaves."""
+    target_leaves = int(target_leaves)
+    if target_leaves < 1:
+      raise ValueError("Restart-partition target must be positive")
+    self.restart_partition_target_size = target_leaves
+    self._restart_partition_snapshot = None
+    self._capture_restart_partition_if_ready()
+
+  def _capture_restart_partition_if_ready(self) -> bool:
+    if (self._restart_partition_snapshot is not None or
+        self.restart_partition_target_size is None or
+        len(self.leaves) < self.restart_partition_target_size):
+      return False
+    self._restart_partition_snapshot = self._clone_current_partition()
+    return True
+
+  def finalize_restart_partition(self) -> None:
+    """Use the final partition if the target was never reached."""
+    if self._restart_partition_snapshot is None:
+      self._restart_partition_snapshot = self._clone_current_partition()
+
   # ------------------------------------------------------------------------
   # Construction and indexing
   # ------------------------------------------------------------------------
@@ -204,6 +257,8 @@ class AsyncLeafPartition:
     self.accepted_parent_tasks = 0
     self.stale_results = 0
 
+    self._reset_restart_partition_snapshot()
+    
     root = root.clone()
     root.parent_id = None
     root.depth = 0
@@ -274,9 +329,7 @@ class AsyncLeafPartition:
     return math.inf
 
   def optimality_tolerance(self, epsilon_abs: float, epsilon_rel: float, lower_bound: float) -> float:
-    return float(epsilon_abs) + float(epsilon_rel) * max(
-        1.0, abs(self.incumbent_value), abs(lower_bound)
-    )
+    return max(float(epsilon_abs), float(epsilon_rel) * max(1.0, abs(self.incumbent_value), abs(lower_bound)))
 
   def gap(self) -> float:
     return self.incumbent_value - self.global_lower_bound()
@@ -451,14 +504,14 @@ class AsyncLeafPartition:
     """
     if result.generation != self.generation:
       self.stale_results += 1
-      return tuple()
+      return tuple(), False
 
     parent_id = int(result.parent_id)
     record = self.inflight.get(parent_id)
     parent = self.leaves.get(parent_id)
     if record is None or parent is None or parent.state != LeafState.INFLIGHT:
       self.stale_results += 1
-      return tuple()
+      return tuple(), False
 
     if result.error is not None:
       self.rollback_dispatch(parent_id, result.error)
@@ -509,6 +562,7 @@ class AsyncLeafPartition:
       self.incumbent_leaf_id = replacement_incumbent_leaf_id
 
     self.accepted_parent_tasks += 1
+    self._capture_restart_partition_if_ready()
     if self.debug_checks:
       self.assert_invariants()
     return tuple(children), incumbent_changed
@@ -516,12 +570,7 @@ class AsyncLeafPartition:
   # ------------------------------------------------------------------------
   # Warm start, views, and diagnostics
   # ------------------------------------------------------------------------
-  def restart_from_partition(
-      self,
-      old_leaves: Iterable[BnBNode],
-      transfer_lower_bound: Callable[[BnBNode], float],
-      evaluate_upper_point: Callable[[np.ndarray], float],
-  ) -> None:
+  def restart_from_partition(self, old_leaves, transfer_lower_bound, evaluate_upper_point, refresh_results=None):
     """Reclassify a retained leaf partition for a new acquisition function.
 
     ``transfer_lower_bound`` is the explicit hook for the Section-3.5 transfer
@@ -534,6 +583,7 @@ class AsyncLeafPartition:
     if not old_leaves:
       raise ValueError("Warm-start partition is empty")
 
+    self._reset_restart_partition_snapshot()
     # A fresh BnBAlgorithm object is normally constructed at every BO
     # iteration.  Derive the new generation from the retained records rather
     # than from this new store's zero-valued counter; otherwise two successive
@@ -564,17 +614,33 @@ class AsyncLeafPartition:
       leaf.generation = self.generation
       leaf.state = LeafState.READY
       leaf.close_reason = None
-      leaf.aq_L = float(transfer_lower_bound(old_leaf))
-      if math.isnan(leaf.aq_L):
-        raise ValueError("Transferred lower bound is NaN")
+      leaf.metadata.pop("task_attempt", None)
+      leaf.metadata.pop("task_errors", None)
+      leaf.metadata.pop("diagnostics", None)
+      
+      if refresh_results is None:
+        leaf.aq_L = float(transfer_lower_bound(old_leaf))
+        if math.isnan(leaf.aq_L):
+          raise ValueError("Transferred lower bound is NaN")
+        
+        point = old_leaf.aq_U_x
+        if point is None or not self._contains(leaf, point):
+          point = leaf.midpoint
+        leaf.aq_U_x = np.asarray(point, dtype=float).reshape(-1).copy()
+        leaf.aq_U = float(evaluate_upper_point(leaf.aq_U_x))
+      else:
+        result = refresh_results[int(old_leaf.node_id)]
+        if result.error is not None:
+          raise RuntimeError(f"Restart failed for node {result.node_id}: {result.error}")
+        if result.aq_U_x is None:
+          raise RuntimeError(f"Restart returned no upper-bound point for node {result.node_id}")
 
-      point = leaf.aq_U_x
-      if point is None or not self._contains(leaf, point):
-        point = leaf.midpoint
-      leaf.aq_U_x = np.asarray(point, dtype=float).reshape(-1).copy()
-      leaf.aq_U = float(evaluate_upper_point(leaf.aq_U_x))
-      if math.isnan(leaf.aq_U):
-        raise ValueError("Reevaluated upper bound is NaN")
+        leaf.aq_L = float(result.aq_L)
+        leaf.aq_U = float(result.aq_U)
+        leaf.aq_U_x = np.asarray(result.aq_U_x, dtype=float).reshape(-1).copy()
+
+        if not self._contains(leaf, leaf.aq_U_x):
+          raise ValueError(f"Restart upper-bound point is outside node {result.node_id}")
       if leaf.aq_L > leaf.aq_U:
         scale = max(1.0, abs(leaf.aq_L), abs(leaf.aq_U))
         if leaf.aq_L - leaf.aq_U <= self.bound_consistency_tol * scale:
@@ -596,8 +662,15 @@ class AsyncLeafPartition:
     if self.debug_checks:
       self.assert_invariants()
 
+  def export_full_partition(self) -> List[BnBNode]:
+    """Return the current working partition, including all final refinements."""
+    return list(self._clone_current_partition())
+
   def export_partition(self) -> List[BnBNode]:
-    return [self.leaves[node_id].clone() for node_id in sorted(self.leaves)]
+    """Return the retained warm-start partition, or the current one as fallback."""
+    if self._restart_partition_snapshot is None:
+      return self.export_full_partition()
+    return [leaf.clone() for leaf in self._restart_partition_snapshot]
 
   def ready_nodes(self) -> List[BnBNode]:
     return [leaf for leaf in self.leaves.values() if leaf.state == LeafState.READY]
@@ -667,7 +740,51 @@ class AsyncLeafPartition:
       if not any(self._contains(leaf, self.incumbent_x) for leaf in self.leaves.values()):
         raise AssertionError("Incumbent point is outside the retained partition")
 
+def _parallel_restart_results(algorithm, old_leaves, restart_worker):
+  old_leaves = list(old_leaves)
+  if not old_leaves:
+    raise ValueError("Warm-start partition is empty")
+  if any(leaf.node_id is None for leaf in old_leaves):
+    raise ValueError("Parallel restart requires every old leaf to have a node ID")
 
+  ids = [int(leaf.node_id) for leaf in old_leaves]
+  if len(ids) != len(set(ids)):
+    raise ValueError("Warm-start partition contains duplicate node IDs")
+
+  # Shape (number_of_leaves, 1): MPIEvaluator.run submits each row separately.
+  # Therefore each evaluator task receives exactly one leaf.
+  xin = np.empty((len(old_leaves), 1), dtype=object)
+  for i, leaf in enumerate(old_leaves):
+    xin[i, 0] = leaf
+
+  started = time.time()
+  results = list(algorithm.node_evaluator.run(restart_worker.restart_callback, xin))
+
+  if len(results) != len(old_leaves):
+    raise RuntimeError(
+        f"Expected {len(old_leaves)} restart results, received {len(results)}")
+
+  bad = [result for result in results if result.error is not None]
+  if bad:
+    message = "; ".join(f"node {result.node_id}: {result.error}" for result in bad)
+    raise RuntimeError(f"Warm-start bound refresh failed: {message}")
+
+  by_id = {}
+  for result in results:
+    node_id = int(result.node_id)
+    if node_id in by_id:
+      raise RuntimeError(f"Duplicate restart result for node {node_id}")
+    by_id[node_id] = result
+
+  expected, received = set(ids), set(by_id)
+  if expected != received:
+    raise RuntimeError(f"Restart-result ID mismatch: missing={sorted(expected-received)}, "
+                       f"unexpected={sorted(received-expected)}")
+
+  algorithm.log.info("Refreshed %d warm-start leaves, one leaf per task, in %g seconds",
+                     len(old_leaves), time.time()-started)
+  return by_id
+      
 def initialize_async_search(
     algorithm: Any,
     l0: Optional[np.ndarray] = None,
@@ -675,6 +792,7 @@ def initialize_async_search(
     queue: Optional[Sequence[Tuple[float, int, BnBNode]]] = None,
     partition: Optional[Iterable[BnBNode]] = None,
     transfer_lower_bound: Optional[Callable[[BnBNode], float]] = None,
+    restart_worker=None,
 ) -> None:
   """Adapter used by ``BnBAlgorithm.initialize``."""
   if l0 is None or u0 is None:
@@ -704,8 +822,8 @@ def initialize_async_search(
   algorithm.leaf_partition = store
 
   if partition is None:
-    aq_L, aq_U, aq_U_x = algorithm.compute_acqf_bounds(l_init, u_init)
-    root = BnBNode(l_init, u_init, aq_L, aq_U, aq_U_x=aq_U_x)
+    aq_L, aq_U, aq_U_x, diagnostics = algorithm.compute_acqf_bounds(l_init, u_init)
+    root = BnBNode(l_init, u_init, aq_L, aq_U, aq_U_x=aq_U_x, metadata={"diagnostics" : diagnostics})
     store.initialize_root(root)
     print(f"\nInitial acquisition bounds: lower: {aq_L}   upper: {aq_U}")
     print(f"\nInitial  bounds: lower: {l_init}   upper: {u_init}")
@@ -717,33 +835,34 @@ def initialize_async_search(
         point = legacy_node.aq_U_x
         if point is None:
           point = legacy_node.midpoint
-        value = float(
-            np.asarray(algorithm.acqf.evaluate(np.atleast_2d(point))).reshape(-1)[0]
-        )
+        value = float(np.asarray(algorithm.acqf.evaluate(np.atleast_2d(point))).reshape(-1)[0])
         if value < store.incumbent_value:
           store.incumbent_value = value
           store.incumbent_x = np.asarray(point, dtype=float).copy()
           store.incumbent_leaf_id = store.incumbent_leaf().node_id
       store._reclassify_ready_after_incumbent_update()
   else:
+    assert algorithm.restart == True, "restart flag is set incorrectly"
     old_partition = list(partition)
+
+    refresh_results = None
+    if restart_worker is not None:
+      refresh_results = _parallel_restart_results(algorithm, old_partition, restart_worker)
+    # serial fallback when restart_worker is None
     if transfer_lower_bound is None:
       # Correct fallback: recompute every lower bound.  The Section-3.5 transfer
-      # callback should replace this when available to retain the speed benefit.
+      # callback should replace this 
       def transfer_lower_bound(old_leaf: BnBNode) -> float:
-        lower, _, _ = algorithm.compute_acqf_bounds(old_leaf.l, old_leaf.u)
+        lower, _, _, _ = algorithm.compute_acqf_bounds(old_leaf.l, old_leaf.u)
         return float(lower)
 
     def evaluate_upper_point(point: np.ndarray) -> float:
-      return float(
-          np.asarray(algorithm.acqf.evaluate(np.atleast_2d(point))).reshape(-1)[0]
-      )
+      return float(np.asarray(algorithm.acqf.evaluate(np.atleast_2d(point))).reshape(-1)[0])
 
-    store.restart_from_partition(
-        old_partition,
-        transfer_lower_bound=transfer_lower_bound,
-        evaluate_upper_point=evaluate_upper_point,
-    )
+    store.restart_from_partition(old_partition,
+                                 transfer_lower_bound=transfer_lower_bound,
+                                 evaluate_upper_point=evaluate_upper_point,
+                                 refresh_results=refresh_results)
 
   algorithm.LUB = store.incumbent_value
   algorithm.LLB = store.global_lower_bound()
@@ -772,6 +891,11 @@ def run_async_search(
 
   log = algorithm.log
 
+  if algorithm.restart:
+    store.configure_restart_partition(algorithm.restart_partition_size)
+    log.info("BnB warmstart partition target size: %d leaves for %d workers",
+             algorithm.restart_partition_size, num_workers)
+  
   inflight_limit = max(1, int(math.ceil(algorithm.inflight_factor * num_workers)))
   poll_interval = max(0.0, float(algorithm.poll_interval))
 
@@ -805,7 +929,17 @@ def run_async_search(
 
     scale = 10 ** (len(str(target)) - 1)
     return target + scale
-  
+
+  def gap_diagnostic(store: Any) -> str:
+    return f"GAP: global {store.gap():11.4e}   LLB {store.global_lower_bound():11.4e} LUB={store.incumbent_value:11.4e}"
+
+  def leaf_diagnostic(l: BnBNode, prefix="") -> str:
+    output = f"{prefix} id={l.node_id} depth={l.depth} state={l.state} LB={l.aq_L:11.4e} UB={l.aq_U:11.4e} diam={l.diam:11.4e}\n"
+    output += f"         {prefix} l        {np.array2string(l.l, max_line_width=100000, formatter={'float_kind': lambda x: f'{x:11.4e}'})}\n"
+    output += f"         {prefix} feasib x {np.array2string(l.aq_U_x, max_line_width=100000, formatter={'float_kind': lambda x: f'{x:11.4e}'})}\n"
+    output += f"         {prefix} u        {np.array2string(l.u, max_line_width=100000, formatter={'float_kind': lambda x: f'{x:11.4e}'})}"
+    return output
+    
   def print_iter_info(algorithm: Any, store: Any, log: Any, iter_type: Int) -> None:
     """
     Print a short summary of the search stats
@@ -835,15 +969,28 @@ def run_async_search(
       
     log.info(msg)
 
+    if algorithm.diagnostics and iter_type>=1:
+      glb_leaf = min(store.leaves.values(), key=lambda leaf: (float(leaf.aq_L), int(leaf.node_id)))
+      inc_leaf = store.incumbent_leaf()
+      
+      log.info(gap_diagnostic(store))
+      log.info(leaf_diagnostic(glb_leaf, "LLB    leaf:"))
+      log.info(leaf_diagnostic(inc_leaf, "INCUMB leaf:"))
+      
+      log.info("LLB    leaf conic relax\n" + " "*8 + glb_leaf.metadata["diagnostics"].replace("\n", "\n"+" "*8))
+      log.info("INCUMB leaf conic relax\n" + " "*8 + inc_leaf.metadata["diagnostics"].replace("\n", "\n"+" "*8))
+
   
   def make_brancher() -> Any:
     return brancher_type(
-        algorithm.acqf,
-        LUB=store.incumbent_value,
-        epsilon_prune=algorithm.epsilon_prune,
-        acqf_UB_solver=algorithm.acqf_UB_solver,
-        random_seed=algorithm.random_seed,
-        opt_mode=algorithm.opt_mode,
+      algorithm.acqf,
+      LUB=store.incumbent_value,
+      epsilon_prune=algorithm.epsilon_prune,
+      acqf_UB_solver=algorithm.acqf_UB_solver,
+      random_seed=algorithm.random_seed,
+      opt_mode=algorithm.opt_mode,
+      nearest_neighbor_pairs=algorithm.nearest_neighbor_pairs,
+      diagnostics=algorithm.diagnostics,
     )
 
   # A brancher owns mutable relaxation/solver objects.  Keep at most one active
@@ -903,6 +1050,7 @@ def run_async_search(
     try:
       children, incumbent_changed = store.accept_result(result)
     except RuntimeError as exc:
+      print(exc)
       parent = store.leaves.get(int(result.parent_id))
       attempts = 0 if parent is None else int(parent.metadata.get("task_attempt", 0))
       if (not allow_retry) or attempts > algorithm.max_task_retries:
@@ -939,7 +1087,6 @@ def run_async_search(
 
     #print(f"[0]Nodes in READY {len(store.ready_nodes())}  in INFLIGHT {len(store.inflight)}  leaves in partition {len(store.leaves)}")
 
-    
     algorithm.LUB = store.incumbent_value
     algorithm.LLB = store.global_lower_bound()
     algorithm.best_node = store.incumbent_leaf()
@@ -952,6 +1099,7 @@ def run_async_search(
       #if not incumbent_changed: 
       while algorithm.num_branches >= algorithm.print_iter_next:
         algorithm.print_iter_next = print_get_next_target(algorithm.print_iter_next)
+    
         
     if store.is_certified(algorithm.epsilon_gap, algorithm.epsilon_rel_gap):
       algorithm.certified = True
@@ -1026,8 +1174,15 @@ def run_async_search(
           "parents %r" % missing
       )
 
+  # If the search stopped before reaching the requested size of the restart partition, retain the final one
+  if algorithm.restart:
+    store.finalize_restart_partition()
+    log.info("BnB retained %d leaves for warmstart (target=%d)",
+             store.restart_partition_target_size, algorithm.restart_partition_size)
+    
   algorithm.LUB = store.incumbent_value
   algorithm.LLB = store.global_lower_bound()
+
   algorithm.final_gap = store.gap()
   algorithm.elapsed_bnb_time = time.time() - start_time
   algorithm.best_node = store.incumbent_leaf()

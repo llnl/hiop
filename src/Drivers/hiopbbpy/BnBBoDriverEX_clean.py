@@ -4,7 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from hiopbbpy.problems import Problem, BraninProblem
-from hiopbbpy.surrogate_modeling import smtKRG 
+from hiopbbpy.surrogate_modeling import smtKRG
 from hiopbbpy.opt import BnBAlgorithm, BOAlgorithm, LCBacquisition, EIacquisition
 from hiopbbpy.utils import MPIEvaluator
 import argparse
@@ -244,6 +244,7 @@ if __name__ == "__main__":
   parser.add_argument("--bnbmaxtime", type=float, default=180., help="maximum time for bnb opt") 
   parser.add_argument("--bnb", action=argparse.BooleanOptionalAction, type=bool, default=True, help="BnB or multistart")
   parser.add_argument("--nsamples", type=int, default=6, help="number of initial samples")
+  parser.add_argument("--nretraingp", type=int, default=1, help="number of BO iterations after which the GP is fully retrained")
   parser.add_argument("--seed", type=int, default=42, help="random seed")
   parser.add_argument("--problem", type=str, default="Periodic", help="black-box objective") 
   parser.add_argument("--make_plts", action=argparse.BooleanOptionalAction, type=bool, default=False, help="create plots or not")
@@ -251,7 +252,9 @@ if __name__ == "__main__":
   parser.add_argument("--optmode", type=int, default=5, help="LCB convex relaxation strategy")
   parser.add_argument("--mpimode", action=argparse.BooleanOptionalAction, type=bool, default=False, help="enable MPI parallelism and use MPI_COMM_WORLD.Get_size()-1 workers.")
   parser.add_argument("--num_workers", type=int, default=0, help="specify number of workers for non-mpimode with default value zero in which case multiprocessing.cpu_count()-1 will be used.") 
-  
+  parser.add_argument("--bnb_warmstart", action=argparse.BooleanOptionalAction, type=bool, default=False, help="use a partition of BnB node from previous iteration to initialize BnB search.")
+  parser.add_argument("--bnb_warmstart_nodes", type=int, default=1, help="max number of BnB nodes the warmstart partition should have")
+  parser.add_argument("--diagnostics", action=argparse.BooleanOptionalAction, type=bool, default=False, help="build and print diagnostics")
   args = parser.parse_args()
 
   executor = None
@@ -343,11 +346,11 @@ if __name__ == "__main__":
   x_train = problem.sample(n_samples)
   y_train = problem.evaluate(x_train)
   
-  theta = 2.  # hyperparameter for GP kernel
+  theta = 1.  # hyperparameter for GP kernel
   fix_theta = False
-  theta_bounds = [0.4, 2.]
-  pow_exp_power = 1.0 #1. or 2., only relevant for pow_exp kernel
-  corr = "matern52" # "pow_exp", "matern32", "matern52"
+  theta_bounds = [0.05, 5]
+  pow_exp_power = 2.0 #1. or 2., only relevant for pow_exp kernel
+  corr = "pow_exp" #"matern52" # "pow_exp", "matern32", "matern52"
   eval_noise = False
 
   hyper_opt="Cobyla" #More robust, derivative-free hyperparameter optimization
@@ -356,9 +359,9 @@ if __name__ == "__main__":
   if fix_theta:
     hyper_opt="NoOp"
  
+  nugget = 1e-12
 
-
-  gp_model = smtKRG(theta, problem.xlimits, nx, corr=corr, pow_exp_power=pow_exp_power, eval_noise=eval_noise, fix_theta=fix_theta, theta_bounds=theta_bounds, hyper_opt=hyper_opt)
+  gp_model = smtKRG(theta, problem.xlimits, nx, corr=corr, pow_exp_power=pow_exp_power, eval_noise=eval_noise, fix_theta=fix_theta, theta_bounds=theta_bounds, hyper_opt=hyper_opt, nugget=nugget)
   gp_model.train(x_train, y_train)
 
   beta = 3
@@ -383,13 +386,15 @@ if __name__ == "__main__":
       'max_bnbtime': bnbmaxtime,
       'pure_BBS' : True,
       'synchronous' : False,
-      'early_stopping_heuristics' : False,
       'save_data' : save_data,
       'save_data_dir' : save_data_dir,
       'acqf_ub_solver': 'IPOPT',
       'min_diameter': 0.001,
       'opt_mode': args.optmode,
       'random_seed': randseed,
+      'bnb_warmstart': args.bnb_warmstart,
+      'bnb_warmstart_nodes': args.bnb_warmstart_nodes,
+      'diagnostics' : args.diagnostics,
   }
   bnb_solver_options['node_evaluator'] = MPIEvaluator(function_mode=False, executor=executor, task_name="BO_BNB_NODE", profiling=False)
   
@@ -402,7 +407,8 @@ if __name__ == "__main__":
       'bo_maxiter' : boiter, 
       'batch_size' : batch_size,
       'opt_solver' : 'SLSQP',
-      'BnBWarmStart' : False,
+      'bnb_warmstart' : args.bnb_warmstart,
+      'nretraingp' : args.nretraingp,
   }
   if BnB:
     options['opt_solver'] = 'BnB'
