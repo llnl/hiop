@@ -364,9 +364,8 @@ class BOAlgorithm(BOAlgorithmBase):
         self.x_opt = best_constrained_train_x
         self.y_opt = best_constrained_train_y
     else:
-      self.logger.critical(f"BO or consistent BB objective failure")
-      self.logger.critical(f"None of the BO points resulted in finite BB objective functions evaluations")
-      self.logger.critical(f"None of the initial training points were both feasible and had finite BB objective function values")
+      self.logger.critical(f"BB objective non-finite at all BO sample points")
+      self.logger.critical(f"Each initial GP training point either not feasible or BB objective is non-finite at it")
       self.x_opt = self.x_BO_opt
       self.y_opt = self.y_BO_opt
     self.logger.critical("===================================")
