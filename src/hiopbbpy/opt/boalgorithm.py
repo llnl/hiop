@@ -336,9 +336,9 @@ class BOAlgorithm(BOAlgorithmBase):
     y_hist_filt = np.where(np.isfinite(self.y_hist), self.y_hist, np.inf)
     # if there is at least one finite value then argmin is well-defined
     if not np.isinf(y_hist_filt).all():
-      idx_BO_opt = np.argmin(self.y_hist)
+      idx_BO_opt = np.argmin(y_hist_filt)
     else:
-      idx_BO_opt = 0 # choose a index from set of non-finite BB objective function values
+      idx_BO_opt = 0 # choose an index from set of non-finite BB objective function values
     self.x_BO_opt = self.x_hist[idx_BO_opt]
     self.y_BO_opt = y_hist_filt[idx_BO_opt][0]
     
