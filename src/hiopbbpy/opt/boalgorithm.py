@@ -332,9 +332,15 @@ class BOAlgorithm(BOAlgorithmBase):
     self.setTrainingData(x_train, y_train)
     
     # Save the BO optimal (excluding initial training pts) results
-    idx_BO_opt = np.argmin(self.y_hist)
+    # filter non-finite BB objective function values --> inf
+    y_hist_filt = np.where(np.isfinite(self.y_hist), self.y_hist, np.inf)
+    # if there is at least one finite value then argmin is well-defined
+    if not np.isinf(y_hist_filt).all():
+      idx_BO_opt = np.argmin(self.y_hist)
+    else:
+      idx_BO_opt = 0 # choose a index from set of non-finite BB objective function values
     self.x_BO_opt = self.x_hist[idx_BO_opt]
-    self.y_BO_opt = self.y_hist[idx_BO_opt][0]
+    self.y_BO_opt = y_hist_filt[idx_BO_opt][0]
     
     self.logger.critical("===================================")
     self.logger.critical("Bayesian Optimization completed")
@@ -348,7 +354,6 @@ class BOAlgorithm(BOAlgorithmBase):
         self.logger.critical(f"BO did not generate points more optimal than initial training points")
       self.logger.critical(f"Best (BO) point: {self.x_BO_opt.flatten()}")
       self.logger.critical(f"Best (BO) objective value: {self.y_BO_opt}")
-      
       if self.y_BO_opt < best_constrained_train_y:
         self.x_opt = self.x_BO_opt
         self.y_opt = self.y_BO_opt
@@ -362,6 +367,8 @@ class BOAlgorithm(BOAlgorithmBase):
       self.logger.critical(f"BO or consistent BB objective failure")
       self.logger.critical(f"None of the BO points resulted in finite BB objective functions evaluations")
       self.logger.critical(f"None of the initial training points were both feasible and had finite BB objective function values")
+      self.x_opt = self.x_BO_opt
+      self.y_opt = self.y_BO_opt
     self.logger.critical("===================================")
     self.y_opt = np.array([self.y_opt])
 
