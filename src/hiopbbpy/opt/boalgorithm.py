@@ -340,21 +340,28 @@ class BOAlgorithm(BOAlgorithmBase):
     self.logger.critical("Bayesian Optimization completed")
     self.logger.critical(f"Total objective evaluations for initial samples: {self.init_ntrain}")
     self.logger.critical(f"Total objective evaluations for BO iterations: {len(self.y_hist)}")
-    if self.y_BO_opt < best_constrained_train_y:
-      self.logger.critical(f"Optimal at BO iteration: {idx_BO_opt//self.batch_size+1} ")
+    
+    if np.isfinite(self.y_BO_opt) or y_train_fea.size > 0:
+      if self.y_BO_opt < best_constrained_train_y:
+        self.logger.critical(f"Optimal at BO iteration: {idx_BO_opt//self.batch_size+1} ")
+      else:
+        self.logger.critical(f"BO did not generate points more optimal than initial training points")
+      self.logger.critical(f"Best (BO) point: {self.x_BO_opt.flatten()}")
+      self.logger.critical(f"Best (BO) objective value: {self.y_BO_opt}")
+      
+      if self.y_BO_opt < best_constrained_train_y:
+        self.x_opt = self.x_BO_opt
+        self.y_opt = self.y_BO_opt
+      else: # y_BO_opt finite and best_constrained_train_y <= y_BO_opt means best_constrained_train_y is not inf and there is at least one feasible training point
+        self.logger.critical(f"Optimal at training point: {train_idx_opt}")
+        self.logger.critical(f"Best (training) point: {best_constrained_train_x.flatten()}")
+        self.logger.critical(f"Best (training) point objective value: {best_constrained_train_y}")
+        self.x_opt = best_constrained_train_x
+        self.y_opt = best_constrained_train_y
     else:
-      self.logger.critical(f"BO did not generate points more optimal than initial training points")
-    self.logger.critical(f"Best (BO) point: {self.x_BO_opt.flatten()}")
-    self.logger.critical(f"Best (BO) objective value: {self.y_BO_opt}")
-    if self.y_BO_opt < best_constrained_train_y:
-      self.x_opt = self.x_BO_opt
-      self.y_opt = self.y_BO_opt
-    else:
-      self.logger.critical(f"Optimal at training point: {train_idx_opt}")
-      self.logger.critical(f"Best (training) point: {best_constrained_train_x.flatten()}")
-      self.logger.critical(f"Best (training) point objective value: {best_constrained_train_y}")
-      self.x_opt = best_constrained_train_x
-      self.y_opt = best_constrained_train_y
+      self.logger.critical(f"BO or consistent BB objective failure")
+      self.logger.critical(f"None of the BO points resulted in finite BB objective functions evaluations")
+      self.logger.critical(f"None of the initial training points were both feasible and had finite BB objective function values")
     self.logger.critical("===================================")
     self.y_opt = np.array([self.y_opt])
 
