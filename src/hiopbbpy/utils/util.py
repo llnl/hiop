@@ -128,7 +128,6 @@ class MPIEvaluator(Evaluator):
   
   def run(self, fun, Xin):  
     nevals = Xin.shape[0]
-    print("in Evaluator::run")
 
     # unique batch directory so repeated calls do not reuse temp_dir_0, temp_dir_1, ...
     batch_id = f"{self.manager.task_name}_{os.getpid()}_{time.time_ns()}_{uuid.uuid4().hex[:8]}"
@@ -150,13 +149,8 @@ class MPIEvaluator(Evaluator):
         [(fun, i, xi)],
         **kwargs,
       )
-      print(f"Submitted task {i + 1}", flush=True)
 
     self.manager.sync()
-    print(f"\n{'='*50}")
-    print(f"Retrieving results for {self.manager.task_name}...")
-    print(f"Profiling enabled: {self.manager.profiling}")
-    print(f"{'='*50}\n", flush=True)
     Xout, Fout = self.manager.retrieve_results()
 
     # restore original order using returned indices
