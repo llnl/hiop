@@ -1812,7 +1812,12 @@ class BnBAlgorithm(BnBAlgorithmBase):
       cons.append(lamvar <= lamU)
       for i in range(ntrain):
         cons.append((self.C2 @ self.X)[i] >= cp.atoms.exp(lamvar[i]))
-      cons.append(self.C2 @ self.X <= kL + cp.atoms.multiply((kU - kL) / (lamU - lamL),  (lamvar  - lamL)))
+
+      dlam = lamU - lamL
+      secant_slope = kL * np.divide(np.expm1(dlam), dlam, out=np.ones_like(dlam), where=np.abs(dlam) > 1e-12)
+      cons.append(self.C2 @ self.X <= kL + cp.atoms.multiply(secant_slope,  (lamvar  - lamL)))
+      #cons.append(self.C2 @ self.X <= kL + cp.atoms.multiply((kU - kL) / (lamU - lamL),  (lamvar  - lamL)))        
+
       etavar = cp.Variable((ntrain, dimx))
       cons.append(lamvar == cp.atoms.sum(etavar, axis=1)) # sum along column of matrix-valued \eta
       if self.kernel_spec == "pow_exp":
@@ -1822,6 +1827,7 @@ class BnBAlgorithm(BnBAlgorithmBase):
           for i in range(ntrain):
             for j in range(dimx):
               cons.append(etavar[i,j] == (-1.0 * th[j] / (self.X_scale[j]**self.p)) * (wvar[j] - 2. * self.x[i][j] * xvar[j] + self.x[i][j]**2))
+          
           for j in range(dimx):
             cons.append(xvar[j]**2 <= wvar[j])
             cons.append(wvar[j] <= (l[j] + u[j]) * xvar[j] - l[j] * u[j])
@@ -1945,11 +1951,11 @@ class BnBAlgorithm(BnBAlgorithmBase):
       verbose = False
       if i > 0:
         max_iters = 1000
-        verbose = True
       else:
         max_iters = 300
       if i == 2:
         opt_rel_tol = 1.e-4
+        verbose = False
       try:
         if mode == 0:
           prob = cp.Problem(cp.Minimize(self.obj2), cons)
@@ -2189,6 +2195,212 @@ class BnBAlgorithm(BnBAlgorithmBase):
     """Run the certified asynchronous leaf-partition event loop."""
     return run_async_search(self, branching_wrapper, l_init, u_init)
 
+########################################################################
+
+class AffordableLCBTransfer:
+  """
+  Lower-bound transfer for one new LCB observation.
+
+  For an old certified lower bound L_t(B), returns
+
+      L_t(B) - |y_+ - mu_t(x_+)| / v_t(x_+) * C_B,
+
+  where C_B bounds |cov_t(x, x_+)| over x in B.  The posterior
+  standard-deviation reduction is favorable for LCB minimization and
+  therefore need not be subtracted.
+  """
+
+  def __init__(self, old_bnb, x_plus, y_plus):
+    if not isinstance(old_bnb.acqf, LCBacquisition):
+      raise TypeError("AffordableLCBTransfer requires an LCB acquisition")
+
+    sm = old_bnb.gpsurrogate.surrogatesmt
+    self._check_model(sm)
+    self.kernel_spec, self.p = self._kernel_description(sm)
+    self.coordinate_power = self.p if self.kernel_spec == "pow_exp" else 1.0
+
+    # Copy everything needed before smtKRG is refitted in place.
+    self.beta = float(old_bnb.acqf.beta)
+    self.x_plus = np.asarray(x_plus, dtype=float).reshape(-1)
+    self.y_plus = np.asarray(y_plus, dtype=float).reshape(()).item()
+
+    self.x_offset = np.asarray(old_bnb.X_offset, dtype=float).reshape(-1).copy()
+    self.x_scale = np.asarray(old_bnb.X_scale, dtype=float).reshape(-1).copy()
+    self.Xc = np.asarray(old_bnb.Xc, dtype=float).copy()
+
+    self.n_old, self.dimension = self.Xc.shape
+    if self.x_plus.size != self.dimension:
+      raise ValueError("x_plus has the wrong dimension")
+    if np.any(self.x_scale <= 0.0):
+      raise ValueError("Invalid SMT input scaling")
+
+    theta = np.asarray(old_bnb.theta, dtype=float).reshape(-1)
+    self.theta = np.broadcast_to(theta, (self.dimension,)).copy()
+
+    # Physical-coordinate kernel coefficients. These must remain fixed.
+    self.raw_theta = self.theta / self.x_scale**self.coordinate_power
+    self.x_plus_c = self.x_plus - self.x_offset / self.x_scale
+
+    self.C = np.asarray(old_bnb.C, dtype=float).copy()
+    self.A = np.asarray(old_bnb.A_obj, dtype=float).copy()
+    self.b = np.asarray(old_bnb.b_obj, dtype=float).reshape(-1).copy()
+    self.c = np.asarray(old_bnb.c_obj, dtype=float).reshape(()).item()
+
+    self.sigma2 = float(old_bnb.sigma2)
+    self.nugget = float(self._option(sm, "nugget", 0.0))
+
+    if not np.isfinite(self.sigma2) or self.sigma2 <= 0.0:
+      raise ValueError("The old GP process variance must be positive")
+
+    # k_+ = k(X_t, x_+), z_+ = C_t^{-1} k_+.
+    k_plus = self._kernel_values(np.abs(self.Xc - self.x_plus_c))
+    z_plus = linalg.solve_triangular(self.C, k_plus, lower=True, check_finite=False)
+
+    # For ordinary Kriging,
+    #
+    # cov_t(x,x_+)/sigma_f^2 = k(x,x_+) + covariance_shift + covariance_weights @ k(x,X_t).
+    rhs = 0.5 * (self.A @ z_plus + self.b)
+    self.covariance_weights = linalg.solve_triangular(self.C.T, rhs, lower=False, check_finite=False)
+    self.covariance_shift = self.c - 1.0 + 0.5 * self.b @ z_plus
+
+    scaled_latent_variance = 0.5 * z_plus @ self.A @ z_plus + self.b @ z_plus + self.c
+
+    roundoff = 100.0 * np.finfo(float).eps * max(1.0, abs(self.c))
+    if scaled_latent_variance < -roundoff:
+      raise RuntimeError("Negative predictive variance in transfer snapshot")
+
+    latent_variance = self.sigma2 * max(0.0, scaled_latent_variance)
+
+    # SMT adds nugget to an observation's covariance diagonal.
+    # With nugget=0 this is the literal noiseless case in the paper's proposition
+    observation_variance = latent_variance + self.sigma2 * self.nugget
+    if not np.isfinite(observation_variance) or observation_variance <= 0.0:
+      raise RuntimeError("Cannot transfer through a zero-variance observation")
+
+    mean_plus = old_bnb.y_mean + old_bnb.y_std * (old_bnb.beta0 + k_plus @ np.asarray(old_bnb.gamma).reshape(-1))
+    self.residual_factor = abs(self.y_plus - mean_plus) / observation_variance
+
+  @staticmethod
+  def _option(sm, name, default=None):
+    return sm.options[name] if name in sm.options else default
+
+  @classmethod
+  def _kernel_description(cls, sm):
+    corr = str(cls._option(sm, "corr")).lower()
+
+    if corr == "pow_exp":
+      return "pow_exp", float(cls._option(sm, "pow_exp_power", 2.0))
+    if corr == "squar_exp":
+      return "pow_exp", 2.0
+    if corr in ("abs_exp", "matern12"):
+      return "pow_exp", 1.0
+    if corr in ("matern32", "matern52"):
+      return corr, 1.0
+
+    raise NotImplementedError(f"Unsupported SMT correlation: {corr}")
+
+  @classmethod
+  def _check_model(cls, sm):
+    if cls._option(sm, "poly", "constant") != "constant":
+      raise NotImplementedError("Affordable transfer requires poly='constant'")
+    if cls._option(sm, "eval_noise", False):
+      raise NotImplementedError("Estimated observation noise is unsupported")
+    if cls._option(sm, "use_het_noise", False):
+      raise NotImplementedError("Heteroscedastic noise is unsupported")
+    if cls._option(sm, "is_ri", False):
+      raise NotImplementedError("Reinterpolating KRG is unsupported")
+
+    noise0 = np.asarray(cls._option(sm, "noise0", [0.0]), dtype=float)
+    if np.any(noise0 != 0.0):
+      raise NotImplementedError("Affordable transfer currently requires noise0=0")
+
+  def _kernel_values(self, distances):
+    """Evaluate the old correlation kernel from distances in SMT units."""
+    distances = np.asarray(distances, dtype=float)
+
+    if self.kernel_spec == "pow_exp":
+      exponent = np.sum(self.theta * distances**self.p, axis=1)
+      return np.exp(-exponent)
+
+    root = np.sqrt(3.0 if self.kernel_spec == "matern32" else 5.0)
+    t = root * self.theta * distances
+    polynomial = 1.0 + t
+
+    if self.kernel_spec == "matern52":
+      polynomial = polynomial + t*t/3.0
+
+    return np.prod(polynomial * np.exp(-t), axis=1)
+
+  def _kernel_bounds(self, lower, upper, centers_c):
+    """Bounds on k(x,center) for x in [lower,upper]."""
+    lower_c = (np.asarray(lower, dtype=float).reshape(-1) - self.x_offset) / self.x_scale
+    upper_c = (np.asarray(upper, dtype=float).reshape(-1) - self.x_offset) / self.x_scale
+
+    centers_c = np.atleast_2d(np.asarray(centers_c, dtype=float))
+
+    d_min = np.maximum(0.0, np.maximum(lower_c - centers_c, centers_c - upper_c))
+    d_max = np.maximum(np.abs(lower_c - centers_c), np.abs(upper_c - centers_c))
+
+    kernel_lower = self._kernel_values(d_max)
+    kernel_upper = self._kernel_values(d_min)
+
+    # Conservative floating-point enclosure.
+    kernel_lower = np.maximum(0.0, np.nextafter(kernel_lower, -np.inf))
+    kernel_upper = np.minimum(1.0, np.nextafter(kernel_upper, np.inf))
+    return kernel_lower, kernel_upper
+
+  def __call__(self, old_leaf):
+    kernel_lower, kernel_upper = self._kernel_bounds(old_leaf.l, old_leaf.u, self.Xc)
+    plus_lower, plus_upper = self._kernel_bounds(old_leaf.l, old_leaf.u, self.x_plus_c)
+
+    weights = self.covariance_weights
+    affine_lower = np.sum(np.where(weights >= 0.0, weights * kernel_lower, weights * kernel_upper))
+    affine_upper = np.sum(np.where(weights >= 0.0, weights * kernel_upper, weights * kernel_lower))
+
+    covariance_lower = self.sigma2 * (plus_lower.item() + self.covariance_shift + affine_lower)
+    covariance_upper = self.sigma2 * (plus_upper.item() + self.covariance_shift + affine_upper)
+    covariance_lower = np.nextafter(covariance_lower, -np.inf)
+    covariance_upper = np.nextafter(covariance_upper, np.inf)
+    covariance_bound = max(abs(covariance_lower), abs(covariance_upper),)
+
+    transferred = float(old_leaf.aq_L) - self.residual_factor * covariance_bound
+    return float(np.nextafter(transferred, -np.inf))
+
+  def validate_new_model(self, gpsurrogate, beta):
+    """
+    Verify that the actual refit satisfied the assumptions used above.
+
+    A failure should disable transfer; it should not abort BnB.
+    """
+    sm = gpsurrogate.surrogatesmt
+    self._check_model(sm)
+
+    kernel_spec, p = self._kernel_description(sm)
+    if kernel_spec != self.kernel_spec or p != self.p:
+      raise RuntimeError("The kernel family changed during GP refitting")
+    if float(beta) != self.beta:
+      raise RuntimeError("LCB beta changed during GP refitting")
+
+    scale = np.asarray(sm.X_scale, dtype=float).reshape(-1)
+    theta = np.broadcast_to(np.asarray(sm.optimal_theta, dtype=float).reshape(-1), (self.dimension,),)
+    raw_theta = (theta / scale**self.coordinate_power)
+
+    sigma2 = np.asarray(sm.optimal_par["sigma2"], dtype=float).reshape(()).item()
+    nugget = float(self._option(sm, "nugget", 0.0))
+
+    if not np.allclose(raw_theta, self.raw_theta, rtol=2e-12, atol=0.0,):
+      raise RuntimeError("The raw-coordinate kernel changed during GP refitting")
+    if not np.isclose(sigma2, self.sigma2, rtol=2e-12, atol=0.0,):
+      raise RuntimeError("The GP process variance changed during GP refitting")
+    if nugget != self.nugget:
+      raise RuntimeError("The GP nugget changed during GP refitting")
+
+    training_x = np.asarray(gpsurrogate.training_x, dtype=float)
+    if training_x.shape != (self.n_old + 1, self.dimension,):
+      raise RuntimeError("Proposition 3 requires exactly one new point")
+    if not np.allclose(training_x[-1], self.x_plus, rtol=1e-13, atol=1e-14,):
+      raise RuntimeError("The appended training point is not x_plus")
+  
 class branching_wrapper:
   def __init__(self, acqf, LUB=np.inf, epsilon_prune=1.e-14, acqf_UB_solver="SLSQP", random_seed=None, opt_mode=3, nearest_neighbor_pairs=None, diagnostics=False, restart_lower_bound=None):
     self.LUB = LUB # least upper bound
@@ -2645,7 +2857,12 @@ class branching_wrapper:
       cons.append(lamvar <= lamU)
       for i in range(ntrain):
         cons.append((self.C2 @ self.X)[i] >= cp.atoms.exp(lamvar[i]))
-      cons.append(self.C2 @ self.X <= kL + cp.atoms.multiply((kU - kL) / (lamU - lamL),  (lamvar  - lamL)))
+
+      dlam = lamU - lamL
+      secant_slope = kL * np.divide(np.expm1(dlam), dlam, out=np.ones_like(dlam), where=np.abs(dlam) > 1e-12)
+      cons.append(self.C2 @ self.X <= kL + cp.atoms.multiply(secant_slope,  (lamvar  - lamL)))
+      #cons.append(self.C2 @ self.X <= kL + cp.atoms.multiply((kU - kL) / (lamU - lamL),  (lamvar  - lamL)))
+
       etavar = cp.Variable((ntrain, dimx))
       cons.append(lamvar == cp.atoms.sum(etavar, axis=1)) # sum along column of matrix-valued \eta
       if self.kernel_spec == "pow_exp":
@@ -2655,6 +2872,7 @@ class branching_wrapper:
           for i in range(ntrain):
             for j in range(dimx):
               cons.append(etavar[i,j] == (-1.0 * th[j] / (self.X_scale[j]**self.p)) * (wvar[j] - 2. * self.x[i][j] * xvar[j] + self.x[i][j]**2))
+          
           for j in range(dimx):
             cons.append(cp.atoms.square(xvar[j]) <= wvar[j])
             cons.append(wvar[j] <= (l[j] + u[j]) * xvar[j] - l[j] * u[j])
@@ -2724,7 +2942,7 @@ class branching_wrapper:
         args = np.argsort(pair_selection_triplets[:,-1])[::-1]
         pair_selection_triplets[:,:] = pair_selection_triplets[args,:]
         # now find c1 * p pairs
-        c1 = 5
+        c1 = 1
         ndownselect_pairs = min(len(self.nearest_neighbor_pairs), c1 * ntrain)
         for pair in pair_selection_triplets[:ndownselect_pairs]:
           i_idx = int(pair[0])
@@ -2766,12 +2984,11 @@ class branching_wrapper:
       verbose = False
       if i > 0:
         max_iters = 1000
-        verbose = True
       else:
         max_iters = 300
       if i == 2:
         opt_rel_tol = 1.e-4
-        
+        verbose = False
       try:
         if mode == 0:
           prob = cp.Problem(cp.Minimize(self.obj2), cons)

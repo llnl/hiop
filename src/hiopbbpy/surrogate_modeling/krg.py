@@ -3,12 +3,28 @@ A subclass of GaussianProcess that implements a Kriging surrogate model using pa
 
 Authors:    Tucker Hartland <hartland1@llnl.gov>
             Nai-Yuan Chiang <chiang7@llnl.gov>
+            Cosmin G. Petra <petra1@llnl.gov>
 '''
 
 import numpy as np
 from .gp import GaussianProcess
 from smt.surrogate_models import KRG
 from smt.design_space import DesignSpace 
+from smt.utils.misc import standardization
+
+
+def _smt_input_power(sm):
+  """Conversion exponent between SMT-normalized and raw theta."""
+  corr = str(sm.options["corr"]).lower()
+
+  if corr == "pow_exp":
+    return float(sm.options["pow_exp_power"])
+  if corr == "squar_exp":
+    return 2.0
+  if corr in ("abs_exp", "matern12", "matern32", "matern52",):
+    return 1.0
+
+  raise NotImplementedError(f"Cannot preserve the prior for corr={corr}")
 
 
 class smtKRG(GaussianProcess):
@@ -44,7 +60,112 @@ class smtKRG(GaussianProcess):
       raise ValueError("must train kriging model before utilizing it to predict mean or variances")
     return self.surrogatesmt.predict_variances(x)
 
-  def train(self, x, y, *, optimize_theta=True, theta_bounds=None):
+  def train(self, x, y, *, optimize_theta=True, theta_bounds=None, preserve_prior=False):
+    """
+    Refit the GP.
+
+    preserve_prior=True keeps:
+      * the kernel in physical x coordinates,
+      * the physical process variance sigma2,
+      * the nugget.
+
+    C, beta, and gamma are still recomputed using the enlarged dataset.
+    """
+    if theta_bounds is not None and not optimize_theta:
+      raise ValueError("Changing theta bounds requires theta optimization")
+    if preserve_prior and optimize_theta:
+      raise ValueError("preserve_prior and optimize_theta are mutually exclusive")
+    if preserve_prior and not self.trained:
+      raise ValueError("A previous fit is required for preserve_prior=True")
+
+    sm = self.surrogatesmt
+    configured_bounds = np.asarray(sm.options["theta_bounds"], dtype=float,).copy()
+
+    if theta_bounds is not None:
+      bounds = np.asarray(theta_bounds, dtype=float).reshape(-1)
+      if(bounds.size != 2 or not 0.0 < bounds[0] < bounds[1]):
+        raise ValueError(f"Invalid theta_bounds: {theta_bounds}")
+      sm.options["theta_bounds"] = bounds.tolist()
+    else:
+      bounds = configured_bounds
+
+    fixed_sigma2 = None
+    restore_bounds = False
+
+    if preserve_prior:
+      power = _smt_input_power(sm)
+      old_scale = np.asarray(sm.X_scale, dtype=float).reshape(-1)
+      old_theta = np.asarray(sm.optimal_theta, dtype=float).reshape(-1)
+
+      if np.any(old_scale <= 0.0):
+        raise RuntimeError("Invalid old SMT input scaling")
+
+      # Physical kernel:
+      #   theta_raw = theta_normalized / X_scale**power.
+      raw_theta = old_theta / old_scale**power
+
+      x_array = np.asarray(x, dtype=float)
+      y_array = np.asarray(y, dtype=float)
+      if y_array.ndim == 1:
+        y_array = y_array[:, None]
+
+      # Use exactly the same standardization routine as SMT.
+      _, _, _, _, new_scale, _ = standardization(x_array.copy(), y_array.copy())
+      new_scale = np.asarray(new_scale, dtype=float).reshape(-1)
+
+      theta0 = raw_theta * new_scale**power
+      fixed_sigma2 = np.asarray(sm.optimal_par["sigma2"], dtype=float).copy()
+
+      if(np.any(theta0 <= 0.0) or not np.all(np.isfinite(theta0))):
+        raise RuntimeError("Invalid fixed-prior theta")
+
+      # NoOp still checks theta_bounds. Temporarily widen them
+      # if input restandardization moved normalized theta outside.
+      lower = min(
+          bounds[0],
+          max(np.finfo(float).tiny, np.nextafter(theta0.min(), 0.0)))
+      upper = max(bounds[1], np.nextafter(theta0.max(), np.inf))
+      sm.options["theta_bounds"] = [lower, upper]
+      restore_bounds = True
+
+    else:
+      # Preserve the current behavior for ordinary fixed-theta fits.
+      theta0 = (np.asarray(sm.optimal_theta, dtype=float).reshape(-1) if self.trained else np.asarray(sm.options["theta0"], dtype=float).reshape(-1))
+      theta0 = np.clip(theta0, bounds[0], bounds[1])
+
+    sm.options["theta0"] = theta0.tolist()
+
+    old_n_start = sm.options["n_start"]
+    sm.options["hyper_opt"] = (self._full_hyper_opt if optimize_theta else "NoOp")
+    if not optimize_theta:
+      sm.options["n_start"] = 1
+
+    self.trained = False
+    try:
+      self.training_x = x
+      self.training_y = y
+      sm.set_training_values(x, y)
+      sm.train()
+
+      if preserve_prior:
+        if not np.allclose(sm.optimal_theta, theta0, rtol=2e-13, atol=0.0):
+          raise RuntimeError("SMT NoOp changed the fixed theta")
+
+        # SMT profiles sigma2 even for NoOp. Restore the old
+        # physical value while retaining the new C/beta/gamma.
+        sm.optimal_par["sigma2"] = fixed_sigma2
+        sm.corr.theta = np.asarray(sm.optimal_theta, dtype=float).copy()
+
+      self.trained = True
+
+    finally:
+      sm.options["hyper_opt"] = self._full_hyper_opt
+      sm.options["n_start"] = old_n_start
+
+      if restore_bounds:
+        sm.options["theta_bounds"] = (configured_bounds.tolist())
+  
+  def train2(self, x, y, *, optimize_theta=True, theta_bounds=None):
     assert (theta_bounds is None) or (optimize_theta is True),  "Changing GP theta bounds requires reoptimizing theta"
 
     sm = self.surrogatesmt

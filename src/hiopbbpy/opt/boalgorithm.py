@@ -16,7 +16,7 @@ from ..surrogate_modeling.krg import smt_theta_bounds
 from .acquisition import LCBacquisition, EIacquisition
 from ..problems.problem import Problem
 from ..utils.util import Evaluator, Logger
-from .bnbalgorithm import BnBAlgorithm
+from .bnbalgorithm import BnBAlgorithm, AffordableLCBTransfer
 from .opt_utils import minimizer_wrapper
 from .optproblem import IpoptProb
 import os
@@ -364,6 +364,8 @@ class BOAlgorithm(BOAlgorithmBase):
     assert self.n_start > 0, f"Invalid n_start: {self.n_start}"
 
     self.nretraingp = options.get('nretraingp', self.nretraingp)
+    if(type(self.nretraingp) is not int or self.nretraingp < 1):
+      raise ValueError("nretraingp must be a positive integer")
     
     acquisition_type = options.get('acquisition_type', "LCB")
     assert acquisition_type in ["LCB", "EI"], f"Invalid acquisition_type: {acquisition_type}"
@@ -415,7 +417,38 @@ class BOAlgorithm(BOAlgorithmBase):
     self.bnb_warm_start = True
     self.bnb_warm_start = options.get('bnb_warmstart', self.bnb_warm_start)
     assert isinstance(self.bnb_warm_start, bool), "provided bnb_warmstart is not a boolean type"
+
+
     
+    self.bnb_affordable_lcb_transfer = options.get(
+        "bnb_affordable_lcb_transfer",
+        False,
+    )
+    if not isinstance(
+        self.bnb_affordable_lcb_transfer, bool
+    ):
+      raise TypeError(
+          "bnb_affordable_lcb_transfer must be bool"
+      )
+
+    
+    # Transfer prepared at the end of the preceding BO iteration.
+    self._bnb_affordable_transfer = None
+
+    ##################################################################################################
+    # Options consistency checks
+    ##################################################################################################
+    if self.bnb_affordable_lcb_transfer:
+      if (self.opt_solver != "BnB" or self.acquisition_type != "LCB"):
+        raise ValueError("Affordable transfer requires BnB and LCB with BO solver")
+      if self.batch_size != 1:
+        raise ValueError("Affordable tranfer only supports batch_size=1")
+      if not self.bnb_warm_start:
+        raise ValueError("Affordable transfer requires bnb_warmstart=True")
+      if self.bnb_lower_bound_transfer is not None:
+        raise ValueError("Do not combine automatic and user-supplied transfers for affordable bound tranfer")
+
+      
     self.logger.info(f"Problem name: {prob.name}")
     self.logger.info(f"Max BO iter: {self.bo_maxiter}")
     self.logger.info(f"Optimizing acquisition ({self.acquisition_type}) "
@@ -431,7 +464,7 @@ class BOAlgorithm(BOAlgorithmBase):
     self.logger.info(f"Logger level: {logger_level}")
 
   # Method to train the GP model
-  def _train_surrogate(self, x_train, y_train, *, full_retrain):    
+  def _train_surrogate(self, x_train, y_train, *, full_retrain, preserve_prior=False):
     self.logger.debug(f"Training surrogate model with {x_train.shape[0]} samples...")
     theta_bounds = None
 
@@ -443,9 +476,12 @@ class BOAlgorithm(BOAlgorithmBase):
       theta_bounds = smt_theta_bounds(S=x_train.shape[0], N=x_train.shape[1], corr=corr, pow_exp_power=power)
       self.logger.info(f"Full GP retrain: S={x_train.shape[0]}, theta_bounds={theta_bounds}")
     else:
-      self.logger.debug("Fixed-theta GP refit")
+      msg = "Fixed-prior GP refit" if preserve_prior else "Fixed-theta GP refit"
+      self.logger.debug(msg)      
 
-    self.gpsurrogate.train(x_train, y_train, optimize_theta=full_retrain, theta_bounds=theta_bounds)    
+
+    self.gpsurrogate.train(x_train, y_train, optimize_theta=full_retrain,
+                           theta_bounds=theta_bounds, preserve_prior=preserve_prior)
     self.logger.debug("Surrogate training complete.")
 
   # Method to find the best next sampling point via optimizing the acquisition function
@@ -457,7 +493,7 @@ class BOAlgorithm(BOAlgorithmBase):
     elif self.acquisition_type == "EI":
       acqf = EIacquisition(self.gpsurrogate)
     else:
-      raise NotImplementedError("No implemented acquisition_type associated to"+self.acquisition_type)
+      raise NotImplementedError("No implemented acquisition_type associated to" + self.acquisition_type)
 
     acqf_callback = {'obj' : acqf.scalar_evaluate}
     if acqf.has_gradient:
@@ -635,8 +671,16 @@ class BOAlgorithm(BOAlgorithmBase):
         bnb = BnBAlgorithm(acqf, options=self.solver_options, BOit=i)
      
         # Initialize BnB (perhaps use old set of boxes if self.bnb_queue is not None)
-        bnb.initialize(partition=self.bnb_partition, transfer_lower_bound=self.bnb_lower_bound_transfer)
-        
+        #bnb.initialize(partition=self.bnb_partition, transfer_lower_bound=self.bnb_lower_bound_transfer)
+        restart_transfer = self.bnb_lower_bound_transfer
+
+        if self.bnb_affordable_lcb_transfer:
+          restart_transfer = self._bnb_affordable_transfer
+
+          # AffordableTransfer from the paper: callback describes exactly one GP update.
+          self._bnb_affordable_transfer = None
+
+        bnb.initialize(partition=self.bnb_partition, transfer_lower_bound=restart_transfer)
         # Run BnB optimization
         best_xopt = bnb.optimize()
         self.logger.info(f"BnB nodes explored: {bnb.num_branches}")
@@ -694,8 +738,30 @@ class BOAlgorithm(BOAlgorithmBase):
 
       # Full theta optimization after each nretrainGP completed iterations.
       full_retrain = (i + 1) % self.nretraingp == 0
-      self._train_surrogate(x_train, y_train, full_retrain=full_retrain)
+      next_transfer = None
+      #self._train_surrogate(x_train, y_train, full_retrain=full_retrain)
 
+      if(self.bnb_affordable_lcb_transfer and self.bnb_warm_start and not full_retrain):
+        try:
+          # Snapshot the old posterior before smtKRG is refitted in place.
+          next_transfer = AffordableLCBTransfer(bnb, x_plus=x_new[0], y_plus=np.asarray(y_new).reshape(-1)[0])
+        except (TypeError, ValueError, RuntimeError, FloatingPointError) as error:
+          self.logger.info(f"Affordable LCB transfer unavailable; bounds will be recomputed: {error}")
+
+      self._train_surrogate(x_train, y_train, full_retrain=full_retrain,
+                            preserve_prior=(next_transfer is not None))
+
+      if next_transfer is not None:
+        try:
+          next_transfer.validate_new_model(self.gpsurrogate, self.LCB_beta)
+        except RuntimeError as error:
+          # Safe fallback: the retained partition is still useful,
+          # but restart_callback will recompute every lower bound.
+          self.logger.info(f"Affordable LCB transfer rejected: bounds will be recomputed: {error}")
+          next_transfer = None
+
+      self._bnb_affordable_transfer = next_transfer
+      
       feas_new = self.prob.if_feasible(x_train[-self.batch_size:])
       self.logger.debug(f"Feasible samples: {np.sum(feas_new)}/{self.batch_size}")
 

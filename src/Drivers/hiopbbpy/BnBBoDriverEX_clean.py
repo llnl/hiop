@@ -402,13 +402,14 @@ if __name__ == "__main__":
     bnb_solver_options['min_diameter'] *= np.pi
 
   options = {
-      'acquisition_type' : acquisition_type,
-      'LCB_beta': beta,
-      'bo_maxiter' : boiter, 
-      'batch_size' : batch_size,
-      'opt_solver' : 'SLSQP',
-      'bnb_warmstart' : args.bnb_warmstart,
-      'nretraingp' : args.nretraingp,
+    'acquisition_type' : acquisition_type,
+    'LCB_beta': beta,
+    'bo_maxiter' : boiter, 
+    'batch_size' : batch_size,
+    'opt_solver' : 'SLSQP',
+    'bnb_warmstart' : args.bnb_warmstart,
+    'nretraingp' : args.nretraingp,
+    'bnb_affordable_lcb_transfer': False,
   }
   if BnB:
     options['opt_solver'] = 'BnB'
