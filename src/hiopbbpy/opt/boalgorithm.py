@@ -12,13 +12,211 @@ from scipy.optimize import minimize
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 from ..surrogate_modeling.gp import GaussianProcess
+from ..surrogate_modeling.krg import smt_theta_bounds
 from .acquisition import LCBacquisition, EIacquisition
 from ..problems.problem import Problem
 from ..utils.util import Evaluator, Logger
-from .bnbalgorithm import BnBAlgorithm
+from .bnbalgorithm import BnBAlgorithm, AffordableLCBTransfer
 from .opt_utils import minimizer_wrapper
 from .optproblem import IpoptProb
 import os
+
+def _smt_option(options, name, default=None):
+  try:
+    return options[name] if name in options else default
+  except Exception:
+    try:
+      return options[name]
+    except Exception:
+      return default
+
+
+def _smt_se_geometry(gpsurrogate):
+  """Geometry of the fitted SE/pow-exp(p=2) SMT model."""
+  if not hasattr(gpsurrogate, "surrogatesmt"):
+    raise TypeError("These diagnostics require the smtKRG surrogate")
+
+  sm = gpsurrogate.surrogatesmt
+  corr = str(_smt_option(sm.options, "corr", "pow_exp")).lower()
+  power = float(_smt_option(sm.options, "pow_exp_power", 2.0))
+
+  if corr not in ("pow_exp", "squar_exp"):
+    raise NotImplementedError(
+        f"Clustering diagnostics currently assume an SE kernel; corr={corr}"
+    )
+
+  if corr == "pow_exp" and not np.isclose(power, 2.0):
+    raise NotImplementedError(
+        f"Clustering diagnostics currently assume pow_exp_power=2; "
+        f"got {power}"
+    )
+
+  theta = getattr(sm, "optimal_theta", None)
+  if theta is None:
+    theta = sm.corr.theta
+
+  theta = np.asarray(theta, dtype=float).reshape(-1)
+  if theta.size == 1:
+    theta = np.repeat(theta, gpsurrogate.ndim)
+
+  if theta.size != gpsurrogate.ndim:
+    raise RuntimeError(
+        f"Expected {gpsurrogate.ndim} theta values, got {theta.size}"
+    )
+
+  x_offset = np.asarray(sm.X_offset, dtype=float).reshape(-1)
+  x_scale = np.asarray(sm.X_scale, dtype=float).reshape(-1)
+
+  if np.any(np.abs(x_scale) <= np.finfo(float).tiny):
+    raise RuntimeError("SMT returned a zero input scale")
+
+  return theta, x_offset, x_scale
+
+
+def _domain_normalize(gpsurrogate, x):
+  """Normalize the points to the original BO domain [0,1]^n."""
+  x = np.atleast_2d(np.asarray(x, dtype=float))
+  xlimits = np.asarray(gpsurrogate.xlimits, dtype=float)
+  widths = xlimits[:, 1] - xlimits[:, 0]
+
+  if np.any(widths <= 0.0):
+    raise RuntimeError("All BO-domain widths must be positive")
+
+  return (x - xlimits[:, 0]) / widths
+
+
+def _pairwise_euclidean(x):
+  """Full Euclidean pairwise-distance matrix."""
+  delta = x[:, None, :] - x[None, :, :]
+  return np.sqrt(
+      np.maximum(0.0, np.sum(delta * delta, axis=2))
+  )
+
+
+def _se_kernel_distance_and_correlation(
+    x_left_smt,
+    x_right_smt,
+    theta,
+):
+  """Pairwise SE kernel distance and correlation.
+
+  The inputs must already be in SMT-standardized coordinates.
+
+      distance^2 = sum_j theta_j * delta_j^2
+      correlation = exp(-distance^2)
+  """
+  x_left_smt = np.atleast_2d(
+      np.asarray(x_left_smt, dtype=float)
+  )
+  x_right_smt = np.atleast_2d(
+      np.asarray(x_right_smt, dtype=float)
+  )
+
+  delta = (
+      x_left_smt[:, None, :]
+      - x_right_smt[None, :, :]
+  )
+
+  distance_squared = np.sum(
+      theta[None, None, :] * delta * delta,
+      axis=2,
+  )
+
+  distance = np.sqrt(
+      np.maximum(0.0, distance_squared)
+  )
+  correlation = np.exp(-distance_squared)
+
+  return distance, correlation
+
+
+def _sample_set_clustering_metrics(gpsurrogate, x_train):
+  """
+  Clustering metrics for the sample set used by the current BO step.
+
+  domain_nn_*: Euclidean distances after normalizing each coordinate by the original domain width.
+  domain_nn_p01, p05, and p50: percentiles over the per-sample nearest-neighbor distances, not over all pair distances.
+  smt_nn: ordinary Euclidean distance in SMT-standardized coordinates.
+  kernel_nn: theta-weighted distance 
+  pairs_corr_ge_*: number of unordered sample pairs; each pair is counted once.
+  nearest_old_index: zero-based index of the old point nearest in the kernel metric.
+  domain_nn and smt_nn are independently minimized, so their nearest points can differ from nearest_old_index for an anisotropic GP.
+  corr_max_offdiag off-diagonal maximal correlation in the covariance matrix
+  """
+  
+  x_train = np.atleast_2d(np.asarray(x_train, dtype=float))
+  n_train = x_train.shape[0]
+
+  if n_train < 2:
+    return {"domain_nn_min": np.nan, "domain_nn_p01": np.nan, "domain_nn_p05": np.nan, "domain_nn_p50": np.nan,
+            "kernel_nn_min": np.nan, "corr_max_offdiag": np.nan, "pairs_corr_ge_0p95": 0, "pairs_corr_ge_0p99": 0}
+
+  theta, x_offset, x_scale = _smt_se_geometry(gpsurrogate)
+
+  # Domain-normalized Euclidean distances.
+  x_domain = _domain_normalize(gpsurrogate, x_train,)
+  domain_dist = _pairwise_euclidean(x_domain)
+
+  # Exclude self-distance when finding the nearest neighbor.
+  np.fill_diagonal(domain_dist, np.inf)
+  domain_nn = np.min(domain_dist, axis=1)
+
+  # SMT-standardized and theta-weighted distances.
+  x_smt = (x_train - x_offset) / x_scale
+  kernel_dist, correlation = _se_kernel_distance_and_correlation(x_smt, x_smt, theta)
+
+  np.fill_diagonal(kernel_dist, np.inf)
+  kernel_nn = np.min(kernel_dist, axis=1)
+
+  # Extract each unordered pair exactly once.
+  ii, jj = np.triu_indices(n_train, k=1)
+  corr_offdiag = correlation[ii, jj]
+
+  return {
+      "domain_nn_min": float(np.min(domain_nn)),
+      "domain_nn_p01": float(np.percentile(domain_nn, 1.0)),
+      "domain_nn_p05": float(np.percentile(domain_nn, 5.0)),
+      "domain_nn_p50": float(np.percentile(domain_nn, 50.0)),
+      "kernel_nn_min": float(np.min(kernel_nn)),
+      "corr_max_offdiag": float(np.max(corr_offdiag)),
+      "pairs_corr_ge_0p95": int(np.count_nonzero(corr_offdiag >= 0.95)),
+      "pairs_corr_ge_0p99": int(np.count_nonzero(corr_offdiag >= 0.99)),
+  }
+
+
+def _new_point_clustering_metrics(gpsurrogate, old_x, x_new):
+  """Distances from x_new to the samples present when it was selected."""
+  old_x = np.atleast_2d(np.asarray(old_x, dtype=float))
+  x_new = np.asarray(x_new, dtype=float,).reshape(1, -1)
+
+  theta, x_offset, x_scale = _smt_se_geometry(gpsurrogate)
+
+  # Distance in the original domain-normalized coordinates.
+  old_domain = _domain_normalize(gpsurrogate, old_x)
+  new_domain = _domain_normalize(gpsurrogate, x_new)
+  domain_dist = np.linalg.norm(old_domain - new_domain, axis=1)
+
+  # Distance in SMT-standardized coordinates.
+  old_smt = (old_x - x_offset) / x_scale
+  new_smt = (x_new - x_offset) / x_scale
+  smt_dist = np.linalg.norm(old_smt - new_smt, axis=1)
+
+  # Theta-weighted kernel distance and exact SE correlation.
+  kernel_dist, correlation = _se_kernel_distance_and_correlation(new_smt, old_smt, theta)
+
+  kernel_dist = kernel_dist.reshape(-1)
+  correlation = correlation.reshape(-1)
+
+  # Define nearest_old_index using the GP/kernel metric.
+  nearest_old_index = int(np.argmin(kernel_dist))
+
+  return {
+      "domain_nn": float(np.min(domain_dist)),
+      "smt_nn": float(np.min(smt_dist)),
+      "kernel_nn": float(kernel_dist[nearest_old_index]),
+      "kernel_corr_to_nearest": float(correlation[nearest_old_index]),
+      "nearest_old_index": nearest_old_index,
+  }
 
 # A base class defining a general framework for Bayesian Optimization
 class BOAlgorithmBase:
@@ -34,6 +232,7 @@ class BOAlgorithmBase:
     self.bo_maxiter = 20          # Maximum number of Bayesian optimization steps
     self.n_start = 10             # estimating acquisition global optima by determining local optima n_start times and then determining the discrete max of that set
     self.batch_size = 1           # batch size
+    self.nretraingp = 1           # number of BO iterations after which the GP is fully retrained
     # save some internal member train
     self.y_hist = None            # History of evaluations
     self.x_hist = None            # History of evaluations
@@ -96,6 +295,10 @@ class BOAlgorithm(BOAlgorithmBase):
     self.n_start = options.get('n_start', self.n_start)
     assert self.n_start > 0, f"Invalid n_start: {self.n_start}"
 
+    self.nretraingp = options.get('nretraingp', self.nretraingp)
+    if(type(self.nretraingp) is not int or self.nretraingp < 1):
+      raise ValueError("nretraingp must be a positive integer")
+    
     acquisition_type = options.get('acquisition_type', "LCB")
     assert acquisition_type in ["LCB", "EI"], f"Invalid acquisition_type: {acquisition_type}"
 
@@ -144,9 +347,40 @@ class BOAlgorithm(BOAlgorithmBase):
       self.fun_grad = user_grad
 
     self.bnb_warm_start = True
-    self.bnb_warm_start = options.get('BnBWarmStart', self.bnb_warm_start)
-    assert isinstance(self.bnb_warm_start, bool), "provided BnBWarmStart is not a boolean type"
+    self.bnb_warm_start = options.get('bnb_warmstart', self.bnb_warm_start)
+    assert isinstance(self.bnb_warm_start, bool), "provided bnb_warmstart is not a boolean type"
+
+
     
+    self.bnb_affordable_lcb_transfer = options.get(
+        "bnb_affordable_lcb_transfer",
+        False,
+    )
+    if not isinstance(
+        self.bnb_affordable_lcb_transfer, bool
+    ):
+      raise TypeError(
+          "bnb_affordable_lcb_transfer must be bool"
+      )
+
+    
+    # Transfer prepared at the end of the preceding BO iteration.
+    self._bnb_affordable_transfer = None
+
+    ##################################################################################################
+    # Options consistency checks
+    ##################################################################################################
+    if self.bnb_affordable_lcb_transfer:
+      if (self.opt_solver != "BnB" or self.acquisition_type != "LCB"):
+        raise ValueError("Affordable transfer requires BnB and LCB with BO solver")
+      if self.batch_size != 1:
+        raise ValueError("Affordable tranfer only supports batch_size=1")
+      if not self.bnb_warm_start:
+        raise ValueError("Affordable transfer requires bnb_warmstart=True")
+      if self.bnb_lower_bound_transfer is not None:
+        raise ValueError("Do not combine automatic and user-supplied transfers for affordable bound tranfer")
+
+      
     self.logger.info(f"Problem name: {prob.name}")
     self.logger.info(f"Max BO iter: {self.bo_maxiter}")
     self.logger.info(f"Optimizing acquisition ({self.acquisition_type}) "
@@ -162,22 +396,36 @@ class BOAlgorithm(BOAlgorithmBase):
     self.logger.info(f"Logger level: {logger_level}")
 
   # Method to train the GP model
-  def _train_surrogate(self, x_train, y_train):
-    self.logger.debug("Training surrogate model with "
-                      f"{x_train.shape[0]} samples...")
-    self.gpsurrogate.train(x_train, y_train)
+  def _train_surrogate(self, x_train, y_train, *, full_retrain, preserve_prior=False):
+    self.logger.debug(f"Training surrogate model with {x_train.shape[0]} samples...")
+    theta_bounds = None
+
+    if full_retrain:
+      sm = self.gpsurrogate.surrogatesmt
+      corr = sm.options["corr"]
+      power = float(sm.options["pow_exp_power"])
+
+      theta_bounds = smt_theta_bounds(S=x_train.shape[0], N=x_train.shape[1], corr=corr, pow_exp_power=power)
+      self.logger.info(f"Full GP retrain: S={x_train.shape[0]}, theta_bounds={theta_bounds}")
+    else:
+      msg = "Fixed-prior GP refit" if preserve_prior else "Fixed-theta GP refit"
+      self.logger.debug(msg)      
+
+
+    self.gpsurrogate.train(x_train, y_train, optimize_theta=full_retrain,
+                           theta_bounds=theta_bounds, preserve_prior=preserve_prior)
     self.logger.debug("Surrogate training complete.")
 
   # Method to find the best next sampling point via optimizing the acquisition function
   def _find_best_point(self, x_train, y_train, x0 = None, BOit=0):
     self.logger.info(f"Start finding the best sampling point:")
-    self._train_surrogate(x_train, y_train)
+
     if self.acquisition_type == "LCB":
       acqf = LCBacquisition(self.gpsurrogate, beta=self.LCB_beta)
     elif self.acquisition_type == "EI":
       acqf = EIacquisition(self.gpsurrogate)
     else:
-      raise NotImplementedError("No implemented acquisition_type associated to"+self.acquisition_type)
+      raise NotImplementedError("No implemented acquisition_type associated to" + self.acquisition_type)
 
     acqf_callback = {'obj' : acqf.scalar_evaluate}
     if acqf.has_gradient:
@@ -261,8 +509,10 @@ class BOAlgorithm(BOAlgorithmBase):
   def optimize(self):
     x_train = self.xtrain
     y_train = self.ytrain
-    self.logger.iterations(f"Best UNCONSTRAINED objective from {np.size(x_train, 0)} initial samples: {np.min(y_train):.4e} ")
+    self.logger.iterations(f"Best objective from {np.size(x_train, 0)} initial samples: {np.min(y_train):.4e} ")
 
+    self._train_surrogate(x_train, y_train, full_retrain=True)
+    
     # filter feasible points
     fea_idx = self.prob.if_feasible(x_train, y_train)
     y_fea = y_train[fea_idx]
@@ -282,12 +532,42 @@ class BOAlgorithm(BOAlgorithmBase):
       self.logger.critical(f"*****************************")
       self.logger.critical(f"Iteration {i+1}/{self.bo_maxiter}")
 
+      #
+      # Diagnostics code
+      #
+      bo_iteration_number = i + 1
+
+      sample_metrics = _sample_set_clustering_metrics(self.gpsurrogate, x_train)
+
+      self.logger.scalars(f"Sample-set clustering (Euclidean distance) at start of BO iteration {bo_iteration_number}: ")
+      self.logger.scalars(f"  domain_nn_min={sample_metrics['domain_nn_min']:.6e}, "
+                          f"domain_nn_p01="
+                          f"{sample_metrics['domain_nn_p01']:.6e}, "
+                          f"domain_nn_p05="
+                          f"{sample_metrics['domain_nn_p05']:.6e}, "
+                          f"domain_nn_p50="
+                          f"{sample_metrics['domain_nn_p50']:.6e}")
+
+      self.logger.scalars(f"Sample-set kernel (theta-weighted) distance and GP correlation at start of BO iteration {bo_iteration_number}: ")
+      self.logger.scalars(f"  kernel_nn_min="
+                          f"{sample_metrics['kernel_nn_min']:.6e}, "
+                          f"corr_max_offdiag="
+                          f"{sample_metrics['corr_max_offdiag']:.6e}, "
+                          f"pairs_corr_ge_0p95="
+                          f"{sample_metrics['pairs_corr_ge_0p95']}, "
+                          f"pairs_corr_ge_0p99="
+                          f"{sample_metrics['pairs_corr_ge_0p99']}")
+
+      selected_point_metrics = []
+      
       y_train_virtual = y_train.copy() # old training + batch_size num of virtual points
       if self.opt_solver != "BnB":
         for j in range(self.batch_size):
           # Get a new sample point
           self.logger.scalars(f"In batch {j+1}/{self.batch_size}")
           x_new = self._find_best_point(x_train, y_train_virtual, BOit=i)
+
+          selected_point_metrics.append(_new_point_clustering_metrics(self.gpsurrogate, x_train, x_new))
           
           # Update training sample points
           x_train = np.vstack([x_train, x_new])
@@ -300,7 +580,7 @@ class BOAlgorithm(BOAlgorithmBase):
 
             # Update training set with the virtual point
             y_train_virtual = np.vstack([y_train_virtual, y_virtual])
-            self.gpsurrogate.train(x_train, y_train_virtual)
+            self._train_surrogate(x_train, y_train_virtual, full_retrain=False)
 
           mean_val = self.gpsurrogate.mean(np.array([x_new])).item()
           sd_val = np.sqrt(self.gpsurrogate.variance(np.array([x_new])).item())
@@ -316,11 +596,16 @@ class BOAlgorithm(BOAlgorithmBase):
         bnb = BnBAlgorithm(acqf, options=self.solver_options, BOit=i)
      
         # Initialize BnB (perhaps use old set of boxes if self.bnb_queue is not None)
-        bnb.initialize(
-          partition=self.bnb_partition,
-          transfer_lower_bound=self.bnb_lower_bound_transfer,
-        )
-        
+        #bnb.initialize(partition=self.bnb_partition, transfer_lower_bound=self.bnb_lower_bound_transfer)
+        restart_transfer = self.bnb_lower_bound_transfer
+
+        if self.bnb_affordable_lcb_transfer:
+          restart_transfer = self._bnb_affordable_transfer
+
+          # AffordableTransfer from the paper: callback describes exactly one GP update.
+          self._bnb_affordable_transfer = None
+
+        bnb.initialize(partition=self.bnb_partition, transfer_lower_bound=restart_transfer)
         # Run BnB optimization
         best_xopt = bnb.optimize()
         self.logger.info(f"BnB nodes explored: {bnb.num_branches}")
@@ -356,6 +641,15 @@ class BOAlgorithm(BOAlgorithmBase):
             x_new.append(clusters[i][arg])
             distances = np.zeros(int((len(clusters[i]) * len(clusters[i]) -1 ) / 2))
         x_new = np.atleast_2d(x_new)
+        
+        diagnostic_old_x = np.array(x_train, copy=True)
+        for point in x_new:
+          selected_point_metrics.append(_new_point_clustering_metrics(self.gpsurrogate, diagnostic_old_x, point))
+
+          # For batch_size > 1, later points are also compared
+          # with points selected earlier in this batch.
+          diagnostic_old_x = np.vstack([diagnostic_old_x, point])
+        
         x_train = np.vstack([x_train, x_new])
         if self.bnb_warm_start:
           # Update queue in order to warm-start BnB at next BO step
@@ -366,8 +660,33 @@ class BOAlgorithm(BOAlgorithmBase):
       y_new = self.obj_evaluator.run(self.prob.evaluate, x_train[-self.batch_size:])
       y_new = np.array(y_new)
       y_train = np.vstack([y_train, y_new])
-      self.gpsurrogate.train(x_train, y_train)
 
+      # Full theta optimization after each nretrainGP completed iterations.
+      full_retrain = (i + 1) % self.nretraingp == 0
+      next_transfer = None
+      #self._train_surrogate(x_train, y_train, full_retrain=full_retrain)
+
+      if(self.bnb_affordable_lcb_transfer and self.bnb_warm_start and not full_retrain):
+        try:
+          # Snapshot the old posterior before smtKRG is refitted in place.
+          next_transfer = AffordableLCBTransfer(bnb, x_plus=x_new[0], y_plus=np.asarray(y_new).reshape(-1)[0])
+        except (TypeError, ValueError, RuntimeError, FloatingPointError) as error:
+          self.logger.info(f"Affordable LCB transfer unavailable; bounds will be recomputed: {error}")
+
+      self._train_surrogate(x_train, y_train, full_retrain=full_retrain,
+                            preserve_prior=(next_transfer is not None))
+
+      if next_transfer is not None:
+        try:
+          next_transfer.validate_new_model(self.gpsurrogate, self.LCB_beta)
+        except RuntimeError as error:
+          # Safe fallback: the retained partition is still useful,
+          # but restart_callback will recompute every lower bound.
+          self.logger.info(f"Affordable LCB transfer rejected: bounds will be recomputed: {error}")
+          next_transfer = None
+
+      self._bnb_affordable_transfer = next_transfer
+      
       feas_new = self.prob.if_feasible(x_train[-self.batch_size:])
       self.logger.debug(f"Feasible samples: {np.sum(feas_new)}/{self.batch_size}")
 
@@ -398,6 +717,19 @@ class BOAlgorithm(BOAlgorithmBase):
         self.logger.debug(f"Observations Y:")
       for j in range(self.batch_size):
         self.logger.debug(f"  {y_new[-j-1]}")
+
+      for j, point_metrics in enumerate(selected_point_metrics):
+        self.logger.scalars(f"Selected-point clustering at end of BO iteration {bo_iteration_number}, batch point {j+1}: ")
+        self.logger.scalars(f"  domain_nn(Euclidean dist)="
+                            f"{point_metrics['domain_nn']:.6e}, "
+                            f"smt_nn(distance in SMT coordinates)="
+                            f"{point_metrics['smt_nn']:.6e}, "
+                            f"kernel_nn(theta-weighted distances)="
+                            f"{point_metrics['kernel_nn']:.6e}, "
+                            f"kernel_corr_to_nearest="
+                            f"{point_metrics['kernel_corr_to_nearest']:.6e}, "
+                            f"nearest_old_index="
+                            f"{point_metrics['nearest_old_index']}")
 
       prev_best_y = curr_best_y
 

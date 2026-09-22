@@ -64,3 +64,97 @@ class minimizer_wrapper:
         xopt = sol
       output.append([xopt, yopt, success, msg])
     return output
+
+from scipy.optimize import lsq_linear
+import numpy as np
+def fit_common_se_point_from_ratios(owner, k_values, l, u, anchor=0):
+    """
+    Fit one common point using all log-kernel ratios.
+
+    Small pair_residuals mean that the relaxed kernel ratios are
+    consistent with one point.  The absolute residuals then test
+    whether the common multiplicative scale is also correct.
+    """
+    k_values = np.asarray(k_values, dtype=float).ravel()
+
+    if np.any(~np.isfinite(k_values)) or np.any(k_values <= 0.0):
+        raise ValueError("All kernel values must be finite and positive")
+
+    theta = np.asarray(owner.theta, dtype=float).ravel()
+    Xc = np.asarray(owner.Xc, dtype=float)
+
+    l_c = (
+        np.asarray(l, dtype=float).ravel()
+        - owner.X_offset
+    ) / owner.X_scale
+    u_c = (
+        np.asarray(u, dtype=float).ravel()
+        - owner.X_offset
+    ) / owner.X_scale
+
+    rho_target = -np.log(k_values)
+    center_norm2 = np.sum(
+        theta[None, :] * Xc**2,
+        axis=1,
+    )
+
+    p = len(k_values)
+    other = np.asarray(
+        [i for i in range(p) if i != anchor],
+        dtype=int,
+    )
+
+    if len(other) == 0:
+        raise ValueError(
+            "At least two kernel components are required"
+        )
+
+    # rho_i - rho_r
+    # = 2 (c_r - c_i)^T Theta y
+    #   + ||c_i||_Theta^2 - ||c_r||_Theta^2.
+    A = 2.0 * (Xc[anchor][None, :] - Xc[other]) * theta[None, :]
+    b = rho_target[other] - rho_target[anchor] - (center_norm2[other] - center_norm2[anchor])
+
+    result = lsq_linear(A, b, bounds=(l_c, u_c), method="trf", lsmr_tol="auto")
+
+    y_common = result.x
+    x_common = (
+        owner.X_offset
+        + owner.X_scale * y_common
+    )
+
+    pair_residual = A @ y_common - b
+
+    rho_common = np.sum(
+        theta[None, :]
+        * (y_common[None, :] - Xc) ** 2,
+        axis=1,
+    )
+
+    absolute_residual = rho_common - rho_target
+
+    return {
+        "x_common": x_common,
+        "y_common": y_common,
+        "rank": int(np.linalg.matrix_rank(A)),
+        "pair_rms": float(
+            np.sqrt(np.mean(pair_residual**2))
+        ),
+        "pair_max": float(
+            np.max(np.abs(pair_residual))
+        ),
+        "absolute_rms": float(
+            np.sqrt(np.mean(absolute_residual**2))
+        ),
+        "absolute_max": float(
+            np.max(np.abs(absolute_residual))
+        ),
+        "absolute_mean": float(
+            np.mean(absolute_residual)
+        ),
+        "absolute_std": float(
+            np.std(absolute_residual)
+        ),
+        "pair_residual": pair_residual,
+        "absolute_residual": absolute_residual,
+    }
