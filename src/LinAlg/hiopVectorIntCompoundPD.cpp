@@ -99,8 +99,6 @@ void hiopVectorIntCompoundPD::addVector(hiopVectorInt* v)
 
 hiopVectorInt& hiopVectorIntCompoundPD::getVector(index_type index) const { return *(vectors_[index]); }
 
-size_type hiopVectorIntCompoundPD::get_local_size() const { return sz_; }
-
 size_type hiopVectorIntCompoundPD::get_num_parts() const { return n_parts_; }
 
 }  // namespace hiop

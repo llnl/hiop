@@ -250,9 +250,7 @@ int hiopLinSolverSymSparseSTRUMPACK::matrixChanged()
     return -1;
   } else if(strumpack::ReturnCode::SUCCESS == retval) {
     retval = spss.inertia(num_neg_eig_val, num_zero_eig_val, num_pos_eig_val);
-    if(strumpack::ReturnCode::SUCCESS == retval) {
-      num_neg_eig_val = num_neg_eig_val;
-    } else {
+    if(strumpack::ReturnCode::SUCCESS != retval) {
       if(nlp_->options->GetString("fact_acceptor") == "inertia_correction") {
         nlp_->log->printf(hovError,
                           "strumpack: failed to provide accurate inertia infomation. Please use inertia-free approach.");

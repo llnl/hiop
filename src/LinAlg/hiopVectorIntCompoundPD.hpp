@@ -79,8 +79,6 @@ public:
 
   hiopVectorInt& getVector(index_type index) const;
 
-  size_type get_local_size() const;
-
   /* @brief return the number of parts in this compound vector */
   size_type get_num_parts() const;
 

@@ -1,7 +1,6 @@
 #pragma once
 #include <string>
 #include <sstream>
-#include <cstdlib>
 #include "hiop_defs.hpp"
 
 namespace hiop
@@ -84,9 +83,9 @@ struct hiopVersion
 
   static inline void version(int& major, int& minor, int& patch)
   {
-    major = std::atoi(HIOP_VERSION_MAJOR);
-    minor = std::atoi(HIOP_VERSION_MINOR);
-    patch = std::atoi(HIOP_VERSION_PATCH);
+    major = HIOP_VERSION_MAJOR;
+    minor = HIOP_VERSION_MINOR;
+    patch = HIOP_VERSION_PATCH;
   }
 
   static inline std::string version() { return HIOP_VERSION; }

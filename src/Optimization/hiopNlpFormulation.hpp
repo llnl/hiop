@@ -467,8 +467,6 @@ public:
   hiopNlpDenseConstraints(hiopInterfaceDenseConstraints& interface, const char* option_file = nullptr);
   virtual ~hiopNlpDenseConstraints();
 
-  virtual bool finalizeInitialization();
-
   virtual bool eval_Jac_c(hiopVector& x, bool new_x, hiopMatrix& Jac_c);
   virtual bool eval_Jac_d(hiopVector& x, bool new_x, hiopMatrix& Jac_d);
   /* specialized evals to avoid overhead of dynamic cast. Generic variants available above. */

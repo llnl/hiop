@@ -157,7 +157,7 @@ void hiopOptions::load_from_file(const char* filename)
   }
   string name, value;
   for(std::string line; getline(input, line);) {
-    line = ltrim(line);
+    ltrim(line);
 
     if(line.size() == 0) continue;
     if(line[0] == '#') continue;
@@ -1585,13 +1585,13 @@ void hiopOptionsNLP::ensure_consistence()
                                       "checkpoint_save_every_N_iter",
                                       "checkpoint_file",
                                       "checkpoint_load_on_start"};
-  for(string opt: chkpnt_opts) {
+  for(const auto& opt: chkpnt_opts) {
     if(is_user_defined(opt.c_str())) {
       log_printf(hovWarning,
                  "Checkpointing not available since HiOp was not built with AXOM. All checkpointing options "
                  "are ignored.\n");
       // reset them to as not being user defined to avoid triggering the message.
-      for(auto opt2: chkpnt_opts) {
+      for(const auto& opt2: chkpnt_opts) {
         mOptions_[opt2]->specifiedInFile = false;
         mOptions_[opt2]->specifiedAtRuntime = false;
       }

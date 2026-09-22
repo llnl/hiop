@@ -465,8 +465,6 @@ public:
   virtual bool assertSymmetry(double tol = 1e-16) const { return true; }
 #endif
 
-  virtual void extract_diagonal(hiopVector& diag_out) const { assert(false && "not yet implemented"); }
-
   virtual size_type numberOfOffDiagNonzeros() const;
 
   virtual void set_Jac_FR(const hiopMatrixSparse& Jac_c,
