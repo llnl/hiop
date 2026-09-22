@@ -144,32 +144,17 @@ def _sample_set_clustering_metrics(gpsurrogate, x_train):
   corr_max_offdiag off-diagonal maximal correlation in the covariance matrix
   """
   
-  x_train = np.atleast_2d(
-      np.asarray(x_train, dtype=float)
-  )
+  x_train = np.atleast_2d(np.asarray(x_train, dtype=float))
   n_train = x_train.shape[0]
 
   if n_train < 2:
-    return {
-        "domain_nn_min": np.nan,
-        "domain_nn_p01": np.nan,
-        "domain_nn_p05": np.nan,
-        "domain_nn_p50": np.nan,
-        "kernel_nn_min": np.nan,
-        "corr_max_offdiag": np.nan,
-        "pairs_corr_ge_0p99": 0,
-        "pairs_corr_ge_0p999": 0,
-    }
+    return {"domain_nn_min": np.nan, "domain_nn_p01": np.nan, "domain_nn_p05": np.nan, "domain_nn_p50": np.nan,
+            "kernel_nn_min": np.nan, "corr_max_offdiag": np.nan, "pairs_corr_ge_0p95": 0, "pairs_corr_ge_0p99": 0}
 
-  theta, x_offset, x_scale = _smt_se_geometry(
-      gpsurrogate
-  )
+  theta, x_offset, x_scale = _smt_se_geometry(gpsurrogate)
 
   # Domain-normalized Euclidean distances.
-  x_domain = _domain_normalize(
-      gpsurrogate,
-      x_train,
-  )
+  x_domain = _domain_normalize(gpsurrogate, x_train,)
   domain_dist = _pairwise_euclidean(x_domain)
 
   # Exclude self-distance when finding the nearest neighbor.
@@ -178,13 +163,7 @@ def _sample_set_clustering_metrics(gpsurrogate, x_train):
 
   # SMT-standardized and theta-weighted distances.
   x_smt = (x_train - x_offset) / x_scale
-  kernel_dist, correlation = (
-      _se_kernel_distance_and_correlation(
-          x_smt,
-          x_smt,
-          theta,
-      )
-  )
+  kernel_dist, correlation = _se_kernel_distance_and_correlation(x_smt, x_smt, theta)
 
   np.fill_diagonal(kernel_dist, np.inf)
   kernel_nn = np.min(kernel_dist, axis=1)
@@ -195,94 +174,47 @@ def _sample_set_clustering_metrics(gpsurrogate, x_train):
 
   return {
       "domain_nn_min": float(np.min(domain_nn)),
-      "domain_nn_p01": float(
-          np.percentile(domain_nn, 1.0)
-      ),
-      "domain_nn_p05": float(
-          np.percentile(domain_nn, 5.0)
-      ),
-      "domain_nn_p50": float(
-          np.percentile(domain_nn, 50.0)
-      ),
+      "domain_nn_p01": float(np.percentile(domain_nn, 1.0)),
+      "domain_nn_p05": float(np.percentile(domain_nn, 5.0)),
+      "domain_nn_p50": float(np.percentile(domain_nn, 50.0)),
       "kernel_nn_min": float(np.min(kernel_nn)),
-      "corr_max_offdiag": float(
-          np.max(corr_offdiag)
-      ),
-      "pairs_corr_ge_0p99": int(
-          np.count_nonzero(corr_offdiag >= 0.99)
-      ),
-      "pairs_corr_ge_0p999": int(
-          np.count_nonzero(corr_offdiag >= 0.999)
-      ),
+      "corr_max_offdiag": float(np.max(corr_offdiag)),
+      "pairs_corr_ge_0p95": int(np.count_nonzero(corr_offdiag >= 0.95)),
+      "pairs_corr_ge_0p99": int(np.count_nonzero(corr_offdiag >= 0.99)),
   }
 
 
-def _new_point_clustering_metrics(
-    gpsurrogate,
-    old_x,
-    x_new,
-):
+def _new_point_clustering_metrics(gpsurrogate, old_x, x_new):
   """Distances from x_new to the samples present when it was selected."""
-  old_x = np.atleast_2d(
-      np.asarray(old_x, dtype=float)
-  )
-  x_new = np.asarray(
-      x_new,
-      dtype=float,
-  ).reshape(1, -1)
+  old_x = np.atleast_2d(np.asarray(old_x, dtype=float))
+  x_new = np.asarray(x_new, dtype=float,).reshape(1, -1)
 
-  theta, x_offset, x_scale = _smt_se_geometry(
-      gpsurrogate
-  )
+  theta, x_offset, x_scale = _smt_se_geometry(gpsurrogate)
 
   # Distance in the original domain-normalized coordinates.
-  old_domain = _domain_normalize(
-      gpsurrogate,
-      old_x,
-  )
-  new_domain = _domain_normalize(
-      gpsurrogate,
-      x_new,
-  )
-  domain_dist = np.linalg.norm(
-      old_domain - new_domain,
-      axis=1,
-  )
+  old_domain = _domain_normalize(gpsurrogate, old_x)
+  new_domain = _domain_normalize(gpsurrogate, x_new)
+  domain_dist = np.linalg.norm(old_domain - new_domain, axis=1)
 
   # Distance in SMT-standardized coordinates.
   old_smt = (old_x - x_offset) / x_scale
   new_smt = (x_new - x_offset) / x_scale
-  smt_dist = np.linalg.norm(
-      old_smt - new_smt,
-      axis=1,
-  )
+  smt_dist = np.linalg.norm(old_smt - new_smt, axis=1)
 
   # Theta-weighted kernel distance and exact SE correlation.
-  kernel_dist, correlation = (
-      _se_kernel_distance_and_correlation(
-          new_smt,
-          old_smt,
-          theta,
-      )
-  )
+  kernel_dist, correlation = _se_kernel_distance_and_correlation(new_smt, old_smt, theta)
 
   kernel_dist = kernel_dist.reshape(-1)
   correlation = correlation.reshape(-1)
 
   # Define nearest_old_index using the GP/kernel metric.
-  nearest_old_index = int(
-      np.argmin(kernel_dist)
-  )
+  nearest_old_index = int(np.argmin(kernel_dist))
 
   return {
       "domain_nn": float(np.min(domain_dist)),
       "smt_nn": float(np.min(smt_dist)),
-      "kernel_nn": float(
-          kernel_dist[nearest_old_index]
-      ),
-      "kernel_corr_to_nearest": float(
-          correlation[nearest_old_index]
-      ),
+      "kernel_nn": float(kernel_dist[nearest_old_index]),
+      "kernel_corr_to_nearest": float(correlation[nearest_old_index]),
       "nearest_old_index": nearest_old_index,
   }
 
@@ -607,31 +539,24 @@ class BOAlgorithm(BOAlgorithmBase):
 
       sample_metrics = _sample_set_clustering_metrics(self.gpsurrogate, x_train)
 
-      self.logger.scalars(
-          f"Sample-set clustering at start of BO iteration "
-          f"{bo_iteration_number}: "
-          f"domain_nn_min="
-          f"{sample_metrics['domain_nn_min']:.6e}, "
-          f"domain_nn_p01="
-          f"{sample_metrics['domain_nn_p01']:.6e}, "
-          f"domain_nn_p05="
-          f"{sample_metrics['domain_nn_p05']:.6e}, "
-          f"domain_nn_p50="
-          f"{sample_metrics['domain_nn_p50']:.6e}"
-      )
+      self.logger.scalars(f"Sample-set clustering (Euclidean distance) at start of BO iteration {bo_iteration_number}: ")
+      self.logger.scalars(f"  domain_nn_min={sample_metrics['domain_nn_min']:.6e}, "
+                          f"domain_nn_p01="
+                          f"{sample_metrics['domain_nn_p01']:.6e}, "
+                          f"domain_nn_p05="
+                          f"{sample_metrics['domain_nn_p05']:.6e}, "
+                          f"domain_nn_p50="
+                          f"{sample_metrics['domain_nn_p50']:.6e}")
 
-      self.logger.scalars(
-          f"Sample-set kernel correlation at start of BO iteration "
-          f"{bo_iteration_number}: "
-          f"kernel_nn_min="
-          f"{sample_metrics['kernel_nn_min']:.6e}, "
-          f"corr_max_offdiag="
-          f"{sample_metrics['corr_max_offdiag']:.6e}, "
-          f"pairs_corr_ge_0p99="
-          f"{sample_metrics['pairs_corr_ge_0p99']}, "
-          f"pairs_corr_ge_0p999="
-          f"{sample_metrics['pairs_corr_ge_0p999']}"
-      )
+      self.logger.scalars(f"Sample-set kernel (theta-weighted) distance and GP correlation at start of BO iteration {bo_iteration_number}: ")
+      self.logger.scalars(f"  kernel_nn_min="
+                          f"{sample_metrics['kernel_nn_min']:.6e}, "
+                          f"corr_max_offdiag="
+                          f"{sample_metrics['corr_max_offdiag']:.6e}, "
+                          f"pairs_corr_ge_0p95="
+                          f"{sample_metrics['pairs_corr_ge_0p95']}, "
+                          f"pairs_corr_ge_0p99="
+                          f"{sample_metrics['pairs_corr_ge_0p99']}")
 
       selected_point_metrics = []
       
@@ -794,20 +719,17 @@ class BOAlgorithm(BOAlgorithmBase):
         self.logger.debug(f"  {y_new[-j-1]}")
 
       for j, point_metrics in enumerate(selected_point_metrics):
-        self.logger.scalars(
-            f"Selected-point clustering at end of BO iteration "
-            f"{bo_iteration_number}, batch point {j+1}: "
-            f"domain_nn="
-            f"{point_metrics['domain_nn']:.6e}, "
-            f"smt_nn="
-            f"{point_metrics['smt_nn']:.6e}, "
-            f"kernel_nn="
-            f"{point_metrics['kernel_nn']:.6e}, "
-            f"kernel_corr_to_nearest="
-            f"{point_metrics['kernel_corr_to_nearest']:.6e}, "
-            f"nearest_old_index="
-            f"{point_metrics['nearest_old_index']}"
-        )
+        self.logger.scalars(f"Selected-point clustering at end of BO iteration {bo_iteration_number}, batch point {j+1}: ")
+        self.logger.scalars(f"  domain_nn(Euclidean dist)="
+                            f"{point_metrics['domain_nn']:.6e}, "
+                            f"smt_nn(distance in SMT coordinates)="
+                            f"{point_metrics['smt_nn']:.6e}, "
+                            f"kernel_nn(theta-weighted distances)="
+                            f"{point_metrics['kernel_nn']:.6e}, "
+                            f"kernel_corr_to_nearest="
+                            f"{point_metrics['kernel_corr_to_nearest']:.6e}, "
+                            f"nearest_old_index="
+                            f"{point_metrics['nearest_old_index']}")
 
       prev_best_y = curr_best_y
 
