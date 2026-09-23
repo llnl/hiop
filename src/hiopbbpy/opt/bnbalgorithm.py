@@ -739,7 +739,11 @@ class GPBoundComputationCommon:
   """
 
   _convex_relaxation_verbose = False
-  _collect_expsec_weights = False
+
+  def save_expsec_weights(self, cons, lamvar, lamL, lamU):
+    """Optional post-solve hook; branching_wrapper overrides this."""
+    return None
+
   def convex_relaxation(self, l, u, kL, kU, opt_mode=2, mode=0):
     """
     mode: 0 --> convex relaxation for minimum of LCB acquisition function
@@ -988,7 +992,8 @@ class GPBoundComputationCommon:
             Ei_exp[i] = 0.
           #Ai[i] = Ei_exp[i] * (gamma_floor + (1. - gamma_floor) * np.abs(self.gamma[i]) / (np.max(np.abs(self.gamma)) + eps_gamma))
           Ai[i] = Ei_exp[i] * (sensitivity_floor + (1.0 - sensitivity_floor) * normalized_lcb_sensitivity[i])
-        pair_selection_triplets = np.array([[pair[0], pair[1], Ai[pair[0]] + Ai[pair[1]]] for pair in self.nearest_neighbor_pairs]).reshape(-1, 3)
+        pair_selection_triplets = np.array([[pair[0], pair[1], (Ai[pair[0]] + Ai[pair[1]])/self.pairs_dist[pair[0],pair[1]]] for pair in self.nearest_neighbor_pairs])
+        #pair_selection_triplets = np.array([[pair[0], pair[1], Ai[pair[0]] + Ai[pair[1]]] for pair in self.nearest_neighbor_pairs]).reshape(-1, 3)
         args = np.argsort(pair_selection_triplets[:,-1])[::-1]
         pair_selection_triplets[:,:] = pair_selection_triplets[args,:]
         # now find c1 * p pairs
@@ -1062,8 +1067,7 @@ class GPBoundComputationCommon:
 
           if opt_mode in (5,6):
             assert mode == 0
-            if self._collect_expsec_weights:            
-              self.save_expsec_weights(cons, lamvar, lamL, lamU)
+            self.save_expsec_weights(cons, lamvar, lamL, lamU)
 
         else:
           sig_U = cp.Problem(cp.Maximize(self.obj3), cons).solve(solver=cp.CLARABEL, verbose=verbose, tol_gap_abs=opt_tol, tol_gap_rel=opt_rel_tol, max_iter=max_iters)
@@ -1169,7 +1173,12 @@ class GPBoundComputationCommon:
       s2_L = min(S2.flatten())
 
     # variance upper-bound (in terms of kernel k) defined by convex QP
-    cons = [self.C @ self.z >= kL, self.C @ self.z <= kU]
+    if len(B) == 0:
+      cons = [self.C @ self.z >= kL, self.C @ self.z <= kU]
+    else:
+      Bcon = B.dot(self.C)
+      cons = [self.C @ self.z >= kL, self.C @ self.z <= kU, Bcon @ self.z >= 0]
+
     s2_U_n = cp.Problem(cp.Maximize(self.obj), cons).solve(solver="OSQP",verbose=False,eps_abs=1.e-14, eps_rel=1.e-10)
 
     assert np.isfinite(s2_U_n), "convex optimizer did not converge"
@@ -1177,6 +1186,7 @@ class GPBoundComputationCommon:
     # re-scale
     s2_U = s2_U_n * self.sigma2 
     return s2_L, s2_U
+
   def LCB_LB(self, l, u, kL, kU, opt_mode=2):
     return self.convex_relaxation(l, u, kL, kU, opt_mode=opt_mode)
   def sig_UB(self, l, u, kL, kU, opt_mode=2):
@@ -1199,7 +1209,9 @@ class GPBoundComputationCommon:
     kL, kU = self.ker_bounds(l, u)
     if self.kernel_spec == "pow_exp":
       assert self.p == 1.0 or self.p == 2.0, "not supporting p not equal to 1 or 2"
-    
+
+    self.expsec_weights = np.ones(np.asarray(self.gamma).size)
+      
     failed_LB_opt = False
     if isinstance(self.acqf, LCBacquisition):
       # opt_mode = 0 (previous baseline w ratio constraints)
@@ -1515,7 +1527,8 @@ class BnBAlgorithmBase:
 
     #TODO: update me, embed in try loop... some other strategy for when the maximization does not work!!!
 
-    s2_U_n = cp.Problem(cp.Maximize(self.obj), cons).solve(solver="OSQP",verbose=self.verbose_cvx_solver, eps_abs=1.e-14, eps_rel=1.e-10)
+    s2_U_n = cp.Problem(cp.Maximize(self.obj), cons).solve(solver="OSQP", verbose=bool(getattr(self, "verbose_cvx_solver", False)),
+                                                           eps_abs=1.e-14, eps_rel=1.e-10)
     assert np.isfinite(s2_U_n), "convex optimizer did not converge"
     
     # re-scale
@@ -1847,7 +1860,6 @@ def stats_lcb_relaxation_gap(owner, xvar, relaxation_value) -> str:
 
 class BnBAlgorithm(GPBoundComputationCommon, BnBAlgorithmBase):
   _convex_relaxation_verbose = True
-  _collect_expsec_weights = False
   def __init__(self, acqf, options = {}, BOit=0):
     self.acqf = acqf
     self.gpsurrogate = acqf.gpsurrogate
@@ -2574,7 +2586,8 @@ class BnBAlgorithm(GPBoundComputationCommon, BnBAlgorithmBase):
       restart_worker = branching_wrapper(self.acqf, LUB=np.inf, epsilon_prune=self.epsilon_prune,
                                          acqf_UB_solver=self.acqf_UB_solver, random_seed=self.random_seed,
                                          opt_mode=self.opt_mode, nearest_neighbor_pairs=self.nearest_neighbor_pairs,
-                                         diagnostics=self.diagnostics, restart_lower_bound=transfer_lower_bound)
+                                         diagnostics=self.diagnostics, restart_lower_bound=transfer_lower_bound,
+                                         pairs_dist=self.pairs_dist)
       
     return initialize_async_search(self, l0=l0, u0=u0, queue=queue, partition=partition,
                                    transfer_lower_bound=transfer_lower_bound, restart_worker=restart_worker)
@@ -2791,8 +2804,8 @@ class AffordableLCBTransfer:
 
 class branching_wrapper(GPBoundComputationCommon):
   _convex_relaxation_verbose = False
-  _collect_expsec_weights = True
-  def __init__(self, acqf, LUB=np.inf, epsilon_prune=1.e-14, acqf_UB_solver="SLSQP", random_seed=None, opt_mode=3, nearest_neighbor_pairs=None, diagnostics=False, restart_lower_bound=None):
+  def __init__(self, acqf, LUB=np.inf, epsilon_prune=1.e-14, acqf_UB_solver="SLSQP", random_seed=None,
+               opt_mode=3, nearest_neighbor_pairs=None, pairs_dist=None, diagnostics=False, restart_lower_bound=None):
     self.LUB = LUB # least upper bound
     self.epsilon_prune = epsilon_prune
     self.acqf = acqf
@@ -2803,8 +2816,15 @@ class branching_wrapper(GPBoundComputationCommon):
 
     if nearest_neighbor_pairs is None:
       self.nearest_neighbor_pairs = np.empty((0, 2), dtype=np.int64)
+      assert pairs_dist is None
     else:
       self.nearest_neighbor_pairs = nearest_neighbor_pairs
+      assert pairs_dist is not None
+
+    if pairs_dist is None:
+      self.pairs_dist = {}
+    else:
+      self.pairs_dist = pairs_dist
 
     self.random_seed = random_seed
     if random_seed is None:
@@ -3612,7 +3632,7 @@ class branching_wrapper(GPBoundComputationCommon):
       raise ValueError("Each asynchronous BnB task must contain exactly one parent")
     parent = parents[0]
     weights = (parent.metadata or {}).get("expsec_weights")
-    weights = None
+    #weights = None
     started = time.time()
     try:
       child_boxes = minmax_expsec_branch(parent.l, parent.u, self, weights)
