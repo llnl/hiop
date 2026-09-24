@@ -527,6 +527,15 @@ if (HIOP_WITH_MAKETEST)
   endif(HIOP_USE_MPI)
   add_test(NAME SparseMatrixTest COMMAND ${RUNCMD} "$<TARGET_FILE:testMatrixSparse>")
   add_test(NAME SymmetricSparseMatrixTest COMMAND ${RUNCMD} "$<TARGET_FILE:testMatrixSymSparse>")
+  if(HIOP_SPARSE)
+    add_test(NAME MPSInterfaceTest
+      COMMAND ${RUNCMD} "$<TARGET_FILE:testMPSInterface>" "${PROJECT_SOURCE_DIR}/tests/MPS")
+    add_test(NAME MPSSolveTest
+      COMMAND ${RUNCMD} "$<TARGET_FILE:testMPSSolve>" "${PROJECT_SOURCE_DIR}/tests/MPS/small_lp.mps")
+    add_test(NAME MPSSolveAggressiveTest
+      COMMAND ${RUNCMD} "$<TARGET_FILE:testMPSSolve>" "${PROJECT_SOURCE_DIR}/tests/MPS/small_lp.mps"
+              "--no-line-search")
+  endif()
 
   # Test drivers in the form of user applications
   add_subdirectory(src/Drivers)
