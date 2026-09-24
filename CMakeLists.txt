@@ -526,6 +526,18 @@ if (HIOP_WITH_MAKETEST)
     add_test(NAME MPSSolveAggressiveTest
       COMMAND ${RUNCMD} "$<TARGET_FILE:testMPSSolve>" "${PROJECT_SOURCE_DIR}/tests/MPS/small_lp.mps"
               "--no-line-search")
+    if(HIOP_USE_RAJA AND HIOP_USE_GPU AND HIOP_USE_CUDA AND HIOP_USE_RESOLVE)
+      add_test(NAME MPSSolveGpuGluTest
+        COMMAND ${RUNCMD} "$<TARGET_FILE:testMPSSolve>" "${PROJECT_SOURCE_DIR}/tests/MPS/small_lp.mps"
+                "--gpu" "--resolve-refactorization" "glu")
+      add_test(NAME MPSSolveGpuRfTest
+        COMMAND ${RUNCMD} "$<TARGET_FILE:testMPSSolve>" "${PROJECT_SOURCE_DIR}/tests/MPS/small_lp.mps"
+                "--gpu" "--resolve-refactorization" "rf")
+    else()
+      add_test(NAME MPSSolveGpuUnavailableTest
+        COMMAND ${RUNCMD} "$<TARGET_FILE:hiop-solve-mps>" "${PROJECT_SOURCE_DIR}/tests/MPS/small_lp.mps" "--gpu")
+      set_tests_properties(MPSSolveGpuUnavailableTest PROPERTIES WILL_FAIL TRUE)
+    endif()
   endif()
 
   # Test drivers in the form of user applications
