@@ -36,6 +36,16 @@ int main(int argc, char** argv)
   }
 
   hiop::hiopInterfaceMPS model;
+  check(model.execution_mode() == hiop::hiopInterfaceMPS::ExecutionMode::host, "default host execution mode");
+  if(!hiop::hiopInterfaceMPS::device_execution_available()) {
+    hiop::hiopInterfaceMPS device_model(hiop::hiopInterfaceMPS::ExecutionMode::device);
+    check(device_model.execution_mode() == hiop::hiopInterfaceMPS::ExecutionMode::device,
+          "requested device execution mode");
+    check(device_model.load(path(argv[1], "free_ranges.mps")) == hiop::hiopMPSReadStatus::unsupported_feature,
+          "device mode reports an unavailable backend");
+    check(device_model.last_error().find("HIOP_USE_RESOLVE") != std::string::npos,
+          "device backend error is actionable");
+  }
   check(model.load(path(argv[1], "free_ranges.mps")) == hiop::hiopMPSReadStatus::success,
         "load free-format MPS: " + model.last_error());
   check(model.is_loaded(), "model reports loaded");

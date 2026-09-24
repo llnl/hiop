@@ -7,17 +7,32 @@
 #include <cassert>
 #include <cctype>
 #include <cmath>
+#include <cstring>
 #include <fstream>
 #include <map>
 #include <sstream>
+#include <stdexcept>
 #include <unordered_map>
 #include <utility>
+
+#if defined(HIOP_USE_RAJA) && defined(HIOP_USE_GPU) && defined(HIOP_USE_CUDA) && defined(HIOP_USE_RESOLVE)
+#define HIOP_MPS_DEVICE_ENABLED
+#include "ExecPoliciesRajaCudaImpl.hpp"
+#include <RAJA/RAJA.hpp>
+#include <umpire/Allocator.hpp>
+#include <umpire/ResourceManager.hpp>
+#endif
 
 namespace hiop
 {
 namespace
 {
 constexpr double kMpsInfinity = 1e20;
+
+#ifdef HIOP_MPS_DEVICE_ENABLED
+using MpsRajaExec = ExecRajaPoliciesBackend<ExecPolicyRajaCuda>::hiop_raja_exec;
+using MpsRajaReduce = ExecRajaPoliciesBackend<ExecPolicyRajaCuda>::hiop_raja_reduce;
+#endif
 
 enum class Section
 {
@@ -130,6 +145,13 @@ void record_set_name(const std::string& name, std::vector<std::string>& order, T
 
 struct hiopInterfaceMPS::Impl
 {
+  explicit Impl(ExecutionMode mode)
+      : execution_mode(mode)
+  {}
+
+  ~Impl() { release_device_data(); }
+
+  ExecutionMode execution_mode{ExecutionMode::host};
   bool loaded{false};
   std::string error;
   std::string model;
@@ -150,11 +172,92 @@ struct hiopInterfaceMPS::Impl
   std::vector<index_type> matrix_columns;
   std::vector<double> matrix_values;
   std::vector<std::size_t> matrix_row_offsets;
+  std::vector<double> final_solution;
   size_type nnz_equalities{0};
   size_type nnz_inequalities{0};
 
+#ifdef HIOP_MPS_DEVICE_ENABLED
+  double* costs_device{nullptr};
+  double* column_lower_device{nullptr};
+  double* column_upper_device{nullptr};
+  double* row_lower_device{nullptr};
+  double* row_upper_device{nullptr};
+  index_type* matrix_rows_device{nullptr};
+  index_type* matrix_columns_device{nullptr};
+  double* matrix_values_device{nullptr};
+  std::size_t* matrix_row_offsets_device{nullptr};
+
+  template<typename T>
+  static T* copy_to_device(const std::vector<T>& source)
+  {
+    if(source.empty()) return nullptr;
+
+    auto& resource_manager = umpire::ResourceManager::getInstance();
+    auto host_allocator = resource_manager.getAllocator("HOST");
+    auto device_allocator = resource_manager.getAllocator("DEVICE");
+    T* staging = nullptr;
+    T* destination = nullptr;
+    try {
+      staging = static_cast<T*>(host_allocator.allocate(source.size() * sizeof(T)));
+      std::memcpy(staging, source.data(), source.size() * sizeof(T));
+      destination = static_cast<T*>(device_allocator.allocate(source.size() * sizeof(T)));
+      resource_manager.copy(destination, staging, source.size() * sizeof(T));
+      host_allocator.deallocate(staging);
+      return destination;
+    } catch(...) {
+      if(staging != nullptr) host_allocator.deallocate(staging);
+      if(destination != nullptr) device_allocator.deallocate(destination);
+      throw;
+    }
+  }
+
+  void upload_device_data()
+  {
+    costs_device = copy_to_device(costs);
+    column_lower_device = copy_to_device(column_lower);
+    column_upper_device = copy_to_device(column_upper);
+    row_lower_device = copy_to_device(row_lower);
+    row_upper_device = copy_to_device(row_upper);
+    matrix_rows_device = copy_to_device(matrix_rows);
+    matrix_columns_device = copy_to_device(matrix_columns);
+    matrix_values_device = copy_to_device(matrix_values);
+    matrix_row_offsets_device = copy_to_device(matrix_row_offsets);
+  }
+#endif
+
+  void release_device_data()
+  {
+#ifdef HIOP_MPS_DEVICE_ENABLED
+    if(costs_device == nullptr && column_lower_device == nullptr && column_upper_device == nullptr &&
+       row_lower_device == nullptr && row_upper_device == nullptr && matrix_rows_device == nullptr &&
+       matrix_columns_device == nullptr && matrix_values_device == nullptr && matrix_row_offsets_device == nullptr) {
+      return;
+    }
+    auto device_allocator = umpire::ResourceManager::getInstance().getAllocator("DEVICE");
+    if(costs_device != nullptr) device_allocator.deallocate(costs_device);
+    if(column_lower_device != nullptr) device_allocator.deallocate(column_lower_device);
+    if(column_upper_device != nullptr) device_allocator.deallocate(column_upper_device);
+    if(row_lower_device != nullptr) device_allocator.deallocate(row_lower_device);
+    if(row_upper_device != nullptr) device_allocator.deallocate(row_upper_device);
+    if(matrix_rows_device != nullptr) device_allocator.deallocate(matrix_rows_device);
+    if(matrix_columns_device != nullptr) device_allocator.deallocate(matrix_columns_device);
+    if(matrix_values_device != nullptr) device_allocator.deallocate(matrix_values_device);
+    if(matrix_row_offsets_device != nullptr) device_allocator.deallocate(matrix_row_offsets_device);
+    costs_device = nullptr;
+    column_lower_device = nullptr;
+    column_upper_device = nullptr;
+    row_lower_device = nullptr;
+    row_upper_device = nullptr;
+    matrix_rows_device = nullptr;
+    matrix_columns_device = nullptr;
+    matrix_values_device = nullptr;
+    matrix_row_offsets_device = nullptr;
+#endif
+  }
+
   void clear()
   {
+    release_device_data();
     loaded = false;
     error.clear();
     model.clear();
@@ -174,20 +277,43 @@ struct hiopInterfaceMPS::Impl
     matrix_columns.clear();
     matrix_values.clear();
     matrix_row_offsets.clear();
+    final_solution.clear();
     nnz_equalities = 0;
     nnz_inequalities = 0;
   }
 };
 
 hiopInterfaceMPS::hiopInterfaceMPS()
-    : impl_(new Impl())
+    : hiopInterfaceMPS(ExecutionMode::host)
+{}
+
+hiopInterfaceMPS::hiopInterfaceMPS(ExecutionMode execution_mode)
+    : impl_(new Impl(execution_mode))
 {}
 
 hiopInterfaceMPS::~hiopInterfaceMPS() = default;
 
+bool hiopInterfaceMPS::device_execution_available()
+{
+#ifdef HIOP_MPS_DEVICE_ENABLED
+  return true;
+#else
+  return false;
+#endif
+}
+
+hiopInterfaceMPS::ExecutionMode hiopInterfaceMPS::execution_mode() const { return impl_->execution_mode; }
+
 hiopMPSReadStatus hiopInterfaceMPS::load(const std::string& filename, const hiopMPSReadOptions& options)
 {
   impl_->clear();
+
+  if(impl_->execution_mode == ExecutionMode::device && !device_execution_available()) {
+    impl_->error =
+        "GPU MPS execution requires a HiOp build with HIOP_USE_RAJA, HIOP_USE_GPU, HIOP_USE_CUDA, and "
+        "HIOP_USE_RESOLVE enabled.";
+    return hiopMPSReadStatus::unsupported_feature;
+  }
 
   std::ifstream input(filename);
   if(!input) {
@@ -587,6 +713,22 @@ hiopMPSReadStatus hiopInterfaceMPS::load(const std::string& filename, const hiop
     impl_->matrix_row_offsets[row] += impl_->matrix_row_offsets[row - 1];
   }
 
+#ifdef HIOP_MPS_DEVICE_ENABLED
+  if(impl_->execution_mode == ExecutionMode::device) {
+    try {
+      impl_->upload_device_data();
+    } catch(const std::exception& exception) {
+      impl_->release_device_data();
+      impl_->error = "Unable to allocate or initialize GPU data for MPS model '" + filename + "': " + exception.what();
+      return hiopMPSReadStatus::unsupported_feature;
+    } catch(...) {
+      impl_->release_device_data();
+      impl_->error = "Unable to allocate or initialize GPU data for MPS model '" + filename + "'.";
+      return hiopMPSReadStatus::unsupported_feature;
+    }
+  }
+#endif
+
   impl_->loaded = true;
   impl_->error.clear();
   return hiopMPSReadStatus::success;
@@ -598,6 +740,7 @@ const std::string& hiopInterfaceMPS::model_name() const { return impl_->model; }
 const std::vector<std::string>& hiopInterfaceMPS::variable_names() const { return impl_->column_names; }
 const std::vector<std::string>& hiopInterfaceMPS::constraint_names() const { return impl_->row_names; }
 hiopInterfaceMPS::ObjectiveSense hiopInterfaceMPS::objective_sense() const { return impl_->sense; }
+const std::vector<double>& hiopInterfaceMPS::final_solution() const { return impl_->final_solution; }
 
 double hiopInterfaceMPS::original_objective_value(double hiop_objective_value) const
 {
@@ -624,6 +767,19 @@ bool hiopInterfaceMPS::get_vars_info(const size_type& n,
                                      NonlinearityType* type)
 {
   if(!impl_->loaded || n != static_cast<size_type>(impl_->column_names.size())) return false;
+#ifdef HIOP_MPS_DEVICE_ENABLED
+  if(impl_->execution_mode == ExecutionMode::device) {
+    const double* lower = impl_->column_lower_device;
+    const double* upper = impl_->column_upper_device;
+    RAJA::forall<MpsRajaExec>(RAJA::RangeSegment(0, n), RAJA_LAMBDA(RAJA::Index_type i) {
+      xlow[i] = lower[i];
+      xupp[i] = upper[i];
+    });
+    // NonlinearityType arrays are always host resident in the sparse interface.
+    for(size_type i = 0; i < n; ++i) type[i] = hiopLinear;
+    return true;
+  }
+#endif
   for(size_type i = 0; i < n; ++i) {
     xlow[i] = impl_->column_lower[i];
     xupp[i] = impl_->column_upper[i];
@@ -638,6 +794,19 @@ bool hiopInterfaceMPS::get_cons_info(const size_type& m,
                                      NonlinearityType* type)
 {
   if(!impl_->loaded || m != static_cast<size_type>(impl_->row_names.size())) return false;
+#ifdef HIOP_MPS_DEVICE_ENABLED
+  if(impl_->execution_mode == ExecutionMode::device) {
+    const double* lower = impl_->row_lower_device;
+    const double* upper = impl_->row_upper_device;
+    RAJA::forall<MpsRajaExec>(RAJA::RangeSegment(0, m), RAJA_LAMBDA(RAJA::Index_type i) {
+      clow[i] = lower[i];
+      cupp[i] = upper[i];
+    });
+    // NonlinearityType arrays are always host resident in the sparse interface.
+    for(size_type i = 0; i < m; ++i) type[i] = hiopLinear;
+    return true;
+  }
+#endif
   for(size_type i = 0; i < m; ++i) {
     clow[i] = impl_->row_lower[i];
     cupp[i] = impl_->row_upper[i];
@@ -663,6 +832,16 @@ bool hiopInterfaceMPS::eval_f(const size_type& n, const double* x, bool, double&
 {
   if(!impl_->loaded || n != static_cast<size_type>(impl_->costs.size())) return false;
   obj_value = impl_->objective_offset;
+#ifdef HIOP_MPS_DEVICE_ENABLED
+  if(impl_->execution_mode == ExecutionMode::device) {
+    const double* costs = impl_->costs_device;
+    RAJA::ReduceSum<MpsRajaReduce, double> linear_objective(0.0);
+    RAJA::forall<MpsRajaExec>(RAJA::RangeSegment(0, n),
+                              RAJA_LAMBDA(RAJA::Index_type i) { linear_objective += costs[i] * x[i]; });
+    obj_value += linear_objective.get();
+    return true;
+  }
+#endif
   for(size_type i = 0; i < n; ++i) obj_value += impl_->costs[i] * x[i];
   return true;
 }
@@ -670,6 +849,14 @@ bool hiopInterfaceMPS::eval_f(const size_type& n, const double* x, bool, double&
 bool hiopInterfaceMPS::eval_grad_f(const size_type& n, const double*, bool, double* gradf)
 {
   if(!impl_->loaded || n != static_cast<size_type>(impl_->costs.size())) return false;
+#ifdef HIOP_MPS_DEVICE_ENABLED
+  if(impl_->execution_mode == ExecutionMode::device) {
+    const double* costs = impl_->costs_device;
+    RAJA::forall<MpsRajaExec>(RAJA::RangeSegment(0, n),
+                              RAJA_LAMBDA(RAJA::Index_type i) { gradf[i] = costs[i]; });
+    return true;
+  }
+#endif
   std::copy(impl_->costs.begin(), impl_->costs.end(), gradf);
   return true;
 }
@@ -682,6 +869,12 @@ bool hiopInterfaceMPS::eval_cons(const size_type& n,
                                  bool,
                                  double* cons)
 {
+#ifdef HIOP_MPS_DEVICE_ENABLED
+  if(impl_->execution_mode == ExecutionMode::device) {
+    // Let HiOp use the one-call callback below and split equality/inequality rows on device.
+    return false;
+  }
+#endif
   if(!impl_->loaded || n != static_cast<size_type>(impl_->column_names.size()) ||
      m != static_cast<size_type>(impl_->row_names.size()) || num_cons < 0 || num_cons > m ||
      (num_cons > 0 && (idx_cons == nullptr || cons == nullptr))) {
@@ -706,6 +899,21 @@ bool hiopInterfaceMPS::eval_cons(const size_type& n, const size_type& m, const d
      m != static_cast<size_type>(impl_->row_names.size())) {
     return false;
   }
+#ifdef HIOP_MPS_DEVICE_ENABLED
+  if(impl_->execution_mode == ExecutionMode::device) {
+    const std::size_t* row_offsets = impl_->matrix_row_offsets_device;
+    const index_type* columns = impl_->matrix_columns_device;
+    const double* values = impl_->matrix_values_device;
+    RAJA::forall<MpsRajaExec>(RAJA::RangeSegment(0, m), RAJA_LAMBDA(RAJA::Index_type row) {
+      double value = 0.0;
+      for(std::size_t entry = row_offsets[row]; entry < row_offsets[row + 1]; ++entry) {
+        value += values[entry] * x[columns[entry]];
+      }
+      cons[row] = value;
+    });
+    return true;
+  }
+#endif
   std::fill(cons, cons + m, 0.0);
   for(std::size_t k = 0; k < impl_->matrix_values.size(); ++k) {
     cons[impl_->matrix_rows[k]] += impl_->matrix_values[k] * x[impl_->matrix_columns[k]];
@@ -724,6 +932,12 @@ bool hiopInterfaceMPS::eval_Jac_cons(const size_type& n,
                                      index_type* jJacS,
                                      double* MJacS)
 {
+#ifdef HIOP_MPS_DEVICE_ENABLED
+  if(impl_->execution_mode == ExecutionMode::device) {
+    // Let HiOp use the one-call callback below and split equality/inequality rows on device.
+    return false;
+  }
+#endif
   if(!impl_->loaded || n != static_cast<size_type>(impl_->column_names.size()) ||
      m != static_cast<size_type>(impl_->row_names.size()) || num_cons < 0 || num_cons > m ||
      (num_cons > 0 && idx_cons == nullptr) || ((iJacS == nullptr) != (jJacS == nullptr))) {
@@ -770,6 +984,21 @@ bool hiopInterfaceMPS::eval_Jac_cons(const size_type& n,
     return false;
   }
   if((iJacS == nullptr) != (jJacS == nullptr)) return false;
+#ifdef HIOP_MPS_DEVICE_ENABLED
+  if(impl_->execution_mode == ExecutionMode::device) {
+    const index_type* rows = impl_->matrix_rows_device;
+    const index_type* columns = impl_->matrix_columns_device;
+    const double* values = impl_->matrix_values_device;
+    RAJA::forall<MpsRajaExec>(RAJA::RangeSegment(0, nnzJacS), RAJA_LAMBDA(RAJA::Index_type entry) {
+      if(iJacS != nullptr) {
+        iJacS[entry] = rows[entry];
+        jJacS[entry] = columns[entry];
+      }
+      if(MJacS != nullptr) MJacS[entry] = values[entry];
+    });
+    return true;
+  }
+#endif
   if(iJacS != nullptr && jJacS != nullptr) {
     std::copy(impl_->matrix_rows.begin(), impl_->matrix_rows.end(), iJacS);
     std::copy(impl_->matrix_columns.begin(), impl_->matrix_columns.end(), jJacS);
@@ -792,6 +1021,20 @@ bool hiopInterfaceMPS::eval_Hess_Lagr(const size_type& n,
 {
   return impl_->loaded && n == static_cast<size_type>(impl_->column_names.size()) &&
          m == static_cast<size_type>(impl_->row_names.size()) && nnzHSS == 0;
+}
+
+void hiopInterfaceMPS::solution_callback(hiopSolveStatus,
+                                         size_type n,
+                                         const double* x,
+                                         const double*,
+                                         const double*,
+                                         size_type,
+                                         const double*,
+                                         const double*,
+                                         double)
+{
+  impl_->final_solution.clear();
+  if(x != nullptr && n > 0) impl_->final_solution.assign(x, x + n);
 }
 
 }  // namespace hiop

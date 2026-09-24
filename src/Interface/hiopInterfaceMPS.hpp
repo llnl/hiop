@@ -39,6 +39,12 @@ struct hiopMPSReadOptions
 class hiopInterfaceMPS final : public hiopInterfaceSparse
 {
 public:
+  enum class ExecutionMode
+  {
+    host,
+    device
+  };
+
   enum class ObjectiveSense
   {
     minimize,
@@ -46,6 +52,7 @@ public:
   };
 
   hiopInterfaceMPS();
+  explicit hiopInterfaceMPS(ExecutionMode execution_mode);
   ~hiopInterfaceMPS() override;
 
   hiopInterfaceMPS(const hiopInterfaceMPS&) = delete;
@@ -53,12 +60,20 @@ public:
 
   hiopMPSReadStatus load(const std::string& filename, const hiopMPSReadOptions& options = hiopMPSReadOptions());
 
+  static bool device_execution_available();
+  ExecutionMode execution_mode() const;
   bool is_loaded() const;
   const std::string& last_error() const;
   const std::string& model_name() const;
   const std::vector<std::string>& variable_names() const;
   const std::vector<std::string>& constraint_names() const;
   ObjectiveSense objective_sense() const;
+
+  /**
+   * Final primal solution supplied by HiOp's solution callback. In device mode,
+   * callback_mem_space must be set to host before the solve.
+   */
+  const std::vector<double>& final_solution() const;
 
   /** Convert the value minimized internally by HiOp to the MPS objective sense. */
   double original_objective_value(double hiop_objective_value) const;
@@ -110,6 +125,16 @@ public:
                       index_type* iHSS,
                       index_type* jHSS,
                       double* MHSS) override;
+
+  void solution_callback(hiopSolveStatus status,
+                         size_type n,
+                         const double* x,
+                         const double* z_L,
+                         const double* z_U,
+                         size_type m,
+                         const double* g,
+                         const double* lambda,
+                         double obj_value) override;
 
 private:
   struct Impl;
