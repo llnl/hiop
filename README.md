@@ -119,6 +119,19 @@ HiOp supports three types of optimization problems, each with a separate input f
 
 *`hiopInterfaceSparse` interface* supports general sparse and large-scale NLPs. This functionality is similar to that of the state-of-the-art [Ipopt](https://github.com/coin-or/Ipopt) (without being as robust and flexible as Ipopt is). Acceleration for this class of problems can be achieved via OpenMP or CUDA, however, this is work in progress and you are encouraged to contact HiOp's developers for up-to-date information.
 
+Continuous linear programs in standard fixed- or free-format MPS files can be loaded through
+`hiopInterfaceMPS` or solved directly with the installed command-line driver:
+
+```shell
+hiop-solve-mps model.mps [--options hiop.options] [--solution solution.txt]
+```
+
+The reader supports `OBJSENSE`, `OBJNAME`, `ROWS`, `COLUMNS`, `RHS`, `RANGES`, and the
+standard continuous `BOUNDS` types. Integer, SOS, quadratic, and semi-continuous extensions
+are rejected. The optional `--no-line-search` mode accepts the first fraction-to-the-boundary
+step, but is experimental: without filter/backtracking globalization it is not guaranteed to
+converge.
+
 *`hiopInterfaceMDS` interface* supports mixed dense-sparse NLPs and achives parallelization using GPUs and RAJA portability abstraction layer. 
 
 More information on the HiOp interfaces are [here](src/Interface/README.md).

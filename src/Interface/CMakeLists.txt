@@ -10,6 +10,10 @@ else()
   )
 endif()
 
+if(HIOP_SPARSE)
+  list(APPEND hiopInterface_SRC hiopInterfaceMPS.cpp)
+endif()
+
 set(hiopInterface_INTERFACE_HEADERS
   chiopInterface.hpp
   hiopInterface.h
@@ -19,6 +23,10 @@ set(hiopInterface_INTERFACE_HEADERS
   hiop_types.h
   hiopFortranInterface.h
   )
+
+if(HIOP_SPARSE)
+  list(APPEND hiopInterface_INTERFACE_HEADERS hiopInterfaceMPS.hpp)
+endif()
 
 install(
   FILES ${hiopInterface_INTERFACE_HEADERS}

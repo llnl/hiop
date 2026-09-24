@@ -16,6 +16,13 @@ set(testBiCGStab_SRC test_bicgstab.cpp)
 # Set sources for symmetric sparse matrix tests
 set(testPCG_SRC test_pcg.cpp)
 
+if(HIOP_SPARSE)
+  add_executable(testMPSInterface testMPSInterface.cpp)
+  target_link_libraries(testMPSInterface PRIVATE HiOp::HiOp)
+  add_executable(testMPSSolve testMPSSolve.cpp)
+  target_link_libraries(testMPSSolve PRIVATE HiOp::HiOp)
+endif()
+
 # Check if using RAJA and Umpire and add RAJA sources
 if(HIOP_USE_RAJA)
   set(testVector_SRC ${testVector_SRC} LinAlg/vectorTestsRajaPar.cpp LinAlg/vectorTestsIntRaja.cpp)
