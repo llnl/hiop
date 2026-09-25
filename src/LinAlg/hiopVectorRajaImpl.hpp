@@ -2087,9 +2087,12 @@ void hiopVectorRaja<MEM, POL>::set_array_from_to(hiopInterfaceBase::Nonlinearity
   // If there is nothing to copy, return.
   if(end - start == 0) return;
 
-  RAJA::forall<hiop_raja_exec>(
-      RAJA::RangeSegment(0, end - start),
-      RAJA_LAMBDA(RAJA::Index_type i) { arr[start + i] = arr_src[start_src + i]; });
+  // arr and arr_src are NonlinearityType arrays of the NLP, which live on the host --
+  // hiopNlpFormulation allocates them with new[] and hands them to the user's
+  // get_vars_info / get_cons_info -- so this must not be a device kernel
+  for(int i = 0; i < end - start; i++) {
+    arr[start + i] = arr_src[start_src + i];
+  }
 }
 
 template<class MEM, class POL>
@@ -2103,7 +2106,10 @@ void hiopVectorRaja<MEM, POL>::set_array_from_to(hiopInterfaceBase::Nonlinearity
   // If there is nothing to copy, return.
   if(end - start == 0) return;
 
-  RAJA::forall<hiop_raja_exec>(RAJA::RangeSegment(start, end), RAJA_LAMBDA(RAJA::Index_type i) { arr[i] = arr_src; });
+  // as above: a host array, so a host loop
+  for(int i = start; i < end; i++) {
+    arr[i] = arr_src;
+  }
 }
 
 template<class MEM, class POL>
