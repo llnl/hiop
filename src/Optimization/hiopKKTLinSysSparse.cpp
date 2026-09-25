@@ -125,7 +125,10 @@ bool hiopKKTLinSysCompressedSparseXYcYd::build_kkt_matrix(const hiopPDPerturbati
   linSys_ = determineAndCreateLinsys(nx, neq, nineq, nnz);
 
   auto* linSys = dynamic_cast<hiopLinSolverSymSparse*>(linSys_);
-  assert(linSys);
+  if(!linSys) {
+    nlp_->log->printf(hovError, "KKT_SPARSE_XYcYd linsys: no backend linear solver could be created.\n");
+    return false;
+  }
 
   auto* Msys = dynamic_cast<hiopMatrixSparseTriplet*>(linSys->sys_matrix());
   assert(Msys);
@@ -476,7 +479,10 @@ bool hiopKKTLinSysCompressedSparseXDYcYd::build_kkt_matrix(const hiopPDPerturbat
   linSys_ = determineAndCreateLinsys(nx, neq, nineq, nnz);
 
   auto* linSys = dynamic_cast<hiopLinSolverSymSparse*>(linSys_);
-  assert(linSys);
+  if(!linSys) {
+    nlp_->log->printf(hovError, "KKT_SPARSE_XDYcYd linsys: no backend linear solver could be created.\n");
+    return false;
+  }
 
   auto* Msys = dynamic_cast<hiopMatrixSparse*>(linSys->sys_matrix());
   assert(Msys);
@@ -673,10 +679,13 @@ hiopLinSolverSymSparse* hiopKKTLinSysCompressedSparseXDYcYd::determineAndCreateL
                         safe_mode_);
       return dynamic_cast<hiopLinSolverSymSparse*>(linSys_);
 #else  // end of if defined(HIOP_USE_COINHSL)
-      assert(false &&
-             "HiOp was not built with the safe(r) sparse linear solver MA57 and cannot switch to "
-             "safe mode as requested. ");
-      return nullptr;
+      // HiOp was not built with MA57, the safe-mode solver. Rather than leave the caller
+      // with no linear system at all, carry on with the solver the cpu compute mode would
+      // pick and say that safe mode is degraded.
+      nlp_->log->printf(hovWarning,
+                        "KKT_SPARSE_XDYcYd linsys: safe mode was requested but HiOp was built without "
+                        "MA57; continuing on the CPU with the regular sparse linear solver.\n");
+      compute_mode = "cpu";
 #endif
     }  // end of if(safe_mode_)
 

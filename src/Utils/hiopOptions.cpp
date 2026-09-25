@@ -1559,7 +1559,13 @@ void hiopOptionsNLP::ensure_consistence()
       }
       set_val("fact_acceptor", "inertia_free");
     }
-  } else if(GetString("linear_solver_sparse") == "strumpack" || GetString("linear_solver_sparse") == "resolve") {
+  } else if(GetString("linear_solver_sparse") == "strumpack" || GetString("linear_solver_sparse") == "resolve"
+#if !defined(HIOP_USE_COINHSL) && !defined(HIOP_USE_PARDISO)
+            // 'auto' can only land on a solver without inertia in a build that has neither
+            // MA57 nor PARDISO, so the same downgrade applies
+            || GetString("linear_solver_sparse") == "auto"
+#endif
+  ) {
     if(GetString("fact_acceptor") == "inertia_correction") {
       if(is_user_defined("fact_acceptor") && is_user_defined("linear_solver_sparse")) {
         log_printf(hovWarning,
