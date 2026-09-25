@@ -18,12 +18,14 @@ add_executable(NlpSparseEx4.exe NlpSparseEx4.cpp NlpSparseEx4Driver.cpp)
 target_link_libraries(NlpSparseEx4.exe HiOp::HiOp)
 
 if(HIOP_USE_RAJA)
-  if(HIOP_USE_GPU AND HIOP_USE_CUDA AND HIOP_USE_RESOLVE)
-    set_source_files_properties(
-      NlpSparseRajaEx2.cpp 
-      NlpSparseRajaEx2Driver.cpp 
-      PROPERTIES LANGUAGE CUDA
-    )
+  if(HIOP_USE_GPU AND HIOP_USE_RESOLVE)
+    if(HIOP_USE_CUDA)
+      set_source_files_properties(
+        NlpSparseRajaEx2.cpp
+        NlpSparseRajaEx2Driver.cpp
+        PROPERTIES LANGUAGE CUDA
+      )
+    endif()
   
     add_executable(NlpSparseRajaEx2.exe  NlpSparseRajaEx2Driver.cpp  NlpSparseRajaEx2.cpp)
     target_link_libraries(NlpSparseRajaEx2.exe HiOp::HiOp)
@@ -53,9 +55,9 @@ install(
 ##########################################################
 add_test(NAME NlpSparse1_1 COMMAND ${RUNCMD} "$<TARGET_FILE:NlpSparseEx1.exe>" "500" "-selfcheck")
 add_test(NAME NlpSparse1_2 COMMAND ${RUNCMD} "$<TARGET_FILE:NlpSparseEx1.exe>" "500" "-fr" "-selfcheck")
-if(HIOP_USE_CUDA)
-  add_test(NAME NlpSparse1_3 COMMAND ${RUNCMD} "$<TARGET_FILE:NlpSparseEx1.exe>" "500" "-cusolver" "-selfcheck")
-endif(HIOP_USE_CUDA)
+if(HIOP_USE_RESOLVE)
+  add_test(NAME NlpSparse1_ReSolve COMMAND ${RUNCMD} "$<TARGET_FILE:NlpSparseEx1.exe>" "500" "-resolve" "-selfcheck")
+endif()
 if(HIOP_USE_PARDISO)
   add_test(NAME NlpSparse1_4 COMMAND ${RUNCMD} "$<TARGET_FILE:NlpSparseEx1.exe>" "500" "-pardiso" "-selfcheck")
 endif(HIOP_USE_PARDISO)
@@ -70,9 +72,21 @@ if(HIOP_USE_GINKGO)
 endif(HIOP_USE_GINKGO)
 add_test(NAME NlpSparse2_1 COMMAND ${RUNCMD} "$<TARGET_FILE:NlpSparseEx2.exe>" "500" "-selfcheck")
 add_test(NAME NlpSparse2_2 COMMAND ${RUNCMD} "$<TARGET_FILE:NlpSparseEx2.exe>" "500" "-inertiafree" "-selfcheck")
-if(HIOP_USE_CUDA)
+if(HIOP_USE_RESOLVE)
+  add_test(NAME NlpSparse2_ReSolve COMMAND ${RUNCMD} "$<TARGET_FILE:NlpSparseEx2.exe>" "500" "-resolve" "-inertiafree" "-selfcheck")
+
+  if(HIOP_USE_CUDA)
+    add_test(NAME NlpSparse2_ReSolve_GLU COMMAND ${RUNCMD} "$<TARGET_FILE:NlpSparseEx2.exe>" "500" "-resolve_cuda_glu" "-inertiafree" "-selfcheck")
+    add_test(NAME NlpSparse2_ReSolve_RF COMMAND ${RUNCMD} "$<TARGET_FILE:NlpSparseEx2.exe>" "500" "-resolve_cuda_rf" "-inertiafree" "-selfcheck")
+  endif()
+
+  if(HIOP_USE_HIP)
+    add_test(NAME NlpSparse2_ReSolve_HIP COMMAND ${RUNCMD} "$<TARGET_FILE:NlpSparseEx2.exe>" "500" "-resolve_hip" "-inertiafree" "-selfcheck")
+  endif()
+endif()
+if(HIOP_USE_CUDA AND HIOP_USE_COINHSL)
   add_test(NAME NlpSparse2_3 COMMAND ${RUNCMD} "$<TARGET_FILE:NlpSparseEx2.exe>" "500" "-cusolver" "-inertiafree" "-selfcheck")
-endif(HIOP_USE_CUDA)
+endif()
 if(HIOP_USE_GINKGO)
   add_test(NAME NlpSparse2_4 COMMAND ${RUNCMD} "$<TARGET_FILE:NlpSparseEx2.exe>" "500" "-ginkgo" "-inertiafree" "-selfcheck")
   if(HIOP_USE_CUDA)
@@ -83,9 +97,16 @@ if(HIOP_USE_GINKGO)
   endif(HIOP_USE_HIP)
 endif(HIOP_USE_GINKGO)
 
-if(HIOP_USE_RAJA AND HIOP_USE_GPU AND HIOP_USE_CUDA AND HIOP_USE_RESOLVE)
-  add_test(NAME NlpSparseRaja2_1 COMMAND ${RUNCMD} "$<TARGET_FILE:NlpSparseRajaEx2.exe>" "500" "-inertiafree" "-selfcheck" "-resolve_cuda_glu")
-  add_test(NAME NlpSparseRaja2_2 COMMAND ${RUNCMD} "$<TARGET_FILE:NlpSparseRajaEx2.exe>" "500" "-inertiafree" "-selfcheck" "-resolve_cuda_rf")
+if(HIOP_USE_RAJA AND HIOP_USE_GPU)
+  if(HIOP_USE_CUDA)
+    if(HIOP_USE_RESOLVE)
+      add_test(NAME NlpSparseRaja2_ReSolve_GLU COMMAND ${RUNCMD} "$<TARGET_FILE:NlpSparseRajaEx2.exe>" "500" "-inertiafree" "-selfcheck" "-resolve_cuda_glu")
+      add_test(NAME NlpSparseRaja2_ReSolve_RF COMMAND ${RUNCMD} "$<TARGET_FILE:NlpSparseRajaEx2.exe>" "500" "-inertiafree" "-selfcheck" "-resolve_cuda_rf")
+    endif()
+  endif()
+  if(HIOP_USE_HIP AND HIOP_USE_RESOLVE)
+    add_test(NAME NlpSparseRaja2_ReSolve_HIP COMMAND ${RUNCMD} "$<TARGET_FILE:NlpSparseRajaEx2.exe>" "500" "-inertiafree" "-selfcheck" "-resolve_hip")
+  endif()
 endif()
 
 add_test(NAME NlpSparse3_1 COMMAND ${RUNCMD} "$<TARGET_FILE:NlpSparseEx3.exe>" "500" "-selfcheck")

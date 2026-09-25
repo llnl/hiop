@@ -924,11 +924,12 @@ void hiopOptionsNLP::register_options()
   {
     vector<string> range{"auto", "ma57", "pardiso", "strumpack", "resolve", "ginkgo", "cusolver-chol"};
 
-    register_str_option("linear_solver_sparse",
-                        "auto",
-                        range,
-                        "Selects among MA57, PARDISO, STRUMPACK, cuSOLVER's Cholesky or LU, and GINKGO for the "
-                        "sparse linear solves.");
+    register_str_option(
+        "linear_solver_sparse",
+        "auto",
+        range,
+        "Selects among MA57, PARDISO, STRUMPACK, ReSolve, cuSOLVER's Cholesky or LU, and GINKGO for the "
+        "sparse linear solves.");
   }
 
   // choose linear solver for duals intializations for sparse NLP problems
@@ -938,10 +939,11 @@ void hiopOptionsNLP::register_options()
   {
     vector<string> range{"auto", "ma57", "pardiso", "resolve", "strumpack", "ginkgo"};
 
-    register_str_option("duals_init_linear_solver_sparse",
-                        "auto",
-                        range,
-                        "Selects among MA57, PARDISO, cuSOLVER, STRUMPACK, and GINKGO for the sparse linear solves.");
+    register_str_option(
+        "duals_init_linear_solver_sparse",
+        "auto",
+        range,
+        "Selects among MA57, PARDISO, ReSolve, cuSOLVER, STRUMPACK, and GINKGO for the sparse linear solves.");
   }
 
   // choose hardware backend for the Ginkgo solver to run on.
@@ -990,14 +992,14 @@ void hiopOptionsNLP::register_options()
                         "`amd-ssparse` and `colamd-ssparse` AMD and column AMD from Suite Sparse library. ");
   }
 
-  // resolve factorization options
+  // ReSolve factorization options
   {
     vector<std::string> range = {"klu"};
     auto default_value = range[0];
     register_str_option("resolve_factorization", default_value, range, "So far, only 'klu' option is available. ");
   }
 
-  // resolve refactorization options
+  // ReSolve refactorization options
   {
     vector<std::string> range = {"glu", "rf"};
     auto default_value = range[0];
@@ -1005,7 +1007,8 @@ void hiopOptionsNLP::register_options()
                         default_value,
                         range,
                         "Numerical refactorization function after sparsity pattern of factors is computed. "
-                        "'glu' is experimental and 'rf' is NVIDIA's stable refactorization. ");
+                        "'glu' is experimental, selects CUDA GLU refactorization, and falls back to RF on HIP; "
+                        "'rf' selects the available CUDA or HIP RF implementation. ");
   }
 
   register_int_option("ir_inner_restart", 20, 1, 100, "(F)GMRES restart value (default is 20). ");
@@ -1425,8 +1428,31 @@ void hiopOptionsNLP::ensure_consistence()
     }
   }
 
+#ifndef HIOP_USE_RESOLVE
+  if(sol_sp == "resolve") {
+    if(is_user_defined("linear_solver_sparse")) {
+      log_printf(hovWarning,
+                 "The option 'linear_solver_sparse=%s' is not valid because HiOp was built without ReSolve support."
+                 " Will use 'linear_solver_sparse=auto'.\n",
+                 GetString("linear_solver_sparse").c_str());
+    }
+    set_val("linear_solver_sparse", "auto");
+  }
+
+  if(GetString("duals_init_linear_solver_sparse") == "resolve") {
+    if(is_user_defined("duals_init_linear_solver_sparse")) {
+      log_printf(
+          hovWarning,
+          "The option 'duals_init_linear_solver_sparse=%s' is not valid because HiOp was built without ReSolve support."
+          " Will use 'duals_init_linear_solver_sparse=auto'.\n",
+          GetString("duals_init_linear_solver_sparse").c_str());
+    }
+    set_val("duals_init_linear_solver_sparse", "auto");
+  }
+#endif  // HIOP_USE_RESOLVE
+
 #ifndef HIOP_USE_CUDA
-  if(sol_sp == "resolve" || sol_sp == "cusolver-chol") {
+  if(sol_sp == "cusolver-chol") {
     if(is_user_defined("linear_solver_sparse")) {
       log_printf(hovWarning,
                  "The option 'linear_solver_sparse=%s' is not valid without CUDA support enabled."
@@ -1559,7 +1585,8 @@ void hiopOptionsNLP::ensure_consistence()
       }
       set_val("fact_acceptor", "inertia_free");
     }
-  } else if(GetString("linear_solver_sparse") == "strumpack" || GetString("linear_solver_sparse") == "resolve") {
+  } else if(GetString("linear_solver_sparse") == "strumpack" ||
+            GetString("linear_solver_sparse") == "resolve") {
     if(GetString("fact_acceptor") == "inertia_correction") {
       if(is_user_defined("fact_acceptor") && is_user_defined("linear_solver_sparse")) {
         log_printf(hovWarning,

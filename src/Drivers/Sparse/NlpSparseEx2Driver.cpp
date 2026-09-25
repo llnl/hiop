@@ -2,6 +2,7 @@
 #include "hiopNlpFormulation.hpp"
 #include "hiopAlgFilterIPM.hpp"
 
+#include <cmath>
 #include <cstdlib>
 #include <string>
 
@@ -16,6 +17,9 @@ static bool parse_arguments(int argc,
                             bool& inertia_free,
                             bool& use_cusolver,
                             bool& use_resolve,
+                            bool& use_resolve_cuda_glu,
+                            bool& use_resolve_cuda_rf,
+                            bool& use_resolve_hip,
                             bool& use_ginkgo,
                             bool& use_ginkgo_cuda,
                             bool& use_ginkgo_hip)
@@ -25,9 +29,12 @@ static bool parse_arguments(int argc,
   inertia_free = false;
   use_cusolver = false;
   use_resolve = false;
+  use_resolve_cuda_glu = false;
+  use_resolve_cuda_rf = false;
+  use_resolve_hip = false;
   use_ginkgo = false;
   use_ginkgo_cuda = false;
-  use_ginkgo_cuda = false;
+  use_ginkgo_hip = false;
   switch(argc) {
     case 1:
       // no arguments
@@ -41,6 +48,17 @@ static bool parse_arguments(int argc,
         inertia_free = true;
       } else if(std::string(argv[4]) == "-cusolver") {
         use_cusolver = true;
+      } else if(std::string(argv[4]) == "-resolve") {
+        use_resolve = true;
+      } else if(std::string(argv[4]) == "-resolve_cuda_glu") {
+        use_resolve = true;
+        use_resolve_cuda_glu = true;
+      } else if(std::string(argv[4]) == "-resolve_cuda_rf") {
+        use_resolve = true;
+        use_resolve_cuda_rf = true;
+      } else if(std::string(argv[4]) == "-resolve_hip") {
+        use_resolve = true;
+        use_resolve_hip = true;
       } else if(std::string(argv[4]) == "-ginkgo") {
         use_ginkgo = true;
       } else if(std::string(argv[4]) == "-ginkgo_cuda") {
@@ -64,6 +82,17 @@ static bool parse_arguments(int argc,
         inertia_free = true;
       } else if(std::string(argv[3]) == "-cusolver") {
         use_cusolver = true;
+      } else if(std::string(argv[3]) == "-resolve") {
+        use_resolve = true;
+      } else if(std::string(argv[3]) == "-resolve_cuda_glu") {
+        use_resolve = true;
+        use_resolve_cuda_glu = true;
+      } else if(std::string(argv[3]) == "-resolve_cuda_rf") {
+        use_resolve = true;
+        use_resolve_cuda_rf = true;
+      } else if(std::string(argv[3]) == "-resolve_hip") {
+        use_resolve = true;
+        use_resolve_hip = true;
       } else if(std::string(argv[3]) == "-ginkgo") {
         use_ginkgo = true;
       } else if(std::string(argv[3]) == "-ginkgo_cuda") {
@@ -87,6 +116,17 @@ static bool parse_arguments(int argc,
         inertia_free = true;
       } else if(std::string(argv[2]) == "-cusolver") {
         use_cusolver = true;
+      } else if(std::string(argv[2]) == "-resolve") {
+        use_resolve = true;
+      } else if(std::string(argv[2]) == "-resolve_cuda_glu") {
+        use_resolve = true;
+        use_resolve_cuda_glu = true;
+      } else if(std::string(argv[2]) == "-resolve_cuda_rf") {
+        use_resolve = true;
+        use_resolve_cuda_rf = true;
+      } else if(std::string(argv[2]) == "-resolve_hip") {
+        use_resolve = true;
+        use_resolve_hip = true;
       } else if(std::string(argv[2]) == "-ginkgo") {
         use_ginkgo = true;
       } else if(std::string(argv[2]) == "-ginkgo_cuda") {
@@ -110,6 +150,17 @@ static bool parse_arguments(int argc,
         inertia_free = true;
       } else if(std::string(argv[1]) == "-cusolver") {
         use_cusolver = true;
+      } else if(std::string(argv[1]) == "-resolve") {
+        use_resolve = true;
+      } else if(std::string(argv[1]) == "-resolve_cuda_glu") {
+        use_resolve = true;
+        use_resolve_cuda_glu = true;
+      } else if(std::string(argv[1]) == "-resolve_cuda_rf") {
+        use_resolve = true;
+        use_resolve_cuda_rf = true;
+      } else if(std::string(argv[1]) == "-resolve_hip") {
+        use_resolve = true;
+        use_resolve_hip = true;
       } else if(std::string(argv[1]) == "-ginkgo") {
         use_ginkgo = true;
       } else if(std::string(argv[1]) == "-ginkgo_cuda") {
@@ -138,17 +189,44 @@ static bool parse_arguments(int argc,
   }
 #endif
 
-// Use cuSOLVER's LU factorization, if it was configured
-#ifdef HIOP_USE_RESOLVE
+// The cuSOLVER Cholesky path in this driver also requires CoinHSL.
+#ifndef HIOP_USE_COINHSL
   if(use_cusolver) {
-    use_resolve = true;
+    printf("HiOp built without CoinHSL support. ");
+    printf("Using default instead of cuSOLVER ...\n");
+    use_cusolver = false;
   }
 #endif
 
-  // If cuSOLVER was selected, but inertia free approach was not, add inertia-free
-  if(use_cusolver && !(inertia_free)) {
+#ifndef HIOP_USE_RESOLVE
+  if(use_resolve) {
+    printf("HiOp built without ReSolve support. ");
+    printf("Using default linear solver ...\n");
+    use_resolve = false;
+    use_resolve_cuda_glu = false;
+    use_resolve_cuda_rf = false;
+    use_resolve_hip = false;
+  }
+#endif
+
+#ifndef HIOP_USE_CUDA
+  if(use_resolve_cuda_glu || use_resolve_cuda_rf) {
+    printf("HiOp built without CUDA support. Cannot use the selected ReSolve backend.\n");
+    return false;
+  }
+#endif
+
+#ifndef HIOP_USE_HIP
+  if(use_resolve_hip) {
+    printf("HiOp built without HIP support. Cannot use the selected ReSolve backend.\n");
+    return false;
+  }
+#endif
+
+  // These sparse solver paths require the inertia-free approach.
+  if((use_cusolver || use_resolve) && !(inertia_free)) {
     inertia_free = true;
-    printf("LU solver from cuSOLVER library requires inertia free approach. ");
+    printf("Selected sparse solver requires the inertia-free approach. ");
     printf("Enabling now ...\n");
   }
 
@@ -181,7 +259,11 @@ static void usage(const char* exeName)
   printf(
       "  '-selfcheck': compares the optimal objective with a previously saved value for the "
       "problem specified by 'problem_size'. [optional]\n");
-  printf("  '-cusolver': use cuSOLVER linear solver [optional]\n");
+  printf("  '-cusolver': use cuSOLVER Cholesky for the condensed solve [optional]\n");
+  printf("  '-resolve': use ReSolve linear solver [optional]\n");
+  printf("  '-resolve_cuda_glu': use ReSolve with CUDA GLU [optional]\n");
+  printf("  '-resolve_cuda_rf': use ReSolve with CUDA RF [optional]\n");
+  printf("  '-resolve_hip': use ReSolve with HIP RF [optional]\n");
   printf("  '-ginkgo': use GINKGO linear solver [optional]\n");
 }
 
@@ -206,6 +288,9 @@ int main(int argc, char** argv)
   bool inertia_free = false;
   bool use_cusolver = false;
   bool use_resolve = false;
+  bool use_resolve_cuda_glu = false;
+  bool use_resolve_cuda_rf = false;
+  bool use_resolve_hip = false;
   bool use_ginkgo = false;
   bool use_ginkgo_cuda = false;
   bool use_ginkgo_hip = false;
@@ -216,6 +301,9 @@ int main(int argc, char** argv)
                       inertia_free,
                       use_cusolver,
                       use_resolve,
+                      use_resolve_cuda_glu,
+                      use_resolve_cuda_rf,
+                      use_resolve_hip,
                       use_ginkgo,
                       use_ginkgo_cuda,
                       use_ginkgo_hip)) {
@@ -244,15 +332,22 @@ int main(int argc, char** argv)
       nlp.options->SetStringValue("fact_acceptor", "inertia_free");
     }
     if(use_resolve) {
-      nlp.options->SetStringValue("duals_init", "zero");
       nlp.options->SetStringValue("linsol_mode", "speculative");
       nlp.options->SetStringValue("linear_solver_sparse", "resolve");
-      nlp.options->SetStringValue("resolve_refactorization", "rf");
-      nlp.options->SetStringValue("compute_mode", "hybrid");
       nlp.options->SetIntegerValue("ir_outer_maxit", 0);
-      nlp.options->SetIntegerValue("ir_inner_conv_cond", 2);
-      nlp.options->SetStringValue("ir_inner_gs_scheme", "cgs2");
-      nlp.options->SetNumericValue("ir_inner_tol", 1e-8);
+#ifdef HIOP_USE_GPU
+      nlp.options->SetStringValue("compute_mode", "hybrid");
+
+      // -resolve, -resolve_cuda_rf, and -resolve_hip use the same RF settings; only GLU needs separate options.
+      if(use_resolve_cuda_glu) {
+        nlp.options->SetStringValue("resolve_refactorization", "glu");
+      } else {
+        nlp.options->SetStringValue("resolve_refactorization", "rf");
+        nlp.options->SetIntegerValue("ir_inner_conv_cond", 2);
+        nlp.options->SetStringValue("ir_inner_gs_scheme", "cgs2");
+        nlp.options->SetNumericValue("ir_inner_tol", 1e-8);
+      }
+#endif
     }
     if(use_ginkgo) {
       nlp.options->SetStringValue("linsol_mode", "speculative");
@@ -361,7 +456,8 @@ static bool self_check(size_type n, double objval, const bool inertia_free)
   for(int it = 0; it < num_n_saved; it++) {
     if(n_saved[it] == n) {
       found = true;
-      if(fabs((objval_saved[it] - objval) / (1 + objval_saved[it])) > relerr) {
+      const double error = std::fabs((objval_saved[it] - objval) / (1 + objval_saved[it]));
+      if(!std::isfinite(objval) || !std::isfinite(error) || error > relerr) {
         printf(
             "selfcheck failure. Objective (%18.12e) does not agree (%d digits) with the saved value (%18.12e) for n=%d.\n",
             objval,

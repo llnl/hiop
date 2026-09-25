@@ -1,6 +1,14 @@
 # Author(s):
 # - Cameron Rutherford <cameron.rutherford@pnnl.gov>
 
+include(CMakeFindDependencyMacro)
+
+if(@HIOP_USE_RESOLVE@ AND NOT TARGET ReSolve::ReSolve)
+  find_dependency(ReSolve CONFIG REQUIRED
+    HINTS ${ReSolve_DIR} ENV ReSolve_DIR
+    PATH_SUFFIXES share/resolve/cmake)
+endif()
+
 include( "${CMAKE_CURRENT_LIST_DIR}/HiOpTargets.cmake" )
 
 # Configure TPLs if not already in an export set
