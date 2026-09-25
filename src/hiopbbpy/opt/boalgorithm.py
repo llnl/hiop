@@ -222,10 +222,12 @@ def _new_point_clustering_metrics(gpsurrogate, old_x, x_new):
 class BOAlgorithmBase:
   def __init__(self):
     self.acquisition_type = "LCB" # Type of acquisition function (default = "LCB")
+
     self.LCB_beta = 3.0
-    self.batch_type = "KB"        # strategy for qEI
+    self.batch_type = "KB"        # Batched BO strategy
     self.xtrain = None            # Training data
     self.ytrain = None            # Training data
+    self.init_ntrain = 0          # Initial (prior to BO optimization) number of GP training pts 
     self.prob   = None            # Problem structure
     self.obj_evaluator = Evaluator()  # (batch) objective function evaluations
     self.opt_evaluator = Evaluator()  # (multi-start) local optimizer evaluations
@@ -236,15 +238,18 @@ class BOAlgorithmBase:
     # save some internal member train
     self.y_hist = None            # History of evaluations
     self.x_hist = None            # History of evaluations
-    self.x_opt = None             # Best observed point
-    self.y_opt = None             # Best observed value
-    self.idx_opt = None           # Index of the best observed value in the history
+    self.x_BO_opt = None          # Best point generated via BO
+    self.y_BO_opt = None          # Best objective value generated via BO
+    self.x_opt = None             # Best feasible point  (BO + feasible initial training points)
+    self.y_opt = None             # Best objective value (BO + feasible initial training points) 
     self.logger = Logger()        # logger
     self.bnb_num_branch_hist = [] # number of BnB branches visited per BO iter
 
   # Sets the acquisition function type and batch size
   def setAcquisitionType(self, acquisition_type, batch_size=1):
     self.acquisition_type = acquisition_type
+    assert isinstance(batch_size, int), f"batch_size {batch_size} not an integer"
+    assert batch_size > 0, f"batch_size {batch_size} is not strictly positive"
     self.batch_size = batch_size
 
   # Sets the training data
@@ -279,8 +284,11 @@ class BOAlgorithm(BOAlgorithmBase):
                options = {}):
     super().__init__()
     assert isinstance(gpsurrogate, GaussianProcess)
-
+    assert len(xtrain) == len(ytrain), "xtrain, ytrain must be the same length"
+    assert ytrain.ndim == 2 and ytrain.shape[1] == 1, "ytrain must be a (n, 1) array"
+    assert xtrain.ndim == 2, "xtrain must be a (n, d) array"
     self.setTrainingData(xtrain, ytrain)
+    self.init_ntrain = len(ytrain)
     self.prob = prob
     self.gpsurrogate = gpsurrogate
     self.bounds = self.gpsurrogate.get_bounds()
@@ -306,8 +314,6 @@ class BOAlgorithm(BOAlgorithmBase):
     assert self.LCB_beta > 0., f"Invalid LCB beta (variance penalty): {self.LCB_beta}"
 
     batch_size = options.get('batch_size', 1)
-    assert isinstance(batch_size, int), f"batch_size {batch_size} not an integer"
-    assert batch_size > 0, f"batch_size {batch_size} is not strictly positive"
 
     self.setAcquisitionType(acquisition_type, batch_size)
 
@@ -512,22 +518,34 @@ class BOAlgorithm(BOAlgorithmBase):
     self.logger.iterations(f"Best objective from {np.size(x_train, 0)} initial samples: {np.min(y_train):.4e} ")
 
     self._train_surrogate(x_train, y_train, full_retrain=True)
-    
+
+    #
     # filter feasible points
-    fea_idx = self.prob.if_feasible(x_train, y_train)
-    y_fea = y_train[fea_idx]
-    if y_fea.size > 0:
-      best_constrained = np.min(y_fea)
-      self.logger.info(
-            f"Best CONSTRAINED objective from {y_fea.size} feasible initial samples: {np.min(y_fea):.4e}"
-        )
+    #
+    # determine which initial training points are feasible
+    fea_idxs = self.prob.if_feasible(x_train) & np.isfinite(y_train).ravel() # feasible points with finite objectives
+    y_train_fea = y_train[fea_idxs] 
+    x_train_fea = x_train[fea_idxs]
+
+    # determine the most optimal objective value from the set of feasible initial training points
+    if y_train_fea.size > 0:
+      best_fea_idx = np.argmin(y_train_fea)
+      best_constrained_train_y = y_train_fea[best_fea_idx][0]
+      best_constrained_train_x = x_train_fea[best_fea_idx]
+      
+      feasible_train_indices = np.flatnonzero(fea_idxs)
+      train_idx_opt = int(feasible_train_indices[best_fea_idx])
+
+      self.logger.info(f"Best objective: {best_constrained_train_y:.4e} from {y_train_fea.size} feasible initial training points")
+
     else:
-      self.logger.info("No feasible samples found.")
+      best_constrained_train_y = np.inf
+      self.logger.info("No feasible initial training points.")
 
     self.x_hist = []
     self.y_hist = []
     
-    prev_best_y = np.inf
+    prev_best_y = best_constrained_train_y
     for i in range(self.bo_maxiter):
       self.logger.critical(f"*****************************")
       self.logger.critical(f"Iteration {i+1}/{self.bo_maxiter}")
@@ -691,7 +709,7 @@ class BOAlgorithm(BOAlgorithmBase):
       self.logger.debug(f"Feasible samples: {np.sum(feas_new)}/{self.batch_size}")
 
       min_y_new = np.min(y_new)
-      curr_best_y = np.minimum(prev_best_y, min_y_new)
+      curr_best_y = np.min([prev_best_y, min_y_new])
 
       self.logger.iterations(f"Best objective found in this iteration: {min_y_new:.4e} ")
       self.logger.scalars(f"Training set size is now {x_train.shape[0]}")
@@ -733,20 +751,47 @@ class BOAlgorithm(BOAlgorithmBase):
 
       prev_best_y = curr_best_y
 
-    # Save the optimal results and all the training data
-    self.idx_opt = np.argmin(self.y_hist)
-    self.x_opt = self.x_hist[self.idx_opt]
-    self.y_opt = self.y_hist[self.idx_opt]
     self.setTrainingData(x_train, y_train)
-
+    
+    # Save the BO optimal (excluding initial training pts) results
+    # filter non-finite BB objective function values --> inf
+    y_hist_filt = np.where(np.isfinite(self.y_hist), self.y_hist, np.inf)
+    # if there is at least one finite value then argmin is well-defined
+    if not np.isinf(y_hist_filt).all():
+      idx_BO_opt = np.argmin(y_hist_filt)
+    else:
+      idx_BO_opt = 0 # choose an index from set of non-finite BB objective function values
+    self.x_BO_opt = self.x_hist[idx_BO_opt]
+    self.y_BO_opt = y_hist_filt[idx_BO_opt][0]
+    
     self.logger.critical("===================================")
     self.logger.critical("Bayesian Optimization completed")
-    self.logger.critical(f"Total evaluations for initial samples: {len(self.ytrain)-len(self.y_hist)}")
-    self.logger.critical(f"Total evaluations for BO iterations: {len(self.y_hist)}")
-    self.logger.critical(f"Optimal at BO iteration: {self.idx_opt//self.batch_size+1} ")
-    self.logger.debug(f"Best point: {self.x_opt.flatten()}")
-    self.logger.critical(f"Best value: {self.y_opt[0]}")
+    self.logger.critical(f"Total objective evaluations for initial samples: {self.init_ntrain}")
+    self.logger.critical(f"Total objective evaluations for BO iterations: {len(self.y_hist)}")
+    
+    if np.isfinite(self.y_BO_opt) or y_train_fea.size > 0:
+      if self.y_BO_opt < best_constrained_train_y:
+        self.logger.critical(f"Optimal at BO iteration: {idx_BO_opt//self.batch_size+1} ")
+      else:
+        self.logger.critical(f"BO did not generate points more optimal than initial training points")
+      self.logger.critical(f"Best (BO) point: {self.x_BO_opt.flatten()}")
+      self.logger.critical(f"Best (BO) objective value: {self.y_BO_opt}")
+      if self.y_BO_opt < best_constrained_train_y:
+        self.x_opt = self.x_BO_opt
+        self.y_opt = self.y_BO_opt
+      else: # y_BO_opt finite and best_constrained_train_y <= y_BO_opt means best_constrained_train_y is not inf and there is at least one feasible training point
+        self.logger.critical(f"Optimal at training point: {train_idx_opt}")
+        self.logger.critical(f"Best (training) point: {best_constrained_train_x.flatten()}")
+        self.logger.critical(f"Best (training) point objective value: {best_constrained_train_y}")
+        self.x_opt = best_constrained_train_x
+        self.y_opt = best_constrained_train_y
+    else:
+      self.logger.critical(f"BB objective non-finite at all BO sample points")
+      self.logger.critical(f"Each initial GP training point either not feasible or BB objective is non-finite at it")
+      self.x_opt = self.x_BO_opt
+      self.y_opt = self.y_BO_opt
     self.logger.critical("===================================")
+    self.y_opt = np.array([self.y_opt])
 
 
 class minimizer_wrapper:
