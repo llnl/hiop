@@ -154,6 +154,7 @@ class MPIEvaluator(Evaluator):
         kwargs["run_dir"] = str(run_dir)
 
       # submit (index, x) so we can restore original order later
+
       self.manager.submit_tasks(_run_indexed_fun, [(fun, i, xi)], **kwargs)
     return None
 
@@ -162,7 +163,7 @@ class MPIEvaluator(Evaluator):
     nevals = Xin.shape[0]
     self.submit_tasks(fun, Xin)
     self.manager.sync()
-    #print(f"Retrieving results for {self.manager.task_name}...")
+
     Xout, Fout = self.manager.retrieve_results()
 
     # restore original order using returned indices
