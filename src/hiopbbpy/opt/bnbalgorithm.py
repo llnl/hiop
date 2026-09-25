@@ -727,6 +727,74 @@ def add_mccormick_sum_product_constraints(
 
     return sir, pir
 
+def gp_coordinate_loss(distance, theta, kernel_spec, p=2.0):
+  """Coordinate contributions to q=-log(k).
+
+  distance contains nonnegative distances in SMT-normalized coordinates. theta must be 
+  compatible with distance.
+  """
+  distance, theta = np.broadcast_arrays(np.asarray(distance, dtype=float), np.asarray(theta, dtype=float),)
+
+  if(not np.all(np.isfinite(distance)) or not np.all(np.isfinite(theta)) or np.any(distance < 0.0) or np.any(theta < 0.0)):
+    raise ValueError("Distances and theta must be finite and nonnegative")
+
+  # raise an exception on overflow and invalid floating point ops
+  with np.errstate(over="raise", invalid="raise"):
+    if kernel_spec == "pow_exp":
+      p = float(p)
+      if p not in (1.0, 2.0):
+        raise ValueError("Only p=1 and p=2 are supported")
+
+      # p=2: SE; p=1: Matern 1/2.
+      loss = theta * distance**p
+    elif kernel_spec in ("matern32", "matern52"):
+      factor = np.sqrt(3.0 if kernel_spec == "matern32" else 5.0)
+      r = factor * theta * distance
+      loss = np.empty_like(r)
+
+      # Avoid cancellation near r=0.
+      small = r < 1.0e-3
+      t = r[small]
+      if kernel_spec == "matern32":
+        # r - log(1+r), through degree 8.
+        loss[small] = t*t * (0.5 + t*(-1.0/3.0 + t*(0.25 + t*(-0.2 + t*(1.0/6.0 + t*(-1.0/7.0 + t/8.0))))))
+        t = r[~small]
+        loss[~small] = t - np.log1p(t)
+      else:
+        # r - log(1+r+r^2/3), through degree 8.
+        loss[small] = t*t * (1.0/6.0 + t*t*(-1.0/36.0 + t*(1.0/45.0 + t*(-1.0/81.0 + t*(1.0/189.0 - t/648.0)))))
+        t = r[~small]
+        # Evaluate log(1+t+t^2/3) without forming t^2.
+        log_poly = np.logaddexp(np.log1p(t), 2.0*np.log(t) - np.log(3.0),)
+        loss[~small] = t - log_poly
+    else:
+      raise ValueError(f"Unsupported kernel: {kernel_spec}")
+  if not np.all(np.isfinite(loss)):
+    raise FloatingPointError("Nonfinite coordinate loss")
+  return np.maximum(loss, 0.0)
+
+def unit_expsec_gap(width):
+  """Maximum gap between exp(-t) and its secant on [0, width].
+
+  Returns the normalized gap. Multiply by exp(-qL) to obtain the corresponding gap in k.
+  """
+  width = np.asarray(width, dtype=float)
+
+  if not np.all(np.isfinite(width)) or np.any(width < 0.0):
+    raise ValueError("Widths must be finite and nonnegative")
+
+  result = np.empty_like(width)
+  small = width < 1.0e-3
+
+  t = width[small]
+  result[small] = t*t * (1.0/8.0 + t*(-1.0/16.0 + t*(11.0/576.0 + t*(-5.0/1152.0 + t*41.0/51840.0))))
+
+  t = width[~small]
+  a = -np.expm1(-t) / t
+  result[~small] = 1.0 - a + a*np.log(a)
+
+  return np.maximum(result, 0.0)
+
 #################################################################################
 ### Wrapper for "convex_relaxation" code
 #################################################################################
@@ -761,10 +829,11 @@ class GPBoundComputationCommon:
 
     diagnostics_output = ""
 
-    # Let us keep these for now even though they are redundant
-    #if opt_mode != 5 and opt_mode != 6:
-    cons.append(self.C2 @ self.X >= kL)
-    cons.append(self.C2 @ self.X <= kU)
+    # opt_mode 5 and 6 enforce these as self.C2 @ self.X == kvec, with kvec being a scaling of the new
+    # 'scaled' kernel variables zetavar  
+    if opt_mode not in (5, 6):
+      cons.append(self.C2 @ self.X >= kL)
+      cons.append(self.C2 @ self.X <= kU)
     if opt_mode != 0 and opt_mode != 5 and opt_mode != 6:
       # add x optimization variable constrained to box: l <= x <= u
       xvar = cp.Variable(self.x.shape[1])
@@ -893,145 +962,250 @@ class GPBoundComputationCommon:
               cons.append(d_lbound <= dvar[k])
               k = k + 1
     elif opt_mode == 5 or opt_mode == 6:
-      ntrain = self.x.shape[0]
-      dimx = self.x.shape[1]
-      # add x optimization variable constrained to box: l <= x <= u
-      xvar = cp.Variable(dimx)
-      cons.append(l <= xvar)
-      cons.append(xvar <= u)
-      cons.append(cp.atoms.power(cp.atoms.norm(self.X[:-1]), 2) <= 1.0) # k^T R^-1 k = z^T z <= 1
-      # determine bounds for k and lambda
-      dmin = np.maximum(0.0, np.maximum((l - self.x) / self.X_scale, (self.x - u)/ self.X_scale))        # (nt,d)
-      dmax = np.maximum(np.abs((l - self.x) / self.X_scale), np.abs((u - self.x) / self.X_scale))         # (nt,d)
-      th  = self.theta.ravel()     # (d,)
-      lamvar = cp.Variable(ntrain)
-      lamU = np.log(kU)
-      lamL = np.log(kL)
-      cons.append(lamvar >= lamL)
-      cons.append(lamvar <= lamU)
-      for i in range(ntrain):
-        cons.append((self.C2 @ self.X)[i] >= cp.atoms.exp(lamvar[i]))
+      training_x = np.asarray(self.x, dtype=float)
+      ntrain, dimx = training_x.shape
 
-      dlam = lamU - lamL
-      secant_slope = kL * np.divide(np.expm1(dlam), dlam, out=np.ones_like(dlam), where=np.abs(dlam) > 1e-12)
-      cons.append(self.C2 @ self.X <= kL + cp.atoms.multiply(secant_slope,  (lamvar  - lamL)))
-      #cons.append(self.C2 @ self.X <= kL + cp.atoms.multiply((kU - kL) / (lamU - lamL),  (lamvar  - lamL)))
+      l = np.asarray(l, dtype=float).ravel()
+      u = np.asarray(u, dtype=float).ravel()
 
-      etavar = cp.Variable((ntrain, dimx))
-      cons.append(lamvar == cp.atoms.sum(etavar, axis=1)) # sum along column of matrix-valued \eta
-      if self.kernel_spec == "pow_exp":
-        assert self.p in [1.0, 2.0], "opt_mode 5 only support matern 1/2 (a.k.a. pow exp) and SE kernels"
-        if self.p == 2.0:
-          wvar = cp.Variable(dimx)
-          for i in range(ntrain):
-            for j in range(dimx):
-              cons.append(etavar[i,j] == (-1.0 * th[j] / (self.X_scale[j]**self.p)) * (wvar[j] - 2. * self.x[i][j] * xvar[j] + self.x[i][j]**2))
+      scale = np.broadcast_to(np.asarray(self.X_scale, dtype=float).ravel(), (dimx,))
+      th = np.broadcast_to(np.asarray(self.theta, dtype=float).ravel(), (dimx,))
 
-          for j in range(dimx):
-            cons.append(cp.atoms.square(xvar[j]) <= wvar[j])
-            cons.append(wvar[j] <= (l[j] + u[j]) * xvar[j] - l[j] * u[j])
-        elif self.p == 1.0:
-          # --- tau and alpha are ragged arrays
-          taus = [[] for j in range(dimx)]
-          for j in range(dimx):
-            taus[j].append(l[j])
-            taus[j].append(u[j])
-            for i in range(ntrain):
-              if self.x[i][j] < u[j] and l[j] < self.x[i][j]:
-                taus[j].append(self.x[i][j])
-          alphavars = [cp.Variable(len(taus[j])) for j in range(dimx)]
-          for i in range(ntrain):
-            for j in range(dimx):
-              cons.append(etavar[i][j] == cp.atoms.sum(cp.atoms.multiply(-1.0 * th[j] / (self.X_scale[j]) * np.abs(taus[j] - self.x[i][j]), alphavars[j])))
-          for j in range(dimx):
-            cons.append(xvar[j] == cp.atoms.sum(cp.atoms.multiply(taus[j], alphavars[j])))
-            cons.append(cp.atoms.sum(alphavars[j]) == 1.0)
-            for i in range(len(taus[j])):
-              cons.append(alphavars[j][i] >= 0.0)
+      xvar = cp.Variable(dimx, name="xvar")
+      cons += [xvar >= l, xvar <= u, cp.norm(self.X[:-1], 2) <= 1.0]
 
-      else: #matern32 or matern52
-        nu = 1.5
-        if self.kernel_spec != "matern32":
-          nu = 2.5
+      # Positive loss bounds and kernel scaling.
+      qL, qU = self.kernel_loss_bounds(l, u)
+      loss_width = qU - qL
+
+      # Cap the scaling shift, NOT the actual kernel loss.
+      # Usually scale_shift == qL and loss_offset == 0.
+      scale_shift = np.minimum(qL, 700.0)
+      kscale = np.exp(-scale_shift)
+      loss_offset = qL - scale_shift
+
+      with np.errstate(under="ignore"):
+        zetaU_raw = np.exp(-loss_offset)
+        zetaL_raw = np.exp(-(qU - scale_shift))
+
+      zetaL = np.nextafter(zetaL_raw, 0.0)
+      zetaU = np.minimum(1.0, np.nextafter(np.maximum(zetaU_raw, np.finfo(float).tiny), np.inf,))
+
+      # replacement with the positive loss formulation
+      #   loss_parts replaces the old etavar;
+      #   zetavar replaces the old  lamvar.
+      #
+      # qvar or loss_shift_var below are not variable, but expressions
+      loss_parts = cp.Variable((ntrain, dimx), name="coordinate_loss")
+      zetavar = cp.Variable(ntrain, name="scaled_kernel")
+
+      # Affine expressions only.
+      qvar = cp.sum(loss_parts, axis=1)
+      loss_shift_var = qvar - qL
+      kvec = cp.multiply(kscale, zetavar)
+
+      # Compatibility expressions/aliases for diagnostics and existing hooks.
+      lamvar, etavar = -qvar, -loss_parts
+      lamL, lamU = -qU, -qL
+
+      # Used by the existing variance-mode post-solve bound check.
+      rhovar, rhomin, rhomax = qvar, qL, qU
+
+      cons += [loss_shift_var >= 0.0, loss_shift_var <= loss_width,
+               zetavar >= zetaL, zetavar <= zetaU,
+               self.C2 @ self.X == kvec,  #single coupling to the  GP kernel variables.
+      ]
+
+      # Scaled exponential envelope.
+      #
+      # h = q - qL, o = qL - scale_shift:
+      #
+      #   exp(-h-o) <= zeta
+      #   zeta <= exp(-o) * (1 - a*h)
+      #
+      # a = (1-exp(-width))/width, with a(0)=1.
+      a = np.ones_like(loss_width)
+      np.divide(-np.expm1(-loss_width), loss_width, out=a, where=loss_width > 0.0)
+
+      # Round downward because this coefficient is subtracted in the secant upper bound.
+      secant_slope = np.nextafter(zetaU_raw * a, 0.0)
+
+      # the smallest normal Python-float or double
+      normal = zetaU_raw >= np.finfo(float).tiny
+      active = np.flatnonzero(normal & (loss_width > 0.0))
+      fixed = np.flatnonzero(normal & (loss_width == 0.0))
+
+      # For small upper bounds on zeta, keep interval bounds but omit the exponential
+      # and secant cuts. Weaker relaxation at the benefit of maintaining a positive correlation k
+      if active.size > 0:
+        cons += [ cp.ExpCone(-loss_shift_var[active] - loss_offset[active], np.ones(active.size), zetavar[active]),
+                  zetavar[active] <= zetaU[active] - cp.multiply(secant_slope[active], loss_shift_var[active])]
+
+      if fixed.size > 0:
+        # Avoid a degenerate exponential cone.
+        cons.append(zetavar[fixed] == zetaU_raw[fixed])
+        printf(f"INFO: Scaled positive loss: got {fixed.size} zetas")
+
+      # ------------------------------------------------------------
+      # SE coordinate hull.
+      # ------------------------------------------------------------
+      if self.kernel_spec == "pow_exp" and float(self.p) == 2.0:
+        # Preserve one shared square variable per input coordinate.
+        wvar = cp.Variable(dimx, name="shared_squared_w")
+
+        cons += [cp.square(xvar) <= wvar, wvar <= cp.multiply(l + u, xvar) - l*u,]
+
         for j in range(dimx):
-          component_phi = matern_phi(self.x[:,j].tolist(), th[j] / self.X_scale[j], nu)
-          D_rs = component_phi.generate_alpha_beta_r(l[j], u[j])
-          for k in range(len(D_rs)):
-            # alpha_m xj + beta_m^T eta_(:, j) <= r_m
-            cons.append(D_rs[k][0] * xvar[j] + cp.atoms.scalar_product(D_rs[k][1], etavar[:,j]) <= D_rs[k][2])
+          centers = training_x[:, j]
+          cons.append(loss_parts[:, j] == (th[j] / scale[j]**2) * (wvar[j] - 2.0*cp.multiply(centers, xvar[j]) + centers**2))
+
+      # ------------------------------------------------------------
+      # Matern 1/2 coordinate hull.
+      # ------------------------------------------------------------
+      elif self.kernel_spec == "pow_exp" and float(self.p) == 1.0:
+        # Joint breakpoint hull: weights are shared across samples.
+        taus, alphavars = [], []
+
+        for j in range(dimx):
+          lj, uj = float(l[j]), float(u[j])
+          centers = training_x[:, j]
+
+          interior = centers[(centers > lj) & (centers < uj)]
+          knots = np.unique(np.concatenate(([lj], interior, [uj])))
+
+          alpha = cp.Variable(knots.size, nonneg=True, name=f"matern12_alpha_{j}",)
+
+          loss_at_knots = (th[j] / scale[j]) * np.abs(centers[:, None] - knots[None, :])
+
+          cons += [ cp.sum(alpha) == 1.0,
+                    xvar[j] - lj == (knots - lj) @ alpha,            # Center the knot coordinates without changing the hull.
+                    loss_parts[:, j] == loss_at_knots @ alpha]
+
+          taus.append(knots)
+          alphavars.append(alpha)
+
+      # ------------------------------------------------------------
+      # Matern 3/2 and Matern 5/2 coordinate hulls.
+      # ------------------------------------------------------------
+      elif self.kernel_spec in ("matern32", "matern52"):
+        nu = 1.5 if self.kernel_spec == "matern32" else 2.5
+
+        for j in range(dimx):
+          lj, uj = float(l[j]), float(u[j])
+          centers = training_x[:, j]
+
+          # Avoid support generation for a fixed coordinate or
+          # a coordinate with zero kernel weight.
+          if lj == uj or th[j] == 0.0:
+            fixed_loss = gp_coordinate_loss(np.abs(lj - centers) / scale[j], th[j], self.kernel_spec)
+            cons.append(loss_parts[:, j] == fixed_loss)
+            continue
+
+          # The existing helper incorporates sqrt(3) or sqrt(5).
+          component_phi = matern_phi(centers.tolist(), float(th[j] / scale[j]), nu)
+          support_rows = component_phi.generate_alpha_beta_r(lj, uj)
+
+          for alpha, beta, rhs in support_rows:
+            alpha, rhs = float(alpha), float(rhs)
+            beta = np.asarray(beta, dtype=float).reshape(ntrain)
+
+            if (not np.isfinite(alpha) or not np.isfinite(rhs) or not np.all(np.isfinite(beta))):
+              raise FloatingPointError("Nonfinite Matern support row")
+
+            # Old support row:
+            #   alpha*x_j + beta @ eta[:,j] <= rhs
+            #
+            # Substitute eta = -loss_parts.
+            cons.append(alpha*xvar[j] - beta @ loss_parts[:, j] <= rhs)
+      else:
+        raise ValueError(f"Unsupported kernel: {self.kernel_spec}")
+
       # add constraints based on downselected nearest neighbor pairs
       # downselect on available pairs
       if opt_mode == 6:
-        Ei_exp = np.zeros(ntrain)
-        Ai     = np.zeros(ntrain)
-        kvec = self.C2 @ self.X
+        pairs = np.asarray(list(self.nearest_neighbor_pairs), dtype=int).reshape(-1, 2)
 
-        sensitivity_floor = 0.05
-        x_ref = 0.5 * (np.asarray(l, dtype=float) + np.asarray(u, dtype=float))
-        lcb_grad_k, k_ref, sigma_ref, mean_grad_k, variance_grad_k = lcb_gradient_at_single_reference(self, x_ref)
-        abs_lcb_grad_k = np.abs(lcb_grad_k)
-        normalized_lcb_sensitivity = abs_lcb_grad_k / max(float(np.max(abs_lcb_grad_k)), np.finfo(float).eps)
+        if pairs.shape[0]:
+          # --------------------------------------------------------
+          # Pair selection: scores remain in physical k units.
+          # --------------------------------------------------------
+          x_ref = l + 0.5*(u - l)
 
-        for i in range(ntrain):
-          #compute Ei_exp
-          if lamU[i] > lamL[i]:
-            # point where gap between exp and its secant is largest
+          grad_k, _, _, _, _ = lcb_gradient_at_single_reference(self, x_ref)
+          abs_grad = np.abs(np.asarray(grad_k, dtype=float).ravel())
+          sensitivity = abs_grad / max(float(abs_grad.max()), np.finfo(float).eps)
 
-            # original code misses  "- exp(lamstar)" for Ei_exp[i]
-            # lamstar = np.log((np.exp(lamU[i]) - np.exp(lamL[i])) / (lamU[i] - lamL[i]))
-            # Ei_exp[i] = np.exp(lamL[i]) + (np.exp(lamU[i]) - np.exp(lamL[i])) / (lamU[i] - lamL[i]) * (lamstar - lamL[i])
-            exp_lamL = np.exp(lamL[i])
-            lam_exp_diff = np.exp(lamU[i]) - exp_lamL
-            slope = lam_exp_diff / (lamU[i] - lamL[i])
-            lamstar = np.log(slope)
-            sec_at_star = exp_lamL + slope*(lamstar - lamL[i])                                                          
-            Ei_exp[i] = sec_at_star - slope
-            if Ei_exp[i] < 0:
-              raise RuntimeError("roundoff error: diff between exp and sec should be zero")            
-          else:
-            Ei_exp[i] = 0.
-          #Ai[i] = Ei_exp[i] * (gamma_floor + (1. - gamma_floor) * np.abs(self.gamma[i]) / (np.max(np.abs(self.gamma)) + eps_gamma))
-          Ai[i] = Ei_exp[i] * (sensitivity_floor + (1.0 - sensitivity_floor) * normalized_lcb_sensitivity[i])
-        pair_selection_triplets = np.array([[pair[0], pair[1], (Ai[pair[0]] + Ai[pair[1]])/self.pairs_dist[pair[0],pair[1]]] for pair in self.nearest_neighbor_pairs])
-        #pair_selection_triplets = np.array([[pair[0], pair[1], Ai[pair[0]] + Ai[pair[1]]] for pair in self.nearest_neighbor_pairs]).reshape(-1, 3)
-        args = np.argsort(pair_selection_triplets[:,-1])[::-1]
-        pair_selection_triplets[:,:] = pair_selection_triplets[args,:]
-        # now find c1 * p pairs
-        c1 = 1
-        ndownselect_pairs = min(len(self.nearest_neighbor_pairs), c1 * ntrain)
-        for pair in pair_selection_triplets[:ndownselect_pairs]:
-          i_idx = int(pair[0])
-          r_idx = int(pair[1])
-          lir_min = 0.
-          lir_max = 0.
-          if self.kernel_spec == "pow_exp":
-            dphi_ijr = lambda t,j: -th[j] / (self.X_scale[j]**self.p) * (np.abs(t - self.x[i_idx][j])**self.p - np.abs(t - self.x[r_idx][j])**self.p)
-            lijr_mins = [min([dphi_ijr(l[j], j), dphi_ijr(u[j],j)]) for j in range(dimx)]
-            lijr_maxs = [max([dphi_ijr(l[j], j), dphi_ijr(u[j],j)]) for j in range(dimx)]
-            lir_min = sum(lijr_mins)
-            lir_max = sum(lijr_maxs)
-          else:
-            lir_min = 0.
-            lir_max = 0.
-            for j in range(dimx): 
-              if self.kernel_spec == "matern32":
-                _, _, lijr_min, lijr_max = dphir_minmax_threehalves(l[j], u[j], th[j] / self.X_scale[j], [self.x[i_idx][j], self.x[r_idx][j]])
-              else: #matern 5/2
-                _, _, lijr_min, lijr_max = dphir_minmax_fivehalves(l[j], u[j], th[j] / self.X_scale[j], [self.x[i_idx][j], self.x[r_idx][j]])
-              lir_min += lijr_min
-              lir_max += lijr_max
+          with np.errstate(under="ignore"):
+            Ei_exp = np.exp(-qL) * unit_expsec_gap(loss_width)
+          Ai = Ei_exp * (0.05 + 0.95*sensitivity)
+          distances = np.array([self.pairs_dist[i, r] for i, r in pairs], dtype=float)
+          
+          # The floor also handles coincident samples.
+          scores = (Ai[pairs[:, 0]] + Ai[pairs[:, 1]]) / np.maximum(distances, np.finfo(float).eps)
 
-          #add_mccormick_ratio_constraints(cons=cons, ki=kvec[i_idx], kr=kvec[r_idx], lam_i=lamvar[i_idx], lam_r=lamvar[r_idx],
-          #                                lir_min=lir_min, lir_max=lir_max, ki_min=kL[i_idx],
-          #                                ki_max=kU[i_idx], kr_min=kL[r_idx], kr_max=kU[r_idx], name=f"{i_idx}_{r_idx}")
-          add_ratio_constraints(cons, kvec[i_idx], kvec[r_idx], lir_min, lir_max)
+          c1 = 1
+          order = np.argsort(scores)[::-1][:min(len(pairs), c1*ntrain)]
 
-          #sir_min, sir_max = compute_sigma_ir_bounds(l=l, u=u, theta=th, x_scale=self.X_scale, x_i=self.x[i_idx], x_r=self.x[r_idx],
-          #                                           kernel_spec=self.kernel_spec, p=getattr(self, "p", 2.0))
-          #add_ratio_informed_product_constraints(cons=cons, ki=kvec[i_idx], kr=kvec[r_idx], dirL=lir_min, dirU=lir_max, sirL=sir_min, sirU=sir_max)
-          #add_mccormick_sum_product_constraints(cons, kvec[i_idx], kvec[r_idx], lamvar[i_idx], lamvar[r_idx], kL[i_idx], kU[i_idx],
-          #                                      kL[r_idx], kU[r_idx], sir_min, sir_max)
-          #add_product_constraints(cons, kvec[i_idx], kvec[r_idx], sir_min, sir_max)
+          # --------------------------------------------------------
+          # Pair bounds and scaled ratio rows.
+          # --------------------------------------------------------
+          for pair_index in order:
+            i_idx, r_idx = map(int, pairs[pair_index])
+
+            if self.kernel_spec == "pow_exp":
+              # Existing endpoint construction for SE and Matern 1/2,
+              # evaluated through the positive-loss helper.
+              endpoint_differences = []
+
+              for endpoint in (l, u):
+                loss_i = gp_coordinate_loss(np.abs(endpoint - training_x[i_idx]) / scale, th, self.kernel_spec, self.p)
+                loss_r = gp_coordinate_loss(np.abs(endpoint - training_x[r_idx]) / scale, th, self.kernel_spec, self.p)
+                # lambda_i - lambda_r = loss_r - loss_i.
+                endpoint_differences.append(loss_r - loss_i)
+
+              at_l, at_u = endpoint_differences
+              lir_min = float(np.minimum(at_l, at_u).sum())
+              lir_max = float(np.maximum(at_l, at_u).sum())
+
+            else:
+              # Preserve the existing Matern pair-bound algorithms.
+              pair_bound = dphir_minmax_threehalves if self.kernel_spec == "matern32" else dphir_minmax_fivehalves
+
+              lir_min, lir_max = 0.0, 0.0
+
+              for j in range(dimx):
+                if th[j] == 0.0:
+                  continue
+
+                centers = training_x[[i_idx, r_idx], j]
+
+                if l[j] == u[j]:
+                  values = gp_coordinate_loss(np.abs(l[j] - centers) / scale[j], th[j], self.kernel_spec)
+                  lo_j = hi_j = float(values[1] - values[0])
+
+                else:
+                  _, _, lo_j, hi_j = pair_bound(float(l[j]), float(u[j]), float(th[j] / scale[j]), centers.tolist())
+
+                lir_min += float(lo_j)
+                lir_max += float(hi_j)
+
+            # log(zeta_i/zeta_r)   = log(k_i/k_r) + scale_shift_i - scale_shift_r.
+            shift = scale_shift[i_idx] - scale_shift[r_idx]
+
+            add_ratio_constraints(cons, zetavar[i_idx], zetavar[r_idx], lir_min + shift, lir_max + shift,)  
+            #add_ratio_constraints(cons, kvec[i_idx], kvec[r_idx], lir_min, lir_max)
+            
+            #add_mccormick_ratio_constraints(cons=cons, ki=kvec[i_idx], kr=kvec[r_idx], lam_i=lamvar[i_idx], lam_r=lamvar[r_idx],
+            #                                lir_min=lir_min, lir_max=lir_max, ki_min=kL[i_idx],
+            #                                ki_max=kU[i_idx], kr_min=kL[r_idx], kr_max=kU[r_idx], name=f"{i_idx}_{r_idx}")
+            
+
+            #sir_min, sir_max = compute_sigma_ir_bounds(l=l, u=u, theta=th, x_scale=self.X_scale, x_i=self.x[i_idx], x_r=self.x[r_idx],
+            #                                           kernel_spec=self.kernel_spec, p=getattr(self, "p", 2.0))
+            #add_ratio_informed_product_constraints(cons=cons, ki=kvec[i_idx], kr=kvec[r_idx], dirL=lir_min, dirU=lir_max, sirL=sir_min, sirU=sir_max)
+            #add_mccormick_sum_product_constraints(cons, kvec[i_idx], kvec[r_idx], lamvar[i_idx], lamvar[r_idx], kL[i_idx], kU[i_idx],
+            #                                      kL[r_idx], kU[r_idx], sir_min, sir_max)
+            #add_product_constraints(cons, kvec[i_idx], kvec[r_idx], sir_min, sir_max)
 
     opt_tol = 1.e-8
     opt_rel_tol = 1.e-8
@@ -1039,6 +1213,7 @@ class GPBoundComputationCommon:
       verbose = False
       if i > 0:
         max_iters = 1000
+        verbose = False
       else:
         max_iters = 300
       if i == 2:
@@ -1047,6 +1222,13 @@ class GPBoundComputationCommon:
       try:
         if mode == 0:
           prob = cp.Problem(cp.Minimize(self.obj2), cons)
+
+          # model debugging 
+          #data, _, _ = prob.get_problem_data(cp.CLARABEL)
+          #A = data["A"]
+          #dims = data["dims"]
+          #print(f"Clarabel model: variables={A.shape[1]} rows={A.shape[0]} equalities={dims.zero} linear_inequalities={dims.nonneg} exp_cones={dims.exp} soc_sizes={dims.soc} nnz_A={A.nnz}")
+  
           if not prob.is_dcp():
             print("is not DCP")
             raise RuntimeError("LCB relaxation is not DCP")
@@ -1062,7 +1244,10 @@ class GPBoundComputationCommon:
               raise RuntimeError("LCB relaxation solver did not return an optimal solution")
 
           if self.diagnostics and opt_mode==6:
-            diagnostics_output = stats_common_se_point(owner=self, l=l, u=u, xvar=xvar, wvar=wvar, lamvar=lamvar)
+            diagnostics_output = ""
+            if (self.kernel_spec == "pow_exp" and float(self.p) == 2.0):
+              diagnostics_output = stats_common_se_point(owner=self, l=l, u=u, xvar=xvar, wvar=wvar, lamvar=lamvar)
+            
             diagnostics_output = stats_lcb_relaxation_gap(owner=self, xvar=xvar, relaxation_value=acqf_L) + diagnostics_output
 
           if opt_mode in (5,6):
@@ -1095,7 +1280,58 @@ class GPBoundComputationCommon:
     else:
       return sig_U, diagnostics_output
 
+  def kernel_loss_bounds(self, l, u):
+    """Direct bounds on q_i(x)=-log(k_i(x)) over [l,u]."""
+    training_x = np.asarray(self.x, dtype=float)
+    l = np.asarray(l, dtype=float).ravel()
+    u = np.asarray(u, dtype=float).ravel()
+
+    if training_x.ndim != 2 or training_x.shape[0] == 0:
+      raise ValueError("Training inputs must be a nonempty matrix")
+
+    dimx = training_x.shape[1]
+    if l.size != dimx or u.size != dimx:
+      raise ValueError("Box dimension does not match training inputs")
+
+    scale = np.broadcast_to(np.asarray(self.X_scale, dtype=float).ravel(), (dimx,))
+    theta = np.broadcast_to(np.asarray(self.theta, dtype=float).ravel(), (dimx,))
+
+    if (not all(np.all(np.isfinite(a)) for a in (training_x, l, u, scale, theta))
+        or np.any(l > u) or np.any(scale <= 0.0) or np.any(theta < 0.0)):
+      raise ValueError("Invalid box, training data, or kernel parameters")
+
+    self.dmin = np.maximum(0.0, np.maximum(l - training_x, training_x - u)) / scale
+    self.dmax = np.maximum(np.abs(l - training_x), np.abs(u - training_x)) / scale
+
+    p = float(self.p) if self.kernel_spec == "pow_exp" else 2.0
+
+    qL = gp_coordinate_loss(self.dmin, theta, self.kernel_spec, p).sum(axis=1)
+    qU = gp_coordinate_loss(self.dmax, theta, self.kernel_spec, p).sum(axis=1)
+
+    if not np.all(np.isfinite(qL)) or not np.all(np.isfinite(qU)):
+      raise FloatingPointError("Nonfinite kernel-loss bounds")
+
+    return qL, np.maximum(qU, qL)
+
   def ker_bounds(self, l, u):
+    """ 
+    Monotone bounds for k(x, X_i) over box [l,u] (original units), without taking logaritms,
+    which is problematic as some of relaxation k-variables may get zero or even negative due
+    to solve and roundoff errors.
+ 
+    Returns kL, kU of shape (nt,), consistent with SMT’s kernels.
+    """
+    qL, qU = self.kernel_loss_bounds(l, u)
+
+    #with np.errstate(under="ignore"):
+    lower, upper = np.exp(-qU), np.exp(-qL)
+
+    # Move the elementary endpoint evaluations outward.
+    kL = np.nextafter(lower, 0.0)
+    kU = np.minimum(1.0, np.nextafter(np.maximum(upper, np.finfo(float).tiny), np.inf))
+
+    return kL, kU
+  def ker_bounds_old(self, l, u):
    
     """
     Tight monotone bounds for k(x, X_i) over box [l,u] (original units).
@@ -2473,10 +2709,15 @@ class branching_wrapper(GPBoundComputationCommon):
     a = np.abs(g) if a.max()<=eps else a
     m = a.max()
     omega = np.ones(n) if m<=eps else of+(1-of)*a/m
-    lo,up = np.asarray(lamL,float).ravel(),np.asarray(lamU,float).ravel()
-    d = np.maximum(up-lo,0.)
-    h = np.divide(-np.expm1(-d),d,out=np.ones_like(d),where=d>1e-6)
-    E = np.where(d>1e-6,np.exp(up)*(1-h+h*np.log(h)),np.exp((lo+up)/2)*d*d/8)
+    #lo,up = np.asarray(lamL,float).ravel(),np.asarray(lamU,float).ravel()
+    #d = np.maximum(up-lo,0.)
+    #h = np.divide(-np.expm1(-d),d,out=np.ones_like(d),where=d>1e-6)
+    #E = np.where(d>1e-6,np.exp(up)*(1-h+h*np.log(h)),np.exp((lo+up)/2)*d*d/8)
+    lo = np.asarray(lamL, dtype=float).ravel()
+    up = np.asarray(lamU, dtype=float).ravel()
+    d = np.maximum(up - lo, 0.0)
+    with np.errstate(under="ignore"):
+      E = np.exp(up) * unit_expsec_gap(d)
     r = np.maximum(k-np.exp(lam),0.)
     rho = rf+(1-rf)*np.minimum(1,r/(E+eps))
     self.expsec_omega, self.expsec_rho, self.expsec_weights = omega, rho, omega*rho
