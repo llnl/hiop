@@ -982,16 +982,10 @@ def run_async_search(
 
   
   def make_brancher() -> Any:
-    return brancher_type(
-      algorithm.acqf,
-      LUB=store.incumbent_value,
-      epsilon_prune=algorithm.epsilon_prune,
-      acqf_UB_solver=algorithm.acqf_UB_solver,
-      random_seed=algorithm.random_seed,
-      opt_mode=algorithm.opt_mode,
-      nearest_neighbor_pairs=algorithm.nearest_neighbor_pairs,
-      diagnostics=algorithm.diagnostics,
-    )
+    return brancher_type(algorithm.acqf, LUB=store.incumbent_value, epsilon_prune=algorithm.epsilon_prune,
+                         acqf_UB_solver=algorithm.acqf_UB_solver, random_seed=algorithm.random_seed,
+                         opt_mode=algorithm.opt_mode, nearest_neighbor_pairs=algorithm.nearest_neighbor_pairs,
+                         diagnostics=algorithm.diagnostics, pairs_dist=algorithm.pairs_dist)
 
   # A brancher owns mutable relaxation/solver objects.  Keep at most one active
   # task per instance; completed instances are reused to bound setup/memory.

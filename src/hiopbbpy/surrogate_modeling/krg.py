@@ -121,9 +121,7 @@ class smtKRG(GaussianProcess):
 
       # NoOp still checks theta_bounds. Temporarily widen them
       # if input restandardization moved normalized theta outside.
-      lower = min(
-          bounds[0],
-          max(np.finfo(float).tiny, np.nextafter(theta0.min(), 0.0)))
+      lower = min(bounds[0], max(np.finfo(float).tiny, np.nextafter(theta0.min(), 0.0)))
       upper = max(bounds[1], np.nextafter(theta0.max(), np.inf))
       sm.options["theta_bounds"] = [lower, upper]
       restore_bounds = True
@@ -164,7 +162,39 @@ class smtKRG(GaussianProcess):
 
       if restore_bounds:
         sm.options["theta_bounds"] = (configured_bounds.tolist())
-  
+
+  def cov_cond_info(self):
+    """
+    Returns a string with covariance conditioning and related info.
+
+    Performs an SVD on the C matrix
+    """
+    sm = self.surrogatesmt
+    par = sm.optimal_par
+    C = np.asarray(par["C"], dtype=float)
+    gamma = np.asarray(par["gamma"], dtype=float).ravel()
+    y_std  = getattr(sm, "y_std",  None)
+    y_std = float(y_std[0])
+    sigma2 = np.asarray(par.get("sigma2", 1.0), float).reshape(()).item()
+      
+    singular_values = np.linalg.svd(C, compute_uv=False)
+
+    if singular_values[-1] > 0.0:
+      log10_cond_C = (np.log10(singular_values[0]) - np.log10(singular_values[-1]))
+    else:
+      log10_cond_C = np.inf
+        
+    mean_coeff_z = float(y_std) * (C.T @ gamma)
+
+    info = f"GP conditioning: log10_cond_C={log10_cond_C:.3f} "
+    info+= f"log10_cond_R_est={2.0*log10_cond_C:.3f} "
+    info+= f"min_diag_C={np.min(np.diag(C)):.3e} "
+    info+= f"gamma_nrm1={np.linalg.norm(gamma, 1):.3e} "
+    info+= f"gamma_nrminf={np.linalg.norm(gamma, np.inf):.3e} "
+    info+= f"mean_coeff_z_nrm2={np.linalg.norm(mean_coeff_z):.3e} "
+    info+= f"sigma2={float(sigma2):.3e}"
+    return info
+
   def train2(self, x, y, *, optimize_theta=True, theta_bounds=None):
     assert (theta_bounds is None) or (optimize_theta is True),  "Changing GP theta bounds requires reoptimizing theta"
 

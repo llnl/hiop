@@ -422,6 +422,8 @@ class BOAlgorithm(BOAlgorithmBase):
                            theta_bounds=theta_bounds, preserve_prior=preserve_prior)
     self.logger.debug("Surrogate training complete.")
 
+    self.logger.info(self.gpsurrogate.cov_cond_info())
+
   # Method to find the best next sampling point via optimizing the acquisition function
   def _find_best_point(self, x_train, y_train, x0 = None, BOit=0):
     self.logger.info(f"Start finding the best sampling point:")

@@ -76,9 +76,12 @@ def fit_common_se_point_from_ratios(owner, k_values, l, u, anchor=0):
     whether the common multiplicative scale is also correct.
     """
     k_values = np.asarray(k_values, dtype=float).ravel()
-
+    #truncate to avoid log issues
+    k_values = np.maximum(k_values, 1e-12)
+    
     if np.any(~np.isfinite(k_values)) or np.any(k_values <= 0.0):
-        raise ValueError("All kernel values must be finite and positive")
+        #print(f"Value error: kernels not finite and positive: {k_values}", flush=True)        
+        raise ValueError("All kernel values must be finite and positive.")
 
     theta = np.asarray(owner.theta, dtype=float).ravel()
     Xc = np.asarray(owner.Xc, dtype=float)
