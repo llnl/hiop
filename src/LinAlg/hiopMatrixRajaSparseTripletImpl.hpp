@@ -1064,16 +1064,14 @@ void hiopMatrixRajaSparseTriplet<MEMBACKEND, RAJAEXECPOL>::copyRowsBlockFrom(con
         RAJA_LAMBDA(RAJA::Index_type i) { dst_row_st_init[i] = 0; });
   }
   index_type* dst_row_st_dev = row_starts_->idx_start_;
-  auto& rm = umpire::ResourceManager::getInstance();
-  umpire::Allocator hostalloc = rm.getAllocator("HOST");
-
-  int* next_row_nnz = static_cast<size_type*>(hostalloc.allocate(sizeof(size_type)));
   index_type register_row_st = row_starts_->register_row_st_;
 
-  rm.copy(next_row_nnz, dst_row_st_dev + 1 + rows_dst_idx_st, 1 * sizeof(size_type));
-
-  if(next_row_nnz[0] == 0) {
-    assert(rows_dst_idx_st >= register_row_st);
+  // Whether this destination block still has to have its row starts computed is what
+  // register_row_st_ records. It used to be inferred from the nonzero count of the
+  // block's first destination row, which is legitimately zero when that row is empty --
+  // such a block was then registered again on every call, and the inclusive scan below
+  // ran over starts that had already been scanned.
+  if(rows_dst_idx_st >= register_row_st) {
     // comput nnz in each row from source
     RAJA::forall<hiop_raja_exec>(
         RAJA::RangeSegment(0, n_rows),
@@ -1107,7 +1105,6 @@ void hiopMatrixRajaSparseTriplet<MEMBACKEND, RAJAEXECPOL>::copyRowsBlockFrom(con
           k_src++;
         }
       });
-  //  delete [] next_row_nnz;
 }
 
 /// @brief Prints the contents of this function to a file.
