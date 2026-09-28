@@ -133,9 +133,9 @@ hiopLinSolverSymSparseReSolve::hiopLinSolverSymSparseReSolve(const int& n, const
   // Select matrix ordering
   int ordering = 1;
   std::string ord = nlp_->options->GetString("linear_solver_sparse_ordering");
-  if(ord == "amd_ssparse") {
+  if(ord == "amd-ssparse") {
     ordering = 0;
-  } else if(ord == "colamd_ssparse") {
+  } else if(ord == "colamd-ssparse") {
     ordering = 1;
   } else {
     nlp_->log->printf(hovWarning, "Ordering %s not compatible with cuSOLVER LU, using default ...\n", ord.c_str());
