@@ -533,6 +533,10 @@ if (HIOP_WITH_MAKETEST)
       add_test(NAME MPSSolveGpuRfTest
         COMMAND ${RUNCMD} "$<TARGET_FILE:testMPSSolve>" "${PROJECT_SOURCE_DIR}/tests/MPS/small_lp.mps"
                 "--gpu" "--resolve-refactorization" "rf")
+      add_test(NAME MPSSolveGpuRestorationTest
+        COMMAND ${RUNCMD} "$<TARGET_FILE:testMPSSolve>"
+                "${PROJECT_SOURCE_DIR}/tests/MPS/pglib_opf_case3_lmbd.mps"
+                "--gpu" "--expected-objective" "7003.1332780602")
     else()
       add_test(NAME MPSSolveGpuUnavailableTest
         COMMAND ${RUNCMD} "$<TARGET_FILE:hiop-solve-mps>" "${PROJECT_SOURCE_DIR}/tests/MPS/small_lp.mps" "--gpu")
