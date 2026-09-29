@@ -16,6 +16,9 @@ install_requires = ["smt"]
 if os.getenv("ADD_CYIPOPT", "0") == "1":
     install_requires.append("cyipopt")
 
+if os.getenv("ADD_MUYGPS", "0") == "1":
+    install_requires.append("muygpys>=0.9")
+
 metadata = dict(
         name="hiopbbpy",
         version="1.2.0",
