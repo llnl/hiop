@@ -38,12 +38,3 @@ endforeach()
 
 # Create default library pointed to by HiOp::HiOp
 add_library(HiOp::HiOp ALIAS ${hiop_default_library_name})
-
-if(HIOP_SPARSE)
-  add_executable(hiop-solve-mps Drivers/Sparse/hiopSolveMPS.cpp)
-  target_link_libraries(hiop-solve-mps PRIVATE HiOp::HiOp)
-  set_target_properties(hiop-solve-mps PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/Drivers/Sparse"
-    )
-  install(TARGETS hiop-solve-mps DESTINATION bin)
-endif()

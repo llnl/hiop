@@ -21,6 +21,7 @@
 #include <RAJA/RAJA.hpp>
 #include <umpire/Allocator.hpp>
 #include <umpire/ResourceManager.hpp>
+#include <cuda_runtime.h>
 #endif
 
 namespace hiop
@@ -769,12 +770,26 @@ bool hiopInterfaceMPS::get_vars_info(const size_type& n,
   if(!impl_->loaded || n != static_cast<size_type>(impl_->column_names.size())) return false;
 #ifdef HIOP_MPS_DEVICE_ENABLED
   if(impl_->execution_mode == ExecutionMode::device) {
+    // In device mode, callback pointers are on host (callback_mem_space=host is required).
+    // Allocate device buffers, run RAJA kernel, copy results back to host.
+    auto& rm = umpire::ResourceManager::getInstance();
+    auto device_alloc = rm.getAllocator("DEVICE");
+    double* xlow_device = static_cast<double*>(device_alloc.allocate(n * sizeof(double)));
+    double* xupp_device = static_cast<double*>(device_alloc.allocate(n * sizeof(double)));
+
     const double* lower = impl_->column_lower_device;
     const double* upper = impl_->column_upper_device;
     RAJA::forall<MpsRajaExec>(RAJA::RangeSegment(0, n), RAJA_LAMBDA(RAJA::Index_type i) {
-      xlow[i] = lower[i];
-      xupp[i] = upper[i];
+      xlow_device[i] = lower[i];
+      xupp_device[i] = upper[i];
     });
+    cudaDeviceSynchronize();
+
+    rm.copy(xlow, xlow_device, n * sizeof(double));
+    rm.copy(xupp, xupp_device, n * sizeof(double));
+    device_alloc.deallocate(xupp_device);
+    device_alloc.deallocate(xlow_device);
+
     // NonlinearityType arrays are always host resident in the sparse interface.
     for(size_type i = 0; i < n; ++i) type[i] = hiopLinear;
     return true;
@@ -796,12 +811,26 @@ bool hiopInterfaceMPS::get_cons_info(const size_type& m,
   if(!impl_->loaded || m != static_cast<size_type>(impl_->row_names.size())) return false;
 #ifdef HIOP_MPS_DEVICE_ENABLED
   if(impl_->execution_mode == ExecutionMode::device) {
+    // In device mode, callback pointers are on host (callback_mem_space=host is required).
+    // Allocate device buffers, run RAJA kernel, copy results back to host.
+    auto& rm = umpire::ResourceManager::getInstance();
+    auto device_alloc = rm.getAllocator("DEVICE");
+    double* clow_device = static_cast<double*>(device_alloc.allocate(m * sizeof(double)));
+    double* cupp_device = static_cast<double*>(device_alloc.allocate(m * sizeof(double)));
+
     const double* lower = impl_->row_lower_device;
     const double* upper = impl_->row_upper_device;
     RAJA::forall<MpsRajaExec>(RAJA::RangeSegment(0, m), RAJA_LAMBDA(RAJA::Index_type i) {
-      clow[i] = lower[i];
-      cupp[i] = upper[i];
+      clow_device[i] = lower[i];
+      cupp_device[i] = upper[i];
     });
+    cudaDeviceSynchronize();
+
+    rm.copy(clow, clow_device, m * sizeof(double));
+    rm.copy(cupp, cupp_device, m * sizeof(double));
+    device_alloc.deallocate(cupp_device);
+    device_alloc.deallocate(clow_device);
+
     // NonlinearityType arrays are always host resident in the sparse interface.
     for(size_type i = 0; i < m; ++i) type[i] = hiopLinear;
     return true;
@@ -834,11 +863,21 @@ bool hiopInterfaceMPS::eval_f(const size_type& n, const double* x, bool, double&
   obj_value = impl_->objective_offset;
 #ifdef HIOP_MPS_DEVICE_ENABLED
   if(impl_->execution_mode == ExecutionMode::device) {
+    // In device mode, callback pointers are on host (callback_mem_space=host is required).
+    // Copy x to device, run RAJA kernel, return scalar result.
+    auto& rm = umpire::ResourceManager::getInstance();
+    auto device_alloc = rm.getAllocator("DEVICE");
+    double* x_device = static_cast<double*>(device_alloc.allocate(n * sizeof(double)));
+    rm.copy(x_device, const_cast<double*>(x), n * sizeof(double));
+
     const double* costs = impl_->costs_device;
     RAJA::ReduceSum<MpsRajaReduce, double> linear_objective(0.0);
     RAJA::forall<MpsRajaExec>(RAJA::RangeSegment(0, n),
-                              RAJA_LAMBDA(RAJA::Index_type i) { linear_objective += costs[i] * x[i]; });
+                              RAJA_LAMBDA(RAJA::Index_type i) { linear_objective += costs[i] * x_device[i]; });
+    cudaDeviceSynchronize();
     obj_value += linear_objective.get();
+
+    device_alloc.deallocate(x_device);
     return true;
   }
 #endif
@@ -851,9 +890,19 @@ bool hiopInterfaceMPS::eval_grad_f(const size_type& n, const double*, bool, doub
   if(!impl_->loaded || n != static_cast<size_type>(impl_->costs.size())) return false;
 #ifdef HIOP_MPS_DEVICE_ENABLED
   if(impl_->execution_mode == ExecutionMode::device) {
+    // In device mode, callback pointers are on host (callback_mem_space=host is required).
+    // Run RAJA kernel on device buffer, then copy result to host.
+    auto& rm = umpire::ResourceManager::getInstance();
+    auto device_alloc = rm.getAllocator("DEVICE");
+    double* gradf_device = static_cast<double*>(device_alloc.allocate(n * sizeof(double)));
+
     const double* costs = impl_->costs_device;
     RAJA::forall<MpsRajaExec>(RAJA::RangeSegment(0, n),
-                              RAJA_LAMBDA(RAJA::Index_type i) { gradf[i] = costs[i]; });
+                              RAJA_LAMBDA(RAJA::Index_type i) { gradf_device[i] = costs[i]; });
+    cudaDeviceSynchronize();
+
+    rm.copy(gradf, gradf_device, n * sizeof(double));
+    device_alloc.deallocate(gradf_device);
     return true;
   }
 #endif
@@ -901,16 +950,29 @@ bool hiopInterfaceMPS::eval_cons(const size_type& n, const size_type& m, const d
   }
 #ifdef HIOP_MPS_DEVICE_ENABLED
   if(impl_->execution_mode == ExecutionMode::device) {
+    // In device mode, callback pointers are on host (callback_mem_space=host is required).
+    // Copy x to device, run RAJA kernel on device buffers, copy cons back to host.
+    auto& rm = umpire::ResourceManager::getInstance();
+    auto device_alloc = rm.getAllocator("DEVICE");
+    double* x_device = static_cast<double*>(device_alloc.allocate(n * sizeof(double)));
+    double* cons_device = static_cast<double*>(device_alloc.allocate(m * sizeof(double)));
+    rm.copy(x_device, const_cast<double*>(x), n * sizeof(double));
+
     const std::size_t* row_offsets = impl_->matrix_row_offsets_device;
     const index_type* columns = impl_->matrix_columns_device;
     const double* values = impl_->matrix_values_device;
     RAJA::forall<MpsRajaExec>(RAJA::RangeSegment(0, m), RAJA_LAMBDA(RAJA::Index_type row) {
       double value = 0.0;
       for(std::size_t entry = row_offsets[row]; entry < row_offsets[row + 1]; ++entry) {
-        value += values[entry] * x[columns[entry]];
+        value += values[entry] * x_device[columns[entry]];
       }
-      cons[row] = value;
+      cons_device[row] = value;
     });
+    cudaDeviceSynchronize();
+
+    rm.copy(cons, cons_device, m * sizeof(double));
+    device_alloc.deallocate(cons_device);
+    device_alloc.deallocate(x_device);
     return true;
   }
 #endif
@@ -986,16 +1048,45 @@ bool hiopInterfaceMPS::eval_Jac_cons(const size_type& n,
   if((iJacS == nullptr) != (jJacS == nullptr)) return false;
 #ifdef HIOP_MPS_DEVICE_ENABLED
   if(impl_->execution_mode == ExecutionMode::device) {
+    // In device mode, callback pointers are on host (callback_mem_space=host is required).
+    // Allocate device buffers, run RAJA kernel, copy results back to host.
+    auto& rm = umpire::ResourceManager::getInstance();
+    auto device_alloc = rm.getAllocator("DEVICE");
+
+    index_type* iJacS_device = nullptr;
+    index_type* jJacS_device = nullptr;
+    double* MJacS_device = nullptr;
+
+    if(iJacS != nullptr) {
+      iJacS_device = static_cast<index_type*>(device_alloc.allocate(nnzJacS * sizeof(index_type)));
+      jJacS_device = static_cast<index_type*>(device_alloc.allocate(nnzJacS * sizeof(index_type)));
+    }
+    if(MJacS != nullptr) {
+      MJacS_device = static_cast<double*>(device_alloc.allocate(nnzJacS * sizeof(double)));
+    }
+
     const index_type* rows = impl_->matrix_rows_device;
     const index_type* columns = impl_->matrix_columns_device;
     const double* values = impl_->matrix_values_device;
     RAJA::forall<MpsRajaExec>(RAJA::RangeSegment(0, nnzJacS), RAJA_LAMBDA(RAJA::Index_type entry) {
-      if(iJacS != nullptr) {
-        iJacS[entry] = rows[entry];
-        jJacS[entry] = columns[entry];
+      if(iJacS_device != nullptr) {
+        iJacS_device[entry] = rows[entry];
+        jJacS_device[entry] = columns[entry];
       }
-      if(MJacS != nullptr) MJacS[entry] = values[entry];
+      if(MJacS_device != nullptr) MJacS_device[entry] = values[entry];
     });
+    cudaDeviceSynchronize();
+
+    if(iJacS != nullptr) {
+      rm.copy(iJacS, iJacS_device, nnzJacS * sizeof(index_type));
+      rm.copy(jJacS, jJacS_device, nnzJacS * sizeof(index_type));
+      device_alloc.deallocate(jJacS_device);
+      device_alloc.deallocate(iJacS_device);
+    }
+    if(MJacS != nullptr) {
+      rm.copy(MJacS, MJacS_device, nnzJacS * sizeof(double));
+      device_alloc.deallocate(MJacS_device);
+    }
     return true;
   }
 #endif
