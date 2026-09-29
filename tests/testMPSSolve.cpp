@@ -6,6 +6,7 @@
 #include "hiopNlpFormulation.hpp"
 
 #include <cmath>
+#include <cstdlib>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -14,13 +15,16 @@ int main(int argc, char** argv)
 {
   if(argc < 2) {
     std::cerr << "usage: " << argv[0]
-              << " MODEL.mps [--gpu] [--no-line-search] [--resolve-refactorization glu|rf]\n";
+              << " MODEL.mps [--gpu] [--no-line-search] [--resolve-refactorization glu|rf]"
+                 " [--expected-objective VALUE]\n";
     return 2;
   }
 
   bool gpu = false;
   bool no_line_search = false;
   std::string resolve_refactorization = "glu";
+  double expected_objective = 8.0;
+  bool check_reference_solution = true;
   for(int i = 2; i < argc; ++i) {
     const std::string argument = argv[i];
     if(argument == "--gpu") {
@@ -30,6 +34,11 @@ int main(int argc, char** argv)
     } else if(argument == "--resolve-refactorization" && i + 1 < argc) {
       resolve_refactorization = argv[++i];
       if(resolve_refactorization != "glu" && resolve_refactorization != "rf") return 2;
+    } else if(argument == "--expected-objective" && i + 1 < argc) {
+      char* end = nullptr;
+      expected_objective = std::strtod(argv[++i], &end);
+      if(end == argv[i] || *end != '\0') return 2;
+      check_reference_solution = false;
     } else {
       return 2;
     }
@@ -71,22 +80,24 @@ int main(int argc, char** argv)
   }
 
   const double objective = model.original_objective_value(solver.getObjective());
-  if(std::abs(objective - 8.0) > 1e-6) {
-    std::cerr << "expected objective 8, got " << objective << '\n';
+  if(std::abs(objective - expected_objective) > 1e-6) {
+    std::cerr << "expected objective " << expected_objective << ", got " << objective << '\n';
     return 1;
   }
-  const std::vector<double>& solution = model.final_solution();
-  if(solution.size() != 2 || std::abs(solution[0] - 3.0) > 1e-6 || std::abs(solution[1]) > 1e-6) {
-    std::cerr << "unexpected final primal solution\n";
-    return 1;
-  }
-  if(nlp.runStats.nEvalGrad_f != 1 || nlp.runStats.nEvalJac_con_eq != 1 ||
-     nlp.runStats.nEvalJac_con_ineq != 1 || nlp.runStats.nEvalHessL != 1) {
-    std::cerr << "LP derivatives were not reused: gradient=" << nlp.runStats.nEvalGrad_f
-              << ", equality Jacobian=" << nlp.runStats.nEvalJac_con_eq
-              << ", inequality Jacobian=" << nlp.runStats.nEvalJac_con_ineq
-              << ", Hessian=" << nlp.runStats.nEvalHessL << '\n';
-    return 1;
+  if(check_reference_solution) {
+    const std::vector<double>& solution = model.final_solution();
+    if(solution.size() != 2 || std::abs(solution[0] - 3.0) > 1e-6 || std::abs(solution[1]) > 1e-6) {
+      std::cerr << "unexpected final primal solution\n";
+      return 1;
+    }
+    if(nlp.runStats.nEvalGrad_f != 1 || nlp.runStats.nEvalJac_con_eq != 1 ||
+       nlp.runStats.nEvalJac_con_ineq != 1 || nlp.runStats.nEvalHessL != 1) {
+      std::cerr << "LP derivatives were not reused: gradient=" << nlp.runStats.nEvalGrad_f
+                << ", equality Jacobian=" << nlp.runStats.nEvalJac_con_eq
+                << ", inequality Jacobian=" << nlp.runStats.nEvalJac_con_ineq
+                << ", Hessian=" << nlp.runStats.nEvalHessL << '\n';
+      return 1;
+    }
   }
 
   return 0;
