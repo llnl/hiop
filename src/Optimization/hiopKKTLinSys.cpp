@@ -958,10 +958,21 @@ bool hiopKKTLinSys::compute_directions_w_IR(const hiopResidual* resid, hiopItera
 {
   nlp_->runStats.tmSolverInternal.start();
 
+  // A transient fallback factorization prepared during update() is used directly for this
+  // KKT system. In particular, do not use it as a preconditioner for outer refinement.
+  if(transient_linsol_fallback_active()) {
+    nlp_->runStats.tmSolverInternal.stop();
+    return computeDirections(resid, dir);
+  }
+
   // skip IR if user set ir_outer_maxit to 0 or negative values
   if(0 >= nlp_->options->GetInteger("ir_outer_maxit")) {
     nlp_->runStats.tmSolverInternal.stop();
-    return computeDirections(resid, dir);
+    bool bret = computeDirections(resid, dir);
+    if(!bret && should_retry_with_transient_linsol_fallback(false)) {
+      bret = retry_with_transient_linsol_fallback(resid, dir);
+    }
+    return bret;
   }
   const hiopResidual& r = *resid;
 
@@ -997,9 +1008,15 @@ bool hiopKKTLinSys::compute_directions_w_IR(const hiopResidual* resid, hiopItera
   if(!bret) {
     nlp_->log->printf(hovWarning, "%s", bicgIR_->get_convergence_info().c_str());
 
-    // accept the stpe since this is IR
-    bret = true;
+    if(should_retry_with_transient_linsol_fallback(true)) {
+      bret = retry_with_transient_linsol_fallback(resid, dir);
+    } else {
+      // Preserve the historical behavior below the fallback threshold: accept the
+      // best direction produced by iterative refinement.
+      bret = true;
+    }
   } else {
+    note_successful_outer_ir();
     nlp_->log->printf(hovScalars, "%s", bicgIR_->get_convergence_info().c_str());
   }
 

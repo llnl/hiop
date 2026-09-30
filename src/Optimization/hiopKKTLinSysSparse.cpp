@@ -448,7 +448,15 @@ hiopKKTLinSysCompressedSparseXDYcYd::hiopKKTLinSysCompressedSparseXDYcYd(hiopNlp
       Jac_cSp_{nullptr},
       Jac_dSp_{nullptr},
       write_linsys_counter_(-1),
-      csr_writer_(nlp)
+      csr_writer_(nlp),
+      fallback_matrix_(nullptr),
+      fallback_rhs_(nullptr),
+      fallback_linsys_(nullptr),
+      fallback_fact_acceptor_(nullptr),
+      fallback_active_(false),
+      primary_linsol_failed_(false),
+      fallback_unavailable_warned_(false),
+      consecutive_gpu_ir_failures_(0)
 {
   nlpSp_ = dynamic_cast<hiopNlpSparse*>(nlp_);
   assert(nlpSp_);
@@ -459,6 +467,10 @@ hiopKKTLinSysCompressedSparseXDYcYd::~hiopKKTLinSysCompressedSparseXDYcYd()
   delete rhs_;
   delete Hx_;
   delete Hd_;
+  delete fallback_linsys_;
+  delete fallback_matrix_;
+  delete fallback_rhs_;
+  delete fallback_fact_acceptor_;
 }
 
 bool hiopKKTLinSysCompressedSparseXDYcYd::update_regularizations_and_sparse_blocks()
@@ -586,6 +598,33 @@ bool hiopKKTLinSysCompressedSparseXDYcYd::build_kkt_matrix(const hiopPDPerturbat
   return true;
 }
 
+int hiopKKTLinSysCompressedSparseXDYcYd::factorizeWithCurvCheck()
+{
+  if(fallback_active_) {
+    fallback_active_ = false;
+    nlp_->log->printf(hovWarning, "Returning to the configured GPU solver for the next KKT system.\n");
+  }
+  primary_linsol_failed_ = false;
+  const int solver_status = linSys_->matrixChanged();
+  if(solver_status >= 0 || !linSys_->is_device_solver()) {
+    return solver_status;
+  }
+
+  primary_linsol_failed_ = true;
+  if(!gpu_fallback_enabled()) {
+    return solver_status;
+  }
+
+  nlp_->log->printf(hovWarning,
+                    "GPU KKT factorization failed; retrying the current system with CPU MA57.\n");
+  if(!prepare_transient_fallback()) {
+    return solver_status;
+  }
+
+  primary_linsol_failed_ = false;
+  return nlp_->m_eq() + nlp_->m_ineq();
+}
+
 bool hiopKKTLinSysCompressedSparseXDYcYd::solveCompressed(hiopVector& rx,
                                                           hiopVector& rd,
                                                           hiopVector& ryc,
@@ -643,7 +682,13 @@ bool hiopKKTLinSysCompressedSparseXDYcYd::solveCompressed(hiopVector& rx,
   //
   // solve
   //
-  bool linsol_ok = linSys_->solve(*rhs_);
+  bool linsol_ok;
+  if(fallback_active_) {
+    linsol_ok = solve_with_transient_fallback();
+  } else {
+    linsol_ok = linSys_->solve(*rhs_);
+    primary_linsol_failed_ = primary_linsol_failed_ || (!linsol_ok && linSys_->is_device_solver());
+  }
   nlp_->runStats.kkt.tmSolveInner.stop();
 
   if(perf_report_) {
@@ -673,6 +718,151 @@ bool hiopKKTLinSysCompressedSparseXDYcYd::solveCompressed(hiopVector& rx,
 
   nlp_->runStats.kkt.tmSolveRhsManip.stop();
   return true;
+}
+
+bool hiopKKTLinSysCompressedSparseXDYcYd::gpu_fallback_enabled()
+{
+  if(nlp_->options->GetString("gpu_linsol_fallback") == "none" || nullptr == linSys_ ||
+     !linSys_->is_device_solver()) {
+    return false;
+  }
+
+#ifdef HIOP_USE_COINHSL
+  return true;
+#else
+  if(!fallback_unavailable_warned_) {
+    nlp_->log->printf(hovWarning,
+                      "GPU linear-solver fallback requested, but HiOp was built without MA57; "
+                      "continuing without fallback.\n");
+    fallback_unavailable_warned_ = true;
+  }
+  return false;
+#endif
+}
+
+bool hiopKKTLinSysCompressedSparseXDYcYd::prepare_transient_fallback()
+{
+#ifndef HIOP_USE_COINHSL
+  return false;
+#else
+  if(!gpu_fallback_enabled()) {
+    return false;
+  }
+
+  auto* primary_solver = dynamic_cast<hiopLinSolverSymSparse*>(linSys_);
+  assert(primary_solver);
+  auto* primary_matrix = dynamic_cast<hiopMatrixSparse*>(primary_solver->sys_matrix());
+  assert(primary_matrix);
+
+  if(nullptr == fallback_matrix_) {
+    fallback_matrix_ = LinearAlgebraFactory::create_matrix_sparse(
+        "default", primary_matrix->m(), primary_matrix->n(), primary_matrix->numberOfNonzeros());
+    fallback_linsys_ = new hiopLinSolverSymSparseMA57(fallback_matrix_, nlp_);
+    fallback_rhs_ = LinearAlgebraFactory::create_vector("default", primary_matrix->m());
+    fallback_fact_acceptor_ = new hiopFactAcceptorIC(perturb_calc_, nlp_->m_eq() + nlp_->m_ineq());
+  }
+
+  nlp_->runStats.kkt.nGpuLinsolFallbacks++;
+  fallback_active_ = false;
+
+  const size_t max_refactorization = 10;
+  for(size_t num_refactorization = 0; num_refactorization <= max_refactorization; ++num_refactorization) {
+    nlp_->runStats.linsolv.tmDeviceTransfer.start();
+    primary_matrix->copy_to(fallback_matrix_->i_row(), fallback_matrix_->j_col(), fallback_matrix_->M());
+    nlp_->runStats.linsolv.tmDeviceTransfer.stop();
+    const int n_neg_eig = fallback_linsys_->matrixChanged();
+    const int refactorize = fallback_fact_acceptor_->requireReFactorization(*nlp_, n_neg_eig);
+
+    if(refactorize == 0) {
+      fallback_active_ = true;
+      return true;
+    }
+    if(refactorize < 0 || num_refactorization == max_refactorization) {
+      nlp_->log->printf(hovError, "CPU MA57 fallback failed to obtain an acceptable factorization.\n");
+      return false;
+    }
+
+    nlp_->runStats.kkt.nUpdateICCorr++;
+    if(!build_kkt_matrix(*perturb_calc_)) {
+      return false;
+    }
+    primary_matrix = dynamic_cast<hiopMatrixSparse*>(primary_solver->sys_matrix());
+    assert(primary_matrix);
+  }
+
+  return false;
+#endif
+}
+
+bool hiopKKTLinSysCompressedSparseXDYcYd::solve_with_transient_fallback()
+{
+#ifndef HIOP_USE_COINHSL
+  fallback_active_ = false;
+  return false;
+#else
+  assert(fallback_linsys_ && fallback_rhs_ && rhs_);
+  nlp_->runStats.linsolv.tmDeviceTransfer.start();
+  rhs_->copyTo(fallback_rhs_->local_data());
+  nlp_->runStats.linsolv.tmDeviceTransfer.stop();
+  const bool solve_ok = fallback_linsys_->solve(*fallback_rhs_);
+  if(solve_ok) {
+    nlp_->runStats.linsolv.tmDeviceTransfer.start();
+    rhs_->copyFrom(fallback_rhs_->local_data_const());
+    nlp_->runStats.linsolv.tmDeviceTransfer.stop();
+    nlp_->log->printf(hovWarning,
+                      "CPU MA57 fallback solved the current KKT right-hand side; it remains scoped to this KKT "
+                      "system, and the next system will use the GPU solver.\n");
+  } else {
+    nlp_->log->printf(hovError, "CPU MA57 fallback solve failed; restoring the GPU solver as primary.\n");
+    fallback_active_ = false;
+  }
+  return solve_ok;
+#endif
+}
+
+bool hiopKKTLinSysCompressedSparseXDYcYd::should_retry_with_transient_linsol_fallback(bool outer_ir_failed)
+{
+  if(nullptr == linSys_ || !linSys_->is_device_solver()) {
+    return false;
+  }
+
+  if(outer_ir_failed) {
+    ++consecutive_gpu_ir_failures_;
+  }
+
+  const bool threshold_reached =
+      outer_ir_failed && consecutive_gpu_ir_failures_ >= nlp_->options->GetInteger("gpu_linsol_fallback_threshold");
+  return (primary_linsol_failed_ || threshold_reached) && gpu_fallback_enabled();
+}
+
+bool hiopKKTLinSysCompressedSparseXDYcYd::retry_with_transient_linsol_fallback(const hiopResidual* resid,
+                                                                               hiopIterate* direction)
+{
+  const bool hard_failure = primary_linsol_failed_;
+  primary_linsol_failed_ = false;
+  if(hard_failure) {
+    nlp_->log->printf(hovWarning, "GPU KKT solve failed; retrying the current system with CPU MA57.\n");
+  } else {
+    nlp_->log->printf(hovWarning,
+                      "GPU outer refinement failed %d consecutive times; retrying the current system with CPU MA57.\n",
+                      consecutive_gpu_ir_failures_);
+  }
+
+  if(!prepare_transient_fallback()) {
+    return false;
+  }
+
+  const bool result = computeDirections(resid, direction);
+  if(!result) {
+    fallback_active_ = false;
+  }
+  return result;
+}
+
+void hiopKKTLinSysCompressedSparseXDYcYd::note_successful_outer_ir()
+{
+  consecutive_gpu_ir_failures_ = 0;
+  primary_linsol_failed_ = false;
 }
 
 hiopLinSolverSymSparse* hiopKKTLinSysCompressedSparseXDYcYd::determineAndCreateLinsys(int nx, int neq, int nineq, int nnz)

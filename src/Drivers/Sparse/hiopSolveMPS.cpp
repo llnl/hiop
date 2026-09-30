@@ -177,6 +177,7 @@ int main(int argc, char** argv)
               << "\"solve_wall_s\":" << seconds(solve_start, solve_end) << ','
               << "\"hiop_total_s\":" << nlp.runStats.tmOptimizTotal.getElapsedTime() << ','
               << "\"kkt_total_s\":" << nlp.runStats.kkt.tmTotal << ','
+              << "\"gpu_linsol_fallbacks\":" << nlp.runStats.kkt.nGpuLinsolFallbacks << ','
               << "\"iterations\":" << nlp.runStats.nIter << ','
               << "\"status\":" << static_cast<int>(status) << ','
               << "\"n\":" << n << ',' << "\"m\":" << m << ','

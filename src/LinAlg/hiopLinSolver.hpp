@@ -109,6 +109,9 @@ public:
     return false;
   }
 
+  /** Returns true when the numerical factorization and solves execute on a device. */
+  virtual bool is_device_solver() const { return false; }
+
 public:
   hiopNlpFormulation* nlp_;
   bool perf_report_;

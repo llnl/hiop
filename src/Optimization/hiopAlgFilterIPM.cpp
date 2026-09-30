@@ -3280,6 +3280,9 @@ bool hiopAlgFilterIPMBase::solve_feasibility_restoration(hiopKKTLinSys* kkt, hio
   nlpFR.options->SetStringValue("mem_space", nlp->options->GetString("mem_space").c_str());
   nlpFR.options->SetStringValue("KKTLinsys", "xdycyd");
   nlpFR.options->SetStringValue("linear_solver_sparse", nlp->options->GetString("linear_solver_sparse").c_str());
+  nlpFR.options->SetStringValue("gpu_linsol_fallback", nlp->options->GetString("gpu_linsol_fallback").c_str());
+  nlpFR.options->SetIntegerValue("gpu_linsol_fallback_threshold",
+                                 nlp->options->GetInteger("gpu_linsol_fallback_threshold"));
   nlpFR.options->SetStringValue("fact_acceptor", nlp->options->GetString("fact_acceptor").c_str());
   nlpFR.options->SetStringValue("linsol_mode", nlp->options->GetString("linsol_mode").c_str());
   nlpFR.options->SetIntegerValue("verbosity_level", 0);
@@ -3303,6 +3306,7 @@ bool hiopAlgFilterIPMBase::solve_feasibility_restoration(hiopKKTLinSys* kkt, hio
     hiopAlgFilterIPM solver(nlpFR_dense, true);  // solver fr problem
     FR_status = solver.run();
   }
+  nlp->runStats.kkt.nGpuLinsolFallbacks += nlpFR.runStats.kkt.nGpuLinsolFallbacks;
 
   if(FR_status == User_Stopped) {
     // FR succeeds

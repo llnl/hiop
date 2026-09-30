@@ -128,6 +128,11 @@ public:
    */
   virtual bool solve(hiopVector& x);
 
+  virtual bool is_device_solver() const
+  {
+    return refactorization_mode_ != RefactorizationMode::CPU_KLU;
+  }
+
   /** Multiple right-hand sides are not supported yet. */
   virtual bool solve(hiopMatrix& /* x */)
   {
