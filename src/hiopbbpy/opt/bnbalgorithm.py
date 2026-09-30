@@ -795,6 +795,244 @@ def unit_expsec_gap(width):
 
   return np.maximum(result, 0.0)
 
+def build_mode6_pair_candidates(owner, nneighbors=3, include_mst=False):
+  """
+  Returns candidate pairs and their kernel dissimilarities.
+
+  Includes closest 'nneighbors' and, optionally, edges of the minimum spanning tree.
+  The closest neighbors capture close kernels (within local clusters), while MST 
+  captures additional non-local connections between kernels.
+  """
+  X = np.asarray(owner.x, dtype=float)
+  if X.ndim != 2 or not np.all(np.isfinite(X)):
+    raise ValueError("Training inputs must be a finite 2-D array")
+  if not isinstance(nneighbors, (int, np.integer)) or nneighbors < 0:
+    raise ValueError("nneighbors must be a nonnegative integer")
+
+  n, dim = X.shape
+  if n < 2:
+    return np.empty((0, 2), dtype=np.int64), {}
+
+  scale = np.broadcast_to(np.asarray(owner.X_scale, float).ravel(), (dim,))
+  theta = np.broadcast_to(np.asarray(owner.theta, float).ravel(), (dim,))
+  if not np.all(np.isfinite(scale)) or np.any(scale <= 0.0):
+    raise ValueError("Invalid input normalization scales")
+
+  p = getattr(owner, "p", 2.0)
+
+  # D[i,r] = -log K(x_i,x_r).
+  # Construct once per training-set/kernel update, not once per BnB node.
+  # Keep zero distances: coincident samples are legitimate candidates.
+  D = np.full((n, n), np.inf)
+  for i in range(n - 1):
+    dx = np.abs(X[i + 1:] - X[i]) / scale
+    values = gp_coordinate_loss(dx, theta, owner.kernel_spec, p).sum(axis=1)
+    if not np.all(np.isfinite(values)):
+      raise FloatingPointError("Nonfinite kernel dissimilarities")
+    D[i, i + 1:] = values
+    D[i + 1:, i] = values
+
+  edges = set()
+  m = min(nneighbors, n - 1)
+  for i in range(n):
+    for r in np.argsort(D[i], kind="stable")[:m]:
+      edges.add((min(i, int(r)), max(i, int(r))))
+
+  if include_mst:
+    # Prim algorithm - also handles zero-weight edges.
+    used = np.zeros(n, dtype=bool)
+    best = np.full(n, np.inf)
+    parent = np.full(n, -1, dtype=int)
+    best[0] = 0.0
+
+    for _ in range(n):
+      v = int(np.argmin(np.where(used, np.inf, best)))
+      if parent[v] >= 0:
+        r = int(parent[v])
+        edges.add((min(v, r), max(v, r)))
+
+      used[v] = True
+      improve = (~used) & (D[v] < best)
+      best[improve] = D[v, improve]
+      parent[improve] = v
+
+  pairs = np.asarray(sorted(edges), dtype=np.int64).reshape(-1, 2)
+  distances = {(int(i), int(r)): float(D[i, r]) for i, r in pairs}
+  return pairs, distances
+
+def mode6_scaled_logratio_bounds(owner, l, u, pairs, scale_shift):
+  """Endpoint bounds on log(zeta_i/zeta_r), for all four kernels."""
+  X = np.asarray(owner.x, dtype=float)
+  n, dim = X.shape
+  l = np.asarray(l, float).ravel()
+  u = np.asarray(u, float).ravel()
+  pairs = np.asarray(pairs, dtype=np.int64).reshape(-1, 2)
+  shift = np.asarray(scale_shift, float).reshape(n)
+
+  scale = np.broadcast_to(np.asarray(owner.X_scale, float).ravel(), (dim,))
+  theta = np.broadcast_to(np.asarray(owner.theta, float).ravel(), (dim,))
+  if(l.shape != (dim,) or u.shape != (dim,) or np.any(l > u)
+     or np.any(scale <= 0.0) or not np.all(np.isfinite(shift))):
+    raise ValueError("Invalid box, scales, or scaling shift")
+
+  p = getattr(owner, "p", 2.0)
+  at_l = gp_coordinate_loss(np.abs(l - X) / scale, theta, owner.kernel_spec, p)
+  at_u = gp_coordinate_loss(np.abs(u - X) / scale, theta, owner.kernel_spec, p)
+
+  i, r = pairs.T
+
+  # lambda_i - lambda_r = loss_r - loss_i.
+  dl = at_l[r] - at_l[i]
+  du = at_u[r] - at_u[i]
+  lo = np.minimum(dl, du).sum(axis=1) + shift[i] - shift[r]
+  hi = np.maximum(dl, du).sum(axis=1) + shift[i] - shift[r]
+
+  # Practical outward padding, including losses that cancel in differences.
+  # This is not an interval-arithmetic certificate for kernel evaluation.
+  magnitude = (at_l[i] + at_l[r] + at_u[i] + at_u[r]).sum(axis=1)
+  magnitude += np.abs(shift[i]) + np.abs(shift[r])
+  pad = (64.0 * np.finfo(float).eps * max(1, dim) * (1.0 + magnitude))
+
+  return (np.nextafter(lo - pad, -np.inf), np.nextafter(hi + pad, np.inf))
+
+def select_mode6_ratio_rows(pairs, deltaL, deltaU, zetaL, zetaU, importance,
+                            max_pairs, log_tol=1.e-10, path_screen=True):
+  """Return (src, dst, a, b) rows: a*zeta[dst] <= b*zeta[src]. 
+
+  Ratio constraints are one-sided for easier processing.
+
+  Only retained rows enter the implication graph. No connectivity,
+  acyclicity, or degree restriction is imposed on the selected pairs.
+  """
+  pairs = np.asarray(pairs, dtype=np.int64).reshape(-1, 2)
+  # deltas are lower and upper bounds on the scaled log ratio log(zeta_i/zeta_r)
+  deltaL = np.asarray(deltaL, float)
+  deltaU = np.asarray(deltaU, float)
+  L, U, A = [np.asarray(v, float).ravel() for v in (zetaL, zetaU, importance)]
+  n, m = A.size, len(pairs)
+
+  if (L.size != n or U.size != n
+      or deltaL.shape != (m,) or deltaU.shape != (m,)
+      or not np.all(np.isfinite(np.r_[L, U, A]))
+      or np.any(L < 0.0) or np.any(U <= 0.0)
+      or np.any(L > U) or np.any(A < 0.0)
+      or np.any(pairs < 0) or np.any(pairs >= n)
+      or np.any(pairs[:, 0] >= pairs[:, 1])):
+    raise ValueError("Invalid mode-6 selection data")
+
+  if (not isinstance(max_pairs, (int, np.integer))
+      or max_pairs < 0
+      or not np.isfinite(log_tol) or log_tol < 0.0):
+    raise ValueError("Invalid pair budget or log tolerance")
+
+  stats = dict(candidates=m, tested_pairs=0, kept_pairs=0, kept_rows=0,
+               box_skips=0, path_skips=0, numeric_skips=0, cycle_skips=0)
+  rows = []
+  if m == 0 or max_pairs == 0:
+    return rows, stats
+
+  logL = np.full(n, -np.inf)
+  positive = L > 0.0
+  logL[positive] = np.nextafter(np.log(L[positive]), -np.inf)
+  logU = np.nextafter(np.log(U), np.inf)
+
+  P = None
+  if path_screen:
+    # Fixed reference vertex n represents zeta[n] = 1.
+    # P[a,b] bounds log(zeta[b]/zeta[a]).
+    # Infinity denotes an unavailable bound.
+    lo = np.r_[logL, 0.0]
+    hi = np.r_[logU, 0.0]
+    P = np.nextafter(hi[None, :] - lo[:, None], np.inf)
+    np.fill_diagonal(P, 0.0)
+
+  # Additive importance score; deterministic index-based tie breaking.
+  scores = A[pairs[:, 0]] + A[pairs[:, 1]]
+  order = np.lexsort((pairs[:, 1], pairs[:, 0], -scores))
+
+  for index in order:
+    if stats["kept_pairs"] >= max_pairs:
+      break
+    stats["tested_pairs"] += 1
+
+    i, r = map(int, pairs[index])
+    dL, dU = float(deltaL[index]), float(deltaU[index])
+    if not np.isfinite(dL) or not np.isfinite(dU) or dL > dU:
+      stats["numeric_skips"] += 2
+      continue
+
+    before = len(rows)
+
+    # Lower ratio: zeta_r <= exp(-dL)*zeta_i.
+    # Upper ratio: zeta_i <= exp( dU)*zeta_r.
+    for src, dst, w in ((i, r, -dL), (r, i, dU)):
+
+      # avoid constructing exp(w) as it may become very large
+      # construct coeffs a and b to be at most one 
+      with np.errstate(under="ignore"):
+        small = float(np.exp(-abs(w)))
+
+      if small < np.finfo(float).tiny:
+        # do not let underflow enable a zero-forcing inequality
+        #
+        # skips zeta_i <= e^w \zeta_r for large w since it would
+        # numerically become zeta_i<=0 and would exclude positive
+        # kernels
+        stats["numeric_skips"] += 1
+        continue
+
+      # Normalize and round float/double toward a weaker inequality and
+      # have a and b be at most 1 by rescaling
+      if w >= 0.0:
+        a = float(np.nextafter(small, 0.0))
+        b = 1.0
+      else:
+        a = 1.0
+        b = min(1.0, float(np.nextafter(small, np.inf)))
+
+      if min(a, b) < np.finfo(float).tiny:
+        # similar as for the other numeric skip
+        stats["numeric_skips"] += 1
+        continue
+
+      # Graph weight uses the emitted coefficients, rather than
+      # the unrounded input bound.
+      #   weight = log(b/a) + padding
+      weight = float(np.log(b) - np.log(a))
+      weight += (8.0 * np.finfo(float).eps * (1.0 + abs(weight)))
+      tol = log_tol * max(1.0, abs(weight))
+
+      # Individual bounds imply:
+      # zeta_dst / zeta_src <= U[dst] / L[src].
+      independent = np.nextafter(logU[dst] - logL[src], np.inf)
+      if independent <= weight + tol:
+        # the inequality is implied by the variable bounds
+        stats["box_skips"] += 1
+        continue
+
+      # Here the matrix P stores the implied ratio bounds:
+      #  P_{uv} records bound \zeta_v\leq P_{uv}\zeta_u
+      if P is not None and P[src, dst] <= weight + tol:
+        stats["path_skips"] += 1
+        continue
+
+      if P is not None and P[dst, src] + weight < 0.0:
+        # A negative cycle signals inconsistent numerical bounds.
+        # Omit this optional cut; do not propagate the inconsistency.
+        stats["cycle_skips"] += 1
+        continue
+      rows.append((src, dst, a, b))
+      # update all implied bounds after retaining a row
+      if P is not None:
+        # Incremental all-pairs closure, O(n^2) per retained row.
+        left = np.nextafter(P[:, src] + weight, np.inf)
+        via = np.nextafter(left[:, None] + P[dst, :][None, :], np.inf,)
+        np.minimum(P, via, out=P)
+
+    stats["kept_pairs"] += int(len(rows) > before)
+
+  stats["kept_rows"] = len(rows)
+  return rows, stats
 #################################################################################
 ### Wrapper for "convex_relaxation" code
 #################################################################################
@@ -1123,89 +1361,121 @@ class GPBoundComputationCommon:
       # add constraints based on downselected nearest neighbor pairs
       # downselect on available pairs
       if opt_mode == 6:
-        pairs = np.asarray(list(self.nearest_neighbor_pairs), dtype=int).reshape(-1, 2)
+        pairs = np.asarray(self.nearest_neighbor_pairs, dtype=np.int64).reshape(-1, 2)
 
-        if pairs.shape[0]:
-          # --------------------------------------------------------
-          # Pair selection: scores remain in physical k units.
-          # --------------------------------------------------------
-          x_ref = l + 0.5*(u - l)
+        self._mode6_ratio_stats = None
 
-          grad_k, _, _, _, _ = lcb_gradient_at_single_reference(self, x_ref)
-          abs_grad = np.abs(np.asarray(grad_k, dtype=float).ravel())
-          sensitivity = abs_grad / max(float(abs_grad.max()), np.finfo(float).eps)
+        if len(pairs):
+          # Preserve full LCB importance weights in physical k units.
+          reference = l + 0.5 * (u - l)
+          gradient = lcb_gradient_at_single_reference(self, reference)[0]
+          magnitude = np.abs(np.asarray(gradient, float).ravel())
+          sensitivity = magnitude / max(float(magnitude.max()), np.finfo(float).eps)
 
           with np.errstate(under="ignore"):
-            Ei_exp = np.exp(-qL) * unit_expsec_gap(loss_width)
-          Ai = Ei_exp * (0.05 + 0.95*sensitivity)
-          distances = np.array([self.pairs_dist[i, r] for i, r in pairs], dtype=float)
-          
-          # The floor also handles coincident samples.
-          scores = (Ai[pairs[:, 0]] + Ai[pairs[:, 1]]) / np.maximum(distances, np.finfo(float).eps)
+            Ai = (np.exp(-qL) * unit_expsec_gap(loss_width) * (0.05 + 0.95 * sensitivity))
+
+          deltaL, deltaU = mode6_scaled_logratio_bounds(self, l, u, pairs, scale_shift)
 
           c1 = 1
-          order = np.argsort(scores)[::-1][:min(len(pairs), c1*ntrain)]
+          rows, self._mode6_ratio_stats = select_mode6_ratio_rows(pairs=pairs, deltaL=deltaL, deltaU=deltaU,
+                                                                  zetaL=zetaL, zetaU=zetaU, importance=Ai,
+                                                                  max_pairs=int(c1 * ntrain), log_tol=1.e-10,
+                                                                  path_screen=True)
 
-          # --------------------------------------------------------
-          # Pair bounds and scaled ratio rows.
-          # --------------------------------------------------------
-          for pair_index in order:
-            i_idx, r_idx = map(int, pairs[pair_index])
+          if rows:
+            src, dst, a, b = zip(*rows)
+            src = np.asarray(src, dtype=np.int64)
+            dst = np.asarray(dst, dtype=np.int64)
+            a = np.asarray(a, dtype=float)
+            b = np.asarray(b, dtype=float)
 
-            if self.kernel_spec == "pow_exp":
-              # Existing endpoint construction for SE and Matern 1/2,
-              # evaluated through the positive-loss helper.
-              endpoint_differences = []
-
-              for endpoint in (l, u):
-                loss_i = gp_coordinate_loss(np.abs(endpoint - training_x[i_idx]) / scale, th, self.kernel_spec, self.p)
-                loss_r = gp_coordinate_loss(np.abs(endpoint - training_x[r_idx]) / scale, th, self.kernel_spec, self.p)
-                # lambda_i - lambda_r = loss_r - loss_i.
-                endpoint_differences.append(loss_r - loss_i)
-
-              at_l, at_u = endpoint_differences
-              lir_min = float(np.minimum(at_l, at_u).sum())
-              lir_max = float(np.maximum(at_l, at_u).sum())
-
-            else:
-              # Preserve the existing Matern pair-bound algorithms.
-              pair_bound = dphir_minmax_threehalves if self.kernel_spec == "matern32" else dphir_minmax_fivehalves
-
-              lir_min, lir_max = 0.0, 0.0
-
-              for j in range(dimx):
-                if th[j] == 0.0:
-                  continue
-
-                centers = training_x[[i_idx, r_idx], j]
-
-                if l[j] == u[j]:
-                  values = gp_coordinate_loss(np.abs(l[j] - centers) / scale[j], th[j], self.kernel_spec)
-                  lo_j = hi_j = float(values[1] - values[0])
-
-                else:
-                  _, _, lo_j, hi_j = pair_bound(float(l[j]), float(u[j]), float(th[j] / scale[j]), centers.tolist())
-
-                lir_min += float(lo_j)
-                lir_max += float(hi_j)
-
-            # log(zeta_i/zeta_r)   = log(k_i/k_r) + scale_shift_i - scale_shift_r.
-            shift = scale_shift[i_idx] - scale_shift[r_idx]
-
-            add_ratio_constraints(cons, zetavar[i_idx], zetavar[r_idx], lir_min + shift, lir_max + shift,)  
-            #add_ratio_constraints(cons, kvec[i_idx], kvec[r_idx], lir_min, lir_max)
+            # One vector constraint containing the selected two-nonzero rows.
+            cons.append(cp.multiply(a, zetavar[dst]) <= cp.multiply(b, zetavar[src]))
             
-            #add_mccormick_ratio_constraints(cons=cons, ki=kvec[i_idx], kr=kvec[r_idx], lam_i=lamvar[i_idx], lam_r=lamvar[r_idx],
-            #                                lir_min=lir_min, lir_max=lir_max, ki_min=kL[i_idx],
-            #                                ki_max=kU[i_idx], kr_min=kL[r_idx], kr_max=kU[r_idx], name=f"{i_idx}_{r_idx}")
+        # pairs = np.asarray(list(self.nearest_neighbor_pairs), dtype=int).reshape(-1, 2)
+
+        # if pairs.shape[0]:
+        #   # --------------------------------------------------------
+        #   # Pair selection: scores remain in physical k units.
+        #   # --------------------------------------------------------
+        #   x_ref = l + 0.5*(u - l)
+
+        #   grad_k, _, _, _, _ = lcb_gradient_at_single_reference(self, x_ref)
+        #   abs_grad = np.abs(np.asarray(grad_k, dtype=float).ravel())
+        #   sensitivity = abs_grad / max(float(abs_grad.max()), np.finfo(float).eps)
+
+        #   with np.errstate(under="ignore"):
+        #     Ei_exp = np.exp(-qL) * unit_expsec_gap(loss_width)
+        #   Ai = Ei_exp * (0.05 + 0.95*sensitivity)
+        #   distances = np.array([self.pairs_dist[i, r] for i, r in pairs], dtype=float)
+          
+        #   # The floor also handles coincident samples.
+        #   scores = (Ai[pairs[:, 0]] + Ai[pairs[:, 1]]) / np.maximum(distances, np.finfo(float).eps)
+
+        #   c1 = 1
+        #   order = np.argsort(scores)[::-1][:min(len(pairs), c1*ntrain)]
+
+        #   # --------------------------------------------------------
+        #   # Pair bounds and scaled ratio rows.
+        #   # --------------------------------------------------------
+        #   for pair_index in order:
+        #     i_idx, r_idx = map(int, pairs[pair_index])
+
+        #     if self.kernel_spec == "pow_exp":
+        #       # Existing endpoint construction for SE and Matern 1/2,
+        #       # evaluated through the positive-loss helper.
+        #       endpoint_differences = []
+
+        #       for endpoint in (l, u):
+        #         loss_i = gp_coordinate_loss(np.abs(endpoint - training_x[i_idx]) / scale, th, self.kernel_spec, self.p)
+        #         loss_r = gp_coordinate_loss(np.abs(endpoint - training_x[r_idx]) / scale, th, self.kernel_spec, self.p)
+        #         # lambda_i - lambda_r = loss_r - loss_i.
+        #         endpoint_differences.append(loss_r - loss_i)
+
+        #       at_l, at_u = endpoint_differences
+        #       lir_min = float(np.minimum(at_l, at_u).sum())
+        #       lir_max = float(np.maximum(at_l, at_u).sum())
+
+        #     else:
+        #       # Preserve the existing Matern pair-bound algorithms.
+        #       pair_bound = dphir_minmax_threehalves if self.kernel_spec == "matern32" else dphir_minmax_fivehalves
+
+        #       lir_min, lir_max = 0.0, 0.0
+
+        #       for j in range(dimx):
+        #         if th[j] == 0.0:
+        #           continue
+
+        #         centers = training_x[[i_idx, r_idx], j]
+
+        #         if l[j] == u[j]:
+        #           values = gp_coordinate_loss(np.abs(l[j] - centers) / scale[j], th[j], self.kernel_spec)
+        #           lo_j = hi_j = float(values[1] - values[0])
+
+        #         else:
+        #           _, _, lo_j, hi_j = pair_bound(float(l[j]), float(u[j]), float(th[j] / scale[j]), centers.tolist())
+
+        #         lir_min += float(lo_j)
+        #         lir_max += float(hi_j)
+
+        #     # log(zeta_i/zeta_r)   = log(k_i/k_r) + scale_shift_i - scale_shift_r.
+        #     shift = scale_shift[i_idx] - scale_shift[r_idx]
+
+        #     add_ratio_constraints(cons, zetavar[i_idx], zetavar[r_idx], lir_min + shift, lir_max + shift,)  
+        #     #add_ratio_constraints(cons, kvec[i_idx], kvec[r_idx], lir_min, lir_max)
+            
+        #     #add_mccormick_ratio_constraints(cons=cons, ki=kvec[i_idx], kr=kvec[r_idx], lam_i=lamvar[i_idx], lam_r=lamvar[r_idx],
+        #     #                                lir_min=lir_min, lir_max=lir_max, ki_min=kL[i_idx],
+        #     #                                ki_max=kU[i_idx], kr_min=kL[r_idx], kr_max=kU[r_idx], name=f"{i_idx}_{r_idx}")
             
 
-            #sir_min, sir_max = compute_sigma_ir_bounds(l=l, u=u, theta=th, x_scale=self.X_scale, x_i=self.x[i_idx], x_r=self.x[r_idx],
-            #                                           kernel_spec=self.kernel_spec, p=getattr(self, "p", 2.0))
-            #add_ratio_informed_product_constraints(cons=cons, ki=kvec[i_idx], kr=kvec[r_idx], dirL=lir_min, dirU=lir_max, sirL=sir_min, sirU=sir_max)
-            #add_mccormick_sum_product_constraints(cons, kvec[i_idx], kvec[r_idx], lamvar[i_idx], lamvar[r_idx], kL[i_idx], kU[i_idx],
-            #                                      kL[r_idx], kU[r_idx], sir_min, sir_max)
-            #add_product_constraints(cons, kvec[i_idx], kvec[r_idx], sir_min, sir_max)
+        #     #sir_min, sir_max = compute_sigma_ir_bounds(l=l, u=u, theta=th, x_scale=self.X_scale, x_i=self.x[i_idx], x_r=self.x[r_idx],
+        #     #                                           kernel_spec=self.kernel_spec, p=getattr(self, "p", 2.0))
+        #     #add_ratio_informed_product_constraints(cons=cons, ki=kvec[i_idx], kr=kvec[r_idx], dirL=lir_min, dirU=lir_max, sirL=sir_min, sirU=sir_max)
+        #     #add_mccormick_sum_product_constraints(cons, kvec[i_idx], kvec[r_idx], lamvar[i_idx], lamvar[r_idx], kL[i_idx], kU[i_idx],
+        #     #                                      kL[r_idx], kU[r_idx], sir_min, sir_max)
+        #     #add_product_constraints(cons, kvec[i_idx], kvec[r_idx], sir_min, sir_max)
 
     opt_tol = 1.e-8
     opt_rel_tol = 1.e-8
@@ -1250,6 +1520,10 @@ class GPBoundComputationCommon:
             
             diagnostics_output = stats_lcb_relaxation_gap(owner=self, xvar=xvar, relaxation_value=acqf_L) + diagnostics_output
 
+            ratio_stats = getattr(self, "_mode6_ratio_stats", None)
+            if ratio_stats is not None:
+              diagnostics_output += f"Mode-6 ratio selection: {ratio_stats}\n"
+              
           if opt_mode in (5,6):
             assert mode == 0
             self.save_expsec_weights(cons, lamvar, lamL, lamU)
@@ -2216,37 +2490,37 @@ class BnBAlgorithm(GPBoundComputationCommon, BnBAlgorithmBase):
     self.obj3 = self.b_obj3.T @ self.X + self.c_obj3
 
 
-    # constants for choosing number of "k ratio" constraints
-    # first constraints are determined via nearest neighbor search
-    # the kernel distances will be based on the forms of the kernels
-    # for SE th * ((x - x^(i)) / X_scale))^2 is used
-    # for all other kenels th * |(x - x^(i)) / X_scale| is used
-    # for this reason the distance metric will be
-    # || \sqrt(th) / X_scale * (x^(i) - x^(r))||_2 for SE
-    # and || th / X_scale * (x^(i) - x^(r)||_1 for all other kernels
-    distance_mat = np.zeros((ntrain,ntrain))
-    theta = self.theta.ravel()
-    # only go over the upper triangle
-    self.pairs_dist = []
-    for i in range(ntrain):
-      for j in range(i+1, ntrain):
-        if self.kernel_spec == "pow_exp" and self.p == 2.0:
-          self.pairs_dist.append((np.linalg.norm(np.sqrt(theta) * (self.x[i] - self.x[j]) / self.X_scale), i, j))
-        else:
-          self.pairs_dist.append((np.linalg.norm(theta * (self.x[i] - self.x[j]) / self.X_scale, ord=1), i, j))
-    # now extract smallest-distance pairs
-    ##print("pairs     :" + " ".join(f"({i:2d},{j:2d},{val:12.5e})" for val, i, j in self.pairs_dist))
-    self.pairs_dist.sort(key=lambda entry: entry[0])
-    ##print("pairs sort:" + " ".join(f"({i:2d},{j:2d},{val:12.5e})" for val, i, j in self.pairs_dist))
-    self.c0 = 2
-    npairs = min(self.c0 * ntrain, len(self.pairs_dist))
-    ##print("pairs slct:" + " ".join(f"({i:2d},{j:2d},{val:12.5e})" for val, i, j in self.pairs_dist[:npairs]))
-    self.nearest_neighbor_pairs = np.asarray([(i, r) for _, i, r in self.pairs_dist[:npairs]], dtype=np.int64).reshape(-1, 2)
+    # # constants for choosing number of "k ratio" constraints
+    # # first constraints are determined via nearest neighbor search
+    # # the kernel distances will be based on the forms of the kernels
+    # # for SE th * ((x - x^(i)) / X_scale))^2 is used
+    # # for all other kenels th * |(x - x^(i)) / X_scale| is used
+    # # for this reason the distance metric will be
+    # # || \sqrt(th) / X_scale * (x^(i) - x^(r))||_2 for SE
+    # # and || th / X_scale * (x^(i) - x^(r)||_1 for all other kernels
+    # distance_mat = np.zeros((ntrain,ntrain))
+    # theta = self.theta.ravel()
+    # # only go over the upper triangle
+    # self.pairs_dist = []
+    # for i in range(ntrain):
+    #   for j in range(i+1, ntrain):
+    #     if self.kernel_spec == "pow_exp" and self.p == 2.0:
+    #       self.pairs_dist.append((np.linalg.norm(np.sqrt(theta) * (self.x[i] - self.x[j]) / self.X_scale), i, j))
+    #     else:
+    #       self.pairs_dist.append((np.linalg.norm(theta * (self.x[i] - self.x[j]) / self.X_scale, ord=1), i, j))
+    # # now extract smallest-distance pairs
+    # ##print("pairs     :" + " ".join(f"({i:2d},{j:2d},{val:12.5e})" for val, i, j in self.pairs_dist))
+    # self.pairs_dist.sort(key=lambda entry: entry[0])
+    # ##print("pairs sort:" + " ".join(f"({i:2d},{j:2d},{val:12.5e})" for val, i, j in self.pairs_dist))
+    # self.c0 = 2
+    # npairs = min(self.c0 * ntrain, len(self.pairs_dist))
+    # ##print("pairs slct:" + " ".join(f"({i:2d},{j:2d},{val:12.5e})" for val, i, j in self.pairs_dist[:npairs]))
+    # self.nearest_neighbor_pairs = np.asarray([(i, r) for _, i, r in self.pairs_dist[:npairs]], dtype=np.int64).reshape(-1, 2)
 
-    # repurpose pairs_dist
-    pairs = self.pairs_dist
-    self.pairs_dist = {(i, j): dist for dist, i, j in pairs}
-
+    # # repurpose pairs_dist
+    # pairs = self.pairs_dist
+    # self.pairs_dist = {(i, j): dist for dist, i, j in pairs}
+    self.nearest_neighbor_pairs, self.pairs_dist = build_mode6_pair_candidates(self, nneighbors=3, include_mst=True)
 
   # For minimization, we find a feasible function value as the upper bound on the minimum value of the acquisition function.
   def compute_acqf_upper_bound(self, l, u):
