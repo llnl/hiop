@@ -72,11 +72,12 @@ if __name__ == "__main__":
   y_train = problem.evaluate(x_train)
   
   # ---- setup GP
-  fix_theta = True
   corr = "matern52"
   #corr = "pow_exp"
   pow_exp_power = 2.0
-  gp_model = smtKRG(theta0, problem.xlimits, nx, corr=corr, pow_exp_power=pow_exp_power, eval_noise=False, fix_theta=fix_theta)
+  fix_theta = True
+  hyper_opt = "NoOp"
+  gp_model = smtKRG(theta0, problem.xlimits, nx, corr=corr, pow_exp_power=pow_exp_power, hyper_opt=hyper_opt, eval_noise=False, fix_theta=fix_theta)
   gp_model.train(x_train, y_train)
  
   # ---- acqf
@@ -153,7 +154,7 @@ if __name__ == "__main__":
   from hiopbbpy.opt.bnbalgorithm import branch
   nodes = [root]
  
-  num_divisions = 10
+  num_divisions = 5
   if nx == 2: 
     num_divisions = 3
   if nx == 3:
@@ -162,6 +163,7 @@ if __name__ == "__main__":
   LUBgaps = np.zeros(num_divisions)
   mingaps = np.zeros(num_divisions)
   avggaps = np.zeros(num_divisions)
+  stdgaps = np.zeros(num_divisions)
   maxgaps = np.zeros(num_divisions)
 
 
@@ -185,6 +187,7 @@ if __name__ == "__main__":
       mingaps[j] = min_gap
       maxgaps[j] = max_gap
       avggaps[j] = np.mean(all_gaps)
+      stdgaps[j] = np.std(all_gaps)
       filename = "data08072026/all_gaps_"+corr
       if corr == "pow_exp":
         filename = filename + "_p"+str(pow_exp_power)
@@ -215,6 +218,7 @@ if __name__ == "__main__":
   plt.plot(mingaps, label='min gap')
   plt.plot(maxgaps, label='max gap')
   plt.plot(avggaps, label='avg gap')
+  plt.fill_between(range(num_divisions), avggaps - stdgaps, avggaps + stdgaps, color='blue', alpha=0.2)
   plt.xlabel('number of divisions')
   plt.legend()
   plt.show()
