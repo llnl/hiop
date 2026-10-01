@@ -306,7 +306,7 @@ if __name__ == "__main__":
   relbnbtol = args.relbnbtol
   bnbmaxiter = args.bnbmaxiter
   bnbmaxtime = args.bnbmaxtime
-  batch_size = 1
+  batch_size = 4
   randseed = args.seed
   n_samples = args.nsamples 
   problem_name = args.problem
@@ -414,7 +414,14 @@ if __name__ == "__main__":
   if BnB:
     options['opt_solver'] = 'BnB'
     options['solver_options'] = bnb_solver_options 
-
+    options['bnb_batch_method'] = "conditional_variance" #CV
+    options['bnb_batch_options'] = { "delta": 0.1, # absolute; None uses the final absolute BnB gap 
+                                     "noise_variance": 0.0,
+                                     "duplicate_tol": 1.e-2, #duplicates and training points exclusion radius
+                                     "variance_rtol": 1.e-2,#min variance for selecting batch candidates with CV 
+                                     "exclude_training": True,
+                                     "require_full": False} # error out if batch_size cannot be honored #fixme remove this
+    
   options['executor'] = executor
   options['obj_evaluator'] = MPIEvaluator(function_mode=True, executor=executor, task_name="BO_OBJ", profiling=False)
   options['opt_evaluator'] = MPIEvaluator(function_mode=True, executor=executor, task_name="BO_OPT", profiling=False)

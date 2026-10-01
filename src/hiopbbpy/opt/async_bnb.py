@@ -1017,6 +1017,10 @@ def run_async_search(
   def record_children(children: Sequence[BnBNode]) -> None:
     if not children:
       return
+    remember = getattr(algorithm, "_remember_batch_candidates", None)
+    if remember is not None:
+      remember(children)
+
     algorithm.num_parent_tasks += 1
     algorithm.num_branches += len(children)
     algorithm.branch_history.append(algorithm.num_branches)
