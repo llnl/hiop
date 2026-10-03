@@ -51,57 +51,84 @@
  *
  * @author Kasia Swirydowicz <kasia.Swirydowicz@pnnl.gov>, PNNL
  * @author Slaven Peles <peless@ornl.gov>, ORNL
+ * @author Tamar DeWilde <dewildetc@ornl.gov>
  *
  */
 
-#ifndef HIOP_LINSOLVER_CUSOLVER
-#define HIOP_LINSOLVER_CUSOLVER
+#ifndef HIOP_LINSOLVER_RESOLVE
+#define HIOP_LINSOLVER_RESOLVE
 
 #include "hiopLinSolver.hpp"
-#include "hiopMatrixSparseTriplet.hpp"
-#include <unordered_map>
 
-/** implements the linear solver class using nvidia_ cuSolver (GLU
- * refactorization)
- *
- * @ingroup LinearSolvers
- */
+#include <cassert>
+#include <string>
 
 namespace ReSolve
 {
-// Forward declaration of inner IR class
-class IterativeRefinement;
-class MatrixCsr;
-class RefactorizationSolver;
+class SystemSolver;
+
+class LinAlgWorkspaceCpu;
+
+#ifdef HIOP_USE_CUDA
+class LinAlgWorkspaceCUDA;
+#endif
+
+#ifdef HIOP_USE_HIP
+class LinAlgWorkspaceHIP;
+#endif
+
+namespace matrix
+{
+class Csr;
+}
+
+namespace vector
+{
+class Vector;
+}
 }  // namespace ReSolve
 
 namespace hiop
 {
 
+class hiopMatrixSparse;
+
+/**
+ * @brief Sparse symmetric linear solver adapter for ReSolve's SystemSolver.
+ *
+ * HiOp converts its symmetric triplet matrix to CSR and hands it to
+ * ReSolve::SystemSolver, which owns the KLU factorization, the optional
+ * accelerator refactorization backend, and optional FGMRES iterative
+ * refinement.
+ *
+ * @ingroup LinearSolvers
+ */
 class hiopLinSolverSymSparseReSolve : public hiopLinSolverSymSparse
 {
 public:
-  // constructor
   hiopLinSolverSymSparseReSolve(const int& n, const int& nnz, hiopNlpFormulation* nlp);
+
   virtual ~hiopLinSolverSymSparseReSolve();
 
   /**
-   * @brief Triggers a refactorization of the matrix, if necessary.
-   * Overload from base class.
-   * In this case, KLU (SuiteSparse) is used to refactor
+   * @brief Update matrix values and factorize or refactorize the selected
+   * ReSolve backend.
+   *
+   * @return Zero on success; negative when setup or numerical factorization
+   * fails and HiOp should regularize the system.
    */
   virtual int matrixChanged();
 
   /**
    * @brief Solves a linear system.
    *
-   * @param x is on entry the right hand side(s) of the system to be solved.
+   * @param x On entry, the right-hand side of the system.
    *
-   * @post On exit `x` is overwritten with the solution(s).
+   * @post On exit, `x` is overwritten with the solution.
    */
-  virtual bool solve(hiopVector& x_);
+  virtual bool solve(hiopVector& x);
 
-  /** Multiple rhs not supported yet */
+  /** Multiple right-hand sides are not supported yet. */
   virtual bool solve(hiopMatrix& /* x */)
   {
     assert(false && "not yet supported");
@@ -109,51 +136,66 @@ public:
   }
 
 protected:
-  ReSolve::RefactorizationSolver* solver_;
+  /** Build the CSR matrix and perform one-time KLU setup and symbolic analysis. */
+  int firstCall();
 
-  int m_;    ///< number of rows of the whole matrix
-  int n_;    ///< number of cols of the whole matrix
-  int nnz_;  ///< number of nonzeros in the matrix
+  /** Update CSR values from the current HiOp matrix. */
+  int update_matrix_values();
 
-  // Mapping on the host
+  /** Count CSR entries after expanding the symmetric triplet matrix. */
+  void compute_nnz();
+
+  /**
+   * @brief Build CSR structure and triplet-to-CSR update mappings.
+   * @return Zero on success; nonzero on allocation or copy failure.
+   */
+  int set_csr_indices_values();
+
+  /** Return the host-visible triplet matrix used to construct CSR. */
+  hiopMatrixSparse* host_matrix() const;
+
+  /** Configure FGMRES iterative refinement on the system solver. */
+  void setup_iterative_refinement();
+
+  hiopMatrixSparse* M_host_;
+
+  int n_;
+  int nnz_;
+
   int* index_convert_CSR2Triplet_host_;
   int* index_convert_extra_Diag2CSR_host_;
 
-  // Mapping on the device
   int* index_convert_CSR2Triplet_device_;
   int* index_convert_extra_Diag2CSR_device_;
 
-  // Algorithm control flags
+  /// Nonzero when the selected backend has a valid numerical factorization.
   int factorizationSetupSucc_;
+
+  /// True after one-time accelerator setup from the initial KLU factors.
+  bool refactorization_setup_complete_;
+
   bool is_first_call_;
+  bool use_ir_;
 
-  hiopMatrixSparse* M_host_{nullptr};  ///< Host mirror for the KKT matrix
+  /// True when refactorization and triangular solves run on the device.
+  bool solve_on_device_;
 
-  /* private function: creates a cuSolver data structure from KLU data
-   * structures. */
+  /// ReSolve refactorization method ID: "klu", "glu", "cusolverrf", or "rocsolverrf".
+  std::string refactorization_method_;
 
-  /** called the very first time a matrix is factored. Perform KLU
-   * factorization, allocate all aux variables
-   *
-   * @note Converts HiOp triplet matrix to CSR format.
-   */
-  virtual void firstCall();
+  ReSolve::matrix::Csr* matrix_;
+  ReSolve::vector::Vector* rhs_;
+  ReSolve::vector::Vector* solution_;
 
-  /**
-   * @brief Updates matrix values from HiOp object.
-   *
-   * @note This function maps data from HiOp supplied matrix M_ to data structures
-   * used by the linear solver.
-   */
-  void update_matrix_values();
+  ReSolve::LinAlgWorkspaceCpu* cpu_workspace_;
+#ifdef HIOP_USE_CUDA
+  ReSolve::LinAlgWorkspaceCUDA* cuda_workspace_;
+#endif
+#ifdef HIOP_USE_HIP
+  ReSolve::LinAlgWorkspaceHIP* hip_workspace_;
+#endif
 
-  /** Function to compute nnz and set row pointers */
-  void compute_nnz();
-  /** Function to compute column indices and matrix values arrays */
-  void set_csr_indices_values();
-
-  template<typename T>
-  void hiopCheckCudaError(T result, const char* const file, int const line);
+  ReSolve::SystemSolver* solver_;
 };
 
 }  // namespace hiop

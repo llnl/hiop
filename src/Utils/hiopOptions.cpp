@@ -922,13 +922,14 @@ void hiopOptionsNLP::register_options()
   //     - 'gpu' compute mode: work in progress
 
   {
-    vector<string> range{"auto", "ma57", "pardiso", "strumpack", "resolve", "ginkgo", "cusolver-chol"};
+    vector<string> range{"auto", "ma57", "pardiso", "strumpack", "resolve", "hykkt", "ginkgo", "cusolver-chol"};
 
-    register_str_option("linear_solver_sparse",
-                        "auto",
-                        range,
-                        "Selects among MA57, PARDISO, STRUMPACK, cuSOLVER's Cholesky or LU, and GINKGO for the "
-                        "sparse linear solves.");
+    register_str_option(
+        "linear_solver_sparse",
+        "auto",
+        range,
+        "Selects among MA57, PARDISO, STRUMPACK, ReSolve, HyKKT, cuSOLVER's Cholesky or LU, and GINKGO for the "
+        "sparse linear solves.");
   }
 
   // choose linear solver for duals intializations for sparse NLP problems
@@ -938,10 +939,11 @@ void hiopOptionsNLP::register_options()
   {
     vector<string> range{"auto", "ma57", "pardiso", "resolve", "strumpack", "ginkgo"};
 
-    register_str_option("duals_init_linear_solver_sparse",
-                        "auto",
-                        range,
-                        "Selects among MA57, PARDISO, cuSOLVER, STRUMPACK, and GINKGO for the sparse linear solves.");
+    register_str_option(
+        "duals_init_linear_solver_sparse",
+        "auto",
+        range,
+        "Selects among MA57, PARDISO, ReSolve, cuSOLVER, STRUMPACK, and GINKGO for the sparse linear solves.");
   }
 
   // choose hardware backend for the Ginkgo solver to run on.
@@ -990,23 +992,34 @@ void hiopOptionsNLP::register_options()
                         "`amd-ssparse` and `colamd-ssparse` AMD and column AMD from Suite Sparse library. ");
   }
 
-  // resolve factorization options
+  // ReSolve factorization options
   {
     vector<std::string> range = {"klu"};
     auto default_value = range[0];
     register_str_option("resolve_factorization", default_value, range, "So far, only 'klu' option is available. ");
   }
 
-  // resolve refactorization options
+  // ReSolve refactorization options
   {
-    vector<std::string> range = {"glu", "rf"};
+    vector<std::string> range = {"klu","glu", "rf"};
     auto default_value = range[0];
     register_str_option("resolve_refactorization",
                         default_value,
                         range,
                         "Numerical refactorization function after sparsity pattern of factors is computed. "
-                        "'glu' is experimental and 'rf' is NVIDIA's stable refactorization. ");
+                        "'klu' is calling refactorization on CPU by KLU solver; "
+                        "'glu' is experimental, selects CUDA GLU refactorization, and falls back to RF on HIP; "
+                        "'rf' selects the available CUDA or HIP RF implementation. ");
   }
+
+  // HyKKT options
+  register_num_option("hykkt_gamma", 1e4, 1e-16, 1e16, "HyKKT penalty parameter gamma (default is 1e4). ");
+
+  register_num_option("hykkt_residual_tol",
+                      1e-2,
+                      1e-16,
+                      1.0,
+                      "Maximum accepted relative residual for a HyKKT solve (default is 1e-2). ");
 
   register_int_option("ir_inner_restart", 20, 1, 100, "(F)GMRES restart value (default is 20). ");
 
@@ -1019,7 +1032,7 @@ void hiopOptionsNLP::register_options()
   register_int_option("ir_inner_maxit", 50, 0, 1000, "(F)GMRES maximum number of iterations (default is 50). ");
 
   {
-    vector<std::string> range = {"mgs", "cgs2", "mgs_two_synch", "mgs_pm"};
+    vector<std::string> range = {"mgs", "cgs2", "mgs_two_sync", "mgs_pm"};
     auto default_value = range[0];
     register_str_option("ir_inner_gs_scheme",
                         default_value,
@@ -1027,7 +1040,7 @@ void hiopOptionsNLP::register_options()
                         "Gram-Schmidt orthogonalization version for FMGRES. "
                         "mgs: modified Gram-Schmidt (textbook, default). "
                         "cgs2: reorthogonalized classical Gram-Schmidt (three synchs). "
-                        "mgs_two_synch: two synch (stable) MGS. "
+                        "mgs_two_sync: two synch (stable) MGS. "
                         "mgs_pm: post-modern MGS, two synchs. ");
   }
 
@@ -1401,6 +1414,24 @@ void hiopOptionsNLP::ensure_consistence()
   //
   auto kkt_linsys = GetString("KKTLinsys");
   auto sol_sp = GetString("linear_solver_sparse");
+
+#ifdef HIOP_USE_RESOLVE
+  if(sol_sp == "hykkt") {
+    if(kkt_linsys == "auto") {
+      set_val("KKTLinsys", "xdycyd");
+      kkt_linsys = "xdycyd";
+    } else if(kkt_linsys != "xdycyd") {
+      if(is_user_defined("linear_solver_sparse")) {
+        log_printf(hovWarning,
+                   "The option 'linear_solver_sparse=hykkt' requires 'KKTLinsys=xdycyd'. "
+                   "Will use 'linear_solver_sparse=auto'.\n");
+      }
+      set_val("linear_solver_sparse", "auto");
+      sol_sp = "auto";
+    }
+  }
+#endif
+
   if(kkt_linsys == "full") {
     if(sol_sp != "resolve" && sol_sp != "pardiso" && sol_sp != "strumpack" && sol_sp != "auto") {
       if(is_user_defined("linear_solver_sparse")) {
@@ -1425,8 +1456,31 @@ void hiopOptionsNLP::ensure_consistence()
     }
   }
 
+#ifndef HIOP_USE_RESOLVE
+  if(sol_sp == "resolve" || sol_sp == "hykkt") {
+    if(is_user_defined("linear_solver_sparse")) {
+      log_printf(hovWarning,
+                 "The option 'linear_solver_sparse=%s' is not valid because HiOp was built without ReSolve support."
+                 " Will use 'linear_solver_sparse=auto'.\n",
+                 GetString("linear_solver_sparse").c_str());
+    }
+    set_val("linear_solver_sparse", "auto");
+  }
+
+  if(GetString("duals_init_linear_solver_sparse") == "resolve") {
+    if(is_user_defined("duals_init_linear_solver_sparse")) {
+      log_printf(
+          hovWarning,
+          "The option 'duals_init_linear_solver_sparse=%s' is not valid because HiOp was built without ReSolve support."
+          " Will use 'duals_init_linear_solver_sparse=auto'.\n",
+          GetString("duals_init_linear_solver_sparse").c_str());
+    }
+    set_val("duals_init_linear_solver_sparse", "auto");
+  }
+#endif  // HIOP_USE_RESOLVE
+
 #ifndef HIOP_USE_CUDA
-  if(sol_sp == "resolve" || sol_sp == "cusolver-chol") {
+  if(sol_sp == "cusolver-chol") {
     if(is_user_defined("linear_solver_sparse")) {
       log_printf(hovWarning,
                  "The option 'linear_solver_sparse=%s' is not valid without CUDA support enabled."
@@ -1549,7 +1603,7 @@ void hiopOptionsNLP::ensure_consistence()
     }
   }
 
-  // use inertia-free approach if 1) solver is strumpack or resolve, or 2) if linsys is full
+  // use inertia-free approach if 1) solver is strumpack, resolve, or hykkt, or 2) if linsys is full
   if(GetString("KKTLinsys") == "full") {
     if(GetString("fact_acceptor") == "inertia_correction") {
       if(is_user_defined("fact_acceptor")) {
@@ -1559,7 +1613,8 @@ void hiopOptionsNLP::ensure_consistence()
       }
       set_val("fact_acceptor", "inertia_free");
     }
-  } else if(GetString("linear_solver_sparse") == "strumpack" || GetString("linear_solver_sparse") == "resolve") {
+  } else if(GetString("linear_solver_sparse") == "strumpack" || GetString("linear_solver_sparse") == "resolve" ||
+            GetString("linear_solver_sparse") == "hykkt") {
     if(GetString("fact_acceptor") == "inertia_correction") {
       if(is_user_defined("fact_acceptor") && is_user_defined("linear_solver_sparse")) {
         log_printf(hovWarning,

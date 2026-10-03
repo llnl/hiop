@@ -23,6 +23,12 @@ set(hiopOptimization_SPARSE_SRC
   hiopKKTLinSysSparseNormalEqn.cpp
   )
 
+if(HIOP_USE_RESOLVE)
+  list(APPEND hiopOptimization_SPARSE_SRC
+    hiopKKTLinSysSparseHyKKT.cpp
+  )
+endif()
+
 set(hiopOptimization_INTERFACE_HEADERS
   hiopAlgFilterIPM.hpp
   hiopAlgPrimalDecomp.hpp
@@ -38,6 +44,7 @@ set(hiopOptimization_INTERFACE_HEADERS
   hiopKKTLinSysSparse.hpp
   hiopKKTLinSysSparseCondensed.hpp
   hiopKKTLinSysSparseNormalEqn.hpp
+  hiopKKTLinSysSparseHyKKT.hpp
   hiopLogBarProblem.hpp
   hiopNlpFormulation.hpp
   hiopNlpTransforms.hpp
