@@ -74,17 +74,7 @@ hiopKKTLinSysCompressedSparseXDYcYdHyKKT::~hiopKKTLinSysCompressedSparseXDYcYdHy
 
 bool hiopKKTLinSysCompressedSparseXDYcYdHyKKT::build_kkt_matrix(const hiopPDPerturbation& pdreg)
 {
-  delta_wx_ = perturb_calc_->get_curr_delta_wx();
-  delta_wd_ = perturb_calc_->get_curr_delta_wd();
-  delta_cc_ = perturb_calc_->get_curr_delta_cc();
-  delta_cd_ = perturb_calc_->get_curr_delta_cd();
-
-  HessSp_ = dynamic_cast<hiopMatrixSparse*>(Hess_);
-  Jac_cSp_ = dynamic_cast<const hiopMatrixSparse*>(Jac_c_);
-  Jac_dSp_ = dynamic_cast<const hiopMatrixSparse*>(Jac_d_);
-
-  if(!HessSp_ || !Jac_cSp_ || !Jac_dSp_) {
-    assert(false);
+  if(!update_regularizations_and_sparse_blocks()) {
     return false;
   }
 

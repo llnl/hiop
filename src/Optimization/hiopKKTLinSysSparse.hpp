@@ -178,6 +178,9 @@ protected:
   int write_linsys_counter_;
   hiopCSR_IO csr_writer_;
 
+  /// Fetches current regularizations and casts Hess/Jac to sparse. Returns false on bad cast.
+  bool update_regularizations_and_sparse_blocks();
+
 private:
   // placeholder for the code that decides which linear solver to used based on safe_mode_
   hiopLinSolverSymSparse* determineAndCreateLinsys(int nxd, int neq, int nineq, int nnz);

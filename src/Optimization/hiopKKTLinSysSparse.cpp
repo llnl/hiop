@@ -461,7 +461,7 @@ hiopKKTLinSysCompressedSparseXDYcYd::~hiopKKTLinSysCompressedSparseXDYcYd()
   delete Hd_;
 }
 
-bool hiopKKTLinSysCompressedSparseXDYcYd::build_kkt_matrix(const hiopPDPerturbation& pdreg)
+bool hiopKKTLinSysCompressedSparseXDYcYd::update_regularizations_and_sparse_blocks()
 {
   delta_wx_ = perturb_calc_->get_curr_delta_wx();
   delta_wd_ = perturb_calc_->get_curr_delta_wd();
@@ -472,16 +472,16 @@ bool hiopKKTLinSysCompressedSparseXDYcYd::build_kkt_matrix(const hiopPDPerturbat
   Jac_cSp_ = dynamic_cast<const hiopMatrixSparse*>(Jac_c_);
   Jac_dSp_ = dynamic_cast<const hiopMatrixSparse*>(Jac_d_);
 
-  if(!HessSp_) {
+  if(!HessSp_ || !Jac_cSp_ || !Jac_dSp_) {
     assert(false);
     return false;
   }
-  if(!Jac_cSp_) {
-    assert(false);
-    return false;
-  }
-  if(!Jac_dSp_) {
-    assert(false);
+  return true;
+}
+
+bool hiopKKTLinSysCompressedSparseXDYcYd::build_kkt_matrix(const hiopPDPerturbation& pdreg)
+{
+  if(!update_regularizations_and_sparse_blocks()) {
     return false;
   }
 
