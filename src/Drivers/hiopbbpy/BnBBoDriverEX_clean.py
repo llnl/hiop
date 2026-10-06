@@ -244,7 +244,10 @@ if __name__ == "__main__":
   parser.add_argument("--bnbmaxtime", type=float, default=180., help="maximum time for bnb opt") 
   parser.add_argument("--bnb", action=argparse.BooleanOptionalAction, type=bool, default=True, help="BnB or multistart")
   parser.add_argument("--nsamples", type=int, default=6, help="number of initial samples")
+  parser.add_argument("--gp_kernel", type=str, default="se", help="GP kernel: se, matern12, matern32, or matern52")
   parser.add_argument("--nretraingp", type=int, default=1, help="number of BO iterations after which the GP is fully retrained")
+  parser.add_argument("--bo_batch_size", type=int, default=1, help="Number of batches used by the batched BO algorithm")
+  parser.add_argument("--bo_bnb_batch_max_add", type=int, default=1, help="Number of batches added to the GP by the batched BO algorithm")
   parser.add_argument("--seed", type=int, default=42, help="random seed")
   parser.add_argument("--problem", type=str, default="Periodic", help="black-box objective") 
   parser.add_argument("--make_plts", action=argparse.BooleanOptionalAction, type=bool, default=False, help="create plots or not")
@@ -306,9 +309,14 @@ if __name__ == "__main__":
   relbnbtol = args.relbnbtol
   bnbmaxiter = args.bnbmaxiter
   bnbmaxtime = args.bnbmaxtime
-  batch_size = 4
+  batch_size = args.bo_batch_size
+  bo_bnb_batch_max_add = args.bo_bnb_batch_max_add
+  if bo_bnb_batch_max_add>batch_size or bo_bnb_batch_max_add<1:
+    raise ValueError("Invalid value for input argument 'bo_bnb_batch_max_add': must be 1 <= bo_bnb_batch_max_add <= batch_size")
+  
   randseed = args.seed
-  n_samples = args.nsamples 
+  n_samples = args.nsamples
+  gp_kernel = args.gp_kernel
   problem_name = args.problem
   make_plts = args.make_plts
   random.seed(randseed)
@@ -349,8 +357,17 @@ if __name__ == "__main__":
   theta = 1.  # hyperparameter for GP kernel
   fix_theta = False
   theta_bounds = [0.05, 5]
+
   pow_exp_power = 2.0 #1. or 2., only relevant for pow_exp kernel
   corr = "pow_exp" #"matern52" # "pow_exp", "matern32", "matern52"
+  if gp_kernel == "matern12":
+    pow_exp_power = 1.0
+  elif gp_kernel == "matern32" or gp_kernel == "matern52":
+    corr = gp_kernel
+  else:
+    if gp_kernel != "se":
+      raise ValueError("Unexpected value for input argument 'gp_kernel'")
+
   eval_noise = False
 
   hyper_opt="Cobyla" #More robust, derivative-free hyperparameter optimization
