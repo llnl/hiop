@@ -1,7 +1,7 @@
 #include "NlpPriDecEx2SparseRaja.hpp"
 #include "hiopAlgPrimalDecomp.hpp"
 
-#ifdef HIOP_USE_GPU
+#ifdef HIOP_USE_MAGMA
 #include "magma_v2.h"
 #endif
 

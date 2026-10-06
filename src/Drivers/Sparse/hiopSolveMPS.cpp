@@ -102,7 +102,7 @@ int main(int argc, char** argv)
   }
 
   if(arguments.gpu && !hiop::hiopInterfaceMPS::device_execution_available()) {
-    std::cerr << "--gpu requires a HiOp build with RAJA, GPU, CUDA, and ReSolve support enabled.\n";
+    std::cerr << "--gpu requires a HiOp build with RAJA, GPU, ReSolve, and CUDA or HIP support enabled.\n";
 #ifdef HIOP_USE_MPI
     MPI_Finalize();
 #endif

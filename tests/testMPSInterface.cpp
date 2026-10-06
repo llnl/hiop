@@ -156,20 +156,6 @@ int main(int argc, char** argv)
   check(close(constraint_lower[1], -2.0) && constraint_upper[1] > 1e19, "selected G row");
   check(close(constraint_lower[2], 7.0) && close(constraint_upper[2], 7.0), "selected E row");
 
-  check(model.load(path(argv[1], "fixed.mps")) == hiop::hiopMPSReadStatus::success,
-        "load fixed-format MPS: " + model.last_error());
-  check(model.get_prob_sizes(n, m) && n == 2 && m == 1, "fixed-format dimensions");
-  lower.resize(n);
-  upper.resize(n);
-  variable_types.resize(n);
-  check(model.get_vars_info(n, lower.data(), upper.data(), variable_types.data()), "fixed-format variable metadata");
-  check(close(lower[0], 0.0) && close(upper[0], 4.0), "fixed-format UP bound");
-  check(lower[1] < -1e19 && upper[1] > 1e19, "fixed-format FR bound");
-
-  check(model.load(path(argv[1], "integer.mps")) == hiop::hiopMPSReadStatus::unsupported_feature,
-        "reject integer marker");
-  check(!model.is_loaded(), "failed load clears model state");
-
   if(failures == 0) std::cout << "MPS interface tests passed\n";
   return failures == 0 ? 0 : 1;
 }

@@ -9,20 +9,16 @@ if(@HIOP_USE_RESOLVE@ AND NOT TARGET ReSolve::ReSolve)
     PATH_SUFFIXES share/resolve/cmake)
 endif()
 
-include( "${CMAKE_CURRENT_LIST_DIR}/HiOpTargets.cmake" )
+# Discover MPI on the consumer's system before loading the exported targets.
+# Compilers must be selected by the consuming project or a toolchain file,
+# never changed by a package configuration after project() has run.
+if(@HIOP_USE_MPI@ AND NOT TARGET MPI::MPI_CXX)
+  find_dependency(MPI REQUIRED COMPONENTS CXX)
+endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/HiOpTargets.cmake")
 
 # Configure TPLs if not already in an export set
-
-# If using MPI, make sure module is loaded
-if(@HIOP_USE_MPI@ AND NOT TARGET MPI::MPI_CXX)  
-  find_package(MPI REQUIRED)
-  include_directories(@MPI_CXX_ADDITIONAL_INCLUDE_DIRS@ @MPI_CXX_COMPILER_INCLUDE_DIRS@)
-  if(NOT DEFINED MPI_CXX_COMPILER)
-    set(CMAKE_CXX_COMPILER @MPI_CXX_COMPILER@)
-    set(CMAKE_C_COMPILER @MPI_C_COMPILER@)
-  endif()
-  include_directories(@MPI_Fortran_ADDITIONAL_INCLUDE_DIRS@ @MPI_Fortran_COMPILER_INCLUDE_DIRS@)
-endif()
 
 if(@HIOP_USE_RAJA@ AND NOT TARGET OpenMP::OpenMP_CXX)
   find_package(OpenMP)
@@ -62,6 +58,25 @@ if(@HIOP_USE_GPU@)
   endif()
 endif()
 
+# See the corresponding build-tree workaround in the top-level CMakeLists.
+# Resolve these paths at package-consumption time to keep the installation
+# independent of the MPI installation used to build HiOp.
+if(@HIOP_USE_MPI@ AND @HIOP_USE_HIP@ AND TARGET HiOp::hiop_tpl)
+  set(_hiop_mpi_include_dirs
+    ${MPI_CXX_INCLUDE_DIRS}
+    ${MPI_CXX_COMPILER_INCLUDE_DIRS}
+    ${MPI_CXX_ADDITIONAL_INCLUDE_DIRS}
+  )
+  list(REMOVE_DUPLICATES _hiop_mpi_include_dirs)
+  foreach(_mpi_include_dir IN LISTS _hiop_mpi_include_dirs)
+    set_property(TARGET HiOp::hiop_tpl APPEND PROPERTY
+      INTERFACE_COMPILE_OPTIONS
+      "$<$<COMPILE_LANGUAGE:C,CXX,HIP>:-I${_mpi_include_dir}>"
+    )
+  endforeach()
+  unset(_hiop_mpi_include_dirs)
+endif()
+
 # Add HiOp::HiOp alias library
 if(@HIOP_BUILD_SHARED@ AND NOT TARGET HiOp::HiOp)
   add_library(HiOp::HiOp ALIAS HiOp::@hiop_default_library_name@)
@@ -70,4 +85,3 @@ endif()
 if(@HIOP_BUILD_STATIC@ AND NOT TARGET HiOp::HiOp)
   add_library(HiOp::HiOp ALIAS HiOp::@hiop_default_library_name@)
 endif()
-

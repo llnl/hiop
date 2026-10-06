@@ -15,13 +15,19 @@
 #include <unordered_map>
 #include <utility>
 
-#if defined(HIOP_USE_RAJA) && defined(HIOP_USE_GPU) && defined(HIOP_USE_CUDA) && defined(HIOP_USE_RESOLVE)
+#if defined(HIOP_USE_RAJA) && defined(HIOP_USE_GPU) && defined(HIOP_USE_RESOLVE) && \
+    (defined(HIOP_USE_CUDA) || defined(HIOP_USE_HIP))
 #define HIOP_MPS_DEVICE_ENABLED
+#if defined(HIOP_USE_CUDA)
 #include "ExecPoliciesRajaCudaImpl.hpp"
+#include <cuda_runtime.h>
+#elif defined(HIOP_USE_HIP)
+#include "ExecPoliciesRajaHipImpl.hpp"
+#include <hip/hip_runtime.h>
+#endif
 #include <RAJA/RAJA.hpp>
 #include <umpire/Allocator.hpp>
 #include <umpire/ResourceManager.hpp>
-#include <cuda_runtime.h>
 #endif
 
 namespace hiop
@@ -31,8 +37,22 @@ namespace
 constexpr double kMpsInfinity = 1e20;
 
 #ifdef HIOP_MPS_DEVICE_ENABLED
-using MpsRajaExec = ExecRajaPoliciesBackend<ExecPolicyRajaCuda>::hiop_raja_exec;
-using MpsRajaReduce = ExecRajaPoliciesBackend<ExecPolicyRajaCuda>::hiop_raja_reduce;
+#if defined(HIOP_USE_CUDA)
+using MpsRajaPolicy = ExecPolicyRajaCuda;
+#elif defined(HIOP_USE_HIP)
+using MpsRajaPolicy = ExecPolicyRajaHip;
+#endif
+using MpsRajaExec = ExecRajaPoliciesBackend<MpsRajaPolicy>::hiop_raja_exec;
+using MpsRajaReduce = ExecRajaPoliciesBackend<MpsRajaPolicy>::hiop_raja_reduce;
+
+void synchronize_mps_device()
+{
+#if defined(HIOP_USE_CUDA)
+  static_cast<void>(cudaDeviceSynchronize());
+#elif defined(HIOP_USE_HIP)
+  static_cast<void>(hipDeviceSynchronize());
+#endif
+}
 #endif
 
 enum class Section
@@ -311,8 +331,8 @@ hiopMPSReadStatus hiopInterfaceMPS::load(const std::string& filename, const hiop
 
   if(impl_->execution_mode == ExecutionMode::device && !device_execution_available()) {
     impl_->error =
-        "GPU MPS execution requires a HiOp build with HIOP_USE_RAJA, HIOP_USE_GPU, HIOP_USE_CUDA, and "
-        "HIOP_USE_RESOLVE enabled.";
+        "GPU MPS execution requires a HiOp build with HIOP_USE_RAJA, HIOP_USE_GPU, HIOP_USE_RESOLVE, and "
+        "either HIOP_USE_CUDA or HIOP_USE_HIP enabled.";
     return hiopMPSReadStatus::unsupported_feature;
   }
 
@@ -783,7 +803,7 @@ bool hiopInterfaceMPS::get_vars_info(const size_type& n,
       xlow_device[i] = lower[i];
       xupp_device[i] = upper[i];
     });
-    cudaDeviceSynchronize();
+    synchronize_mps_device();
 
     rm.copy(xlow, xlow_device, n * sizeof(double));
     rm.copy(xupp, xupp_device, n * sizeof(double));
@@ -824,7 +844,7 @@ bool hiopInterfaceMPS::get_cons_info(const size_type& m,
       clow_device[i] = lower[i];
       cupp_device[i] = upper[i];
     });
-    cudaDeviceSynchronize();
+    synchronize_mps_device();
 
     rm.copy(clow, clow_device, m * sizeof(double));
     rm.copy(cupp, cupp_device, m * sizeof(double));
@@ -874,7 +894,7 @@ bool hiopInterfaceMPS::eval_f(const size_type& n, const double* x, bool, double&
     RAJA::ReduceSum<MpsRajaReduce, double> linear_objective(0.0);
     RAJA::forall<MpsRajaExec>(RAJA::RangeSegment(0, n),
                               RAJA_LAMBDA(RAJA::Index_type i) { linear_objective += costs[i] * x_device[i]; });
-    cudaDeviceSynchronize();
+    synchronize_mps_device();
     obj_value += linear_objective.get();
 
     device_alloc.deallocate(x_device);
@@ -899,7 +919,7 @@ bool hiopInterfaceMPS::eval_grad_f(const size_type& n, const double*, bool, doub
     const double* costs = impl_->costs_device;
     RAJA::forall<MpsRajaExec>(RAJA::RangeSegment(0, n),
                               RAJA_LAMBDA(RAJA::Index_type i) { gradf_device[i] = costs[i]; });
-    cudaDeviceSynchronize();
+    synchronize_mps_device();
 
     rm.copy(gradf, gradf_device, n * sizeof(double));
     device_alloc.deallocate(gradf_device);
@@ -968,7 +988,7 @@ bool hiopInterfaceMPS::eval_cons(const size_type& n, const size_type& m, const d
       }
       cons_device[row] = value;
     });
-    cudaDeviceSynchronize();
+    synchronize_mps_device();
 
     rm.copy(cons, cons_device, m * sizeof(double));
     device_alloc.deallocate(cons_device);
@@ -1075,7 +1095,7 @@ bool hiopInterfaceMPS::eval_Jac_cons(const size_type& n,
       }
       if(MJacS_device != nullptr) MJacS_device[entry] = values[entry];
     });
-    cudaDeviceSynchronize();
+    synchronize_mps_device();
 
     if(iJacS != nullptr) {
       rm.copy(iJacS, iJacS_device, nnzJacS * sizeof(index_type));
