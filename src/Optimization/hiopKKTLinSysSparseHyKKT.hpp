@@ -93,10 +93,6 @@ public:
    * HyKKT linear solver with the KKT blocks. Does not assemble a KKT matrix.
    */
   virtual bool build_kkt_matrix(const hiopPDPerturbation& pdreg);
-
-protected:
-  /// HyKKT factorizes inside solve(); this only refreshes the block values.
-  virtual int factorizeWithCurvCheck();
 };
 
 }  // end of namespace

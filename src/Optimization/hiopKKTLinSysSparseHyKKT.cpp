@@ -141,11 +141,4 @@ bool hiopKKTLinSysCompressedSparseXDYcYdHyKKT::build_kkt_matrix(const hiopPDPert
   return true;
 }
 
-int hiopKKTLinSysCompressedSparseXDYcYdHyKKT::factorizeWithCurvCheck()
-{
-  assert(linSys_);
-  // HyKKT factorizes inside solve(); matrixChanged() refreshes the block values.
-  return linSys_->matrixChanged();
-}
-
 }  // namespace hiop
