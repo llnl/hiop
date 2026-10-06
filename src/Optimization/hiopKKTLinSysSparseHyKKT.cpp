@@ -85,19 +85,7 @@ bool hiopKKTLinSysCompressedSparseXDYcYdHyKKT::build_kkt_matrix(const hiopPDPert
 
   // HyKKT consumes the KKT blocks directly; only the regularized diagonals
   // are assembled here.
-  if(nullptr == Hx_) {
-    Hx_ = LinearAlgebraFactory::create_vector(nlp_->options->GetString("mem_space"), nx);
-    assert(Hx_);
-  }
-  Hx_->startingAtCopyFromStartingAt(0, *Dx_, 0);
-  Hx_->axpy(1., *delta_wx_);
-
-  if(nullptr == Hd_) {
-    Hd_ = LinearAlgebraFactory::create_vector(nlp_->options->GetString("mem_space"), nd);
-    assert(Hd_);
-  }
-  Hd_->startingAtCopyFromStartingAt(0, *Dd_, 0);
-  Hd_->axpy(1., *delta_wd_);
+  update_regularized_diagonals();
 
   nlp_->runStats.kkt.tmUpdateLinsys.stop();
 

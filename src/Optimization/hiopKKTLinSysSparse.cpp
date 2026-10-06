@@ -479,6 +479,29 @@ bool hiopKKTLinSysCompressedSparseXDYcYd::update_regularizations_and_sparse_bloc
   return true;
 }
 
+void hiopKKTLinSysCompressedSparseXDYcYd::update_regularized_diagonals()
+{
+  const size_type nx = HessSp_->n();
+  const size_type nd = Jac_dSp_->m();
+
+  // build the diagonal Hx = Dx + delta_wx
+  if(nullptr == Hx_) {
+    Hx_ = LinearAlgebraFactory::create_vector(nlp_->options->GetString("mem_space"), nx);
+    assert(Hx_);
+  }
+  Hx_->startingAtCopyFromStartingAt(0, *Dx_, 0);
+  // a good time to add the IC 'delta_wx' perturbation
+  Hx_->axpy(1., *delta_wx_);
+
+  // build the diagonal Hd = Dd + delta_wd
+  if(nullptr == Hd_) {
+    Hd_ = LinearAlgebraFactory::create_vector(nlp_->options->GetString("mem_space"), nd);
+    assert(Hd_);
+  }
+  Hd_->startingAtCopyFromStartingAt(0, *Dd_, 0);
+  Hd_->axpy(1., *delta_wd_);
+}
+
 bool hiopKKTLinSysCompressedSparseXDYcYd::build_kkt_matrix(const hiopPDPerturbation& pdreg)
 {
   if(!update_regularizations_and_sparse_blocks()) {
@@ -519,26 +542,12 @@ bool hiopKKTLinSysCompressedSparseXDYcYd::build_kkt_matrix(const hiopPDPerturbat
     Msys->copyDiagMatrixToSubblock(-1., nx + nd + neq, nx, dest_nnz_st, nineq);
     dest_nnz_st += nineq;
 
-    // build the diagonal Hx = Dx + delta_wx
-    if(NULL == Hx_) {
-      Hx_ = LinearAlgebraFactory::create_vector(nlp_->options->GetString("mem_space"), nx);
-      assert(Hx_);
-    }
-    Hx_->startingAtCopyFromStartingAt(0, *Dx_, 0);
-
-    // a good time to add the IC 'delta_wx' perturbation
-    Hx_->axpy(1., *delta_wx_);
+    // build the diagonals Hx = Dx + delta_wx and Hd = Dd + delta_wd
+    update_regularized_diagonals();
 
     Msys->copySubDiagonalFrom(0, nx, *Hx_, dest_nnz_st);
     dest_nnz_st += nx;
 
-    // build the diagonal Hd = Dd + delta_wd
-    if(NULL == Hd_) {
-      Hd_ = LinearAlgebraFactory::create_vector(nlp_->options->GetString("mem_space"), nd);
-      assert(Hd_);
-    }
-    Hd_->startingAtCopyFromStartingAt(0, *Dd_, 0);
-    Hd_->axpy(1., *delta_wd_);
     Msys->copySubDiagonalFrom(nx, nd, *Hd_, dest_nnz_st);
     dest_nnz_st += nd;
 
