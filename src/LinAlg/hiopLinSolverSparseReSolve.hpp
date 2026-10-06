@@ -130,7 +130,7 @@ public:
 
   virtual bool is_device_solver() const
   {
-    return refactorization_mode_ != RefactorizationMode::CPU_KLU;
+    return solve_on_device_;
   }
 
   /** Multiple right-hand sides are not supported yet. */

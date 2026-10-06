@@ -46,6 +46,7 @@
 // product endorsement purposes.
 
 #include "hiopKKTLinSysSparse.hpp"
+#include "hiopVectorPar.hpp"
 
 #ifdef HIOP_SPARSE
 #ifdef HIOP_USE_COINHSL
@@ -801,13 +802,14 @@ bool hiopKKTLinSysCompressedSparseXDYcYd::solve_with_transient_fallback()
   return false;
 #else
   assert(fallback_linsys_ && fallback_rhs_ && rhs_);
+  auto& fallback_rhs_host = dynamic_cast<hiopVectorPar&>(*fallback_rhs_);
   nlp_->runStats.linsolv.tmDeviceTransfer.start();
-  rhs_->copyTo(fallback_rhs_->local_data());
+  rhs_->copy_to_vectorpar(fallback_rhs_host);
   nlp_->runStats.linsolv.tmDeviceTransfer.stop();
   const bool solve_ok = fallback_linsys_->solve(*fallback_rhs_);
   if(solve_ok) {
     nlp_->runStats.linsolv.tmDeviceTransfer.start();
-    rhs_->copyFrom(fallback_rhs_->local_data_const());
+    rhs_->copy_from_vectorpar(fallback_rhs_host);
     nlp_->runStats.linsolv.tmDeviceTransfer.stop();
     nlp_->log->printf(hovWarning,
                       "CPU MA57 fallback solved the current KKT right-hand side; it remains scoped to this KKT "
