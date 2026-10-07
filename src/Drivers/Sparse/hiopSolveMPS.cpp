@@ -137,7 +137,7 @@ int main(int argc, char** argv)
     nlp.options->SetStringValue("callback_mem_space", "host", true);
     nlp.options->SetStringValue("fact_acceptor", "inertia_free", true);
     nlp.options->SetStringValue("linsol_mode", "speculative", true);
-    nlp.options->SetStringValue("duals_init", "zero", true);
+//    nlp.options->SetStringValue("duals_init", "zero", true);
   } else {
     nlp.options->SetStringValue("compute_mode", "cpu");
     nlp.options->SetStringValue("KKTLinsys", "xdycyd");
