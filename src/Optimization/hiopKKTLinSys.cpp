@@ -358,7 +358,7 @@ bool hiopKKTLinSysCurvCheck::factorize()
     continue_re_fact = fact_acceptor_->requireReFactorization(*nlp_, n_neg_eig);
 
     if(-1 == continue_re_fact) {
-      return false;
+      return retry_factorization_with_transient_linsol_fallback();
     } else if(0 == continue_re_fact) {
       break;
     }
@@ -369,6 +369,9 @@ bool hiopKKTLinSysCurvCheck::factorize()
   }  // end of IC loop
 
   if(num_refactorization > max_refactorization) {
+    if(retry_factorization_with_transient_linsol_fallback()) {
+      return true;
+    }
     nlp_->log->printf(hovError,
                       "Reached max number (%d) of refactorization within an outer iteration.\n",
                       max_refactorization);
@@ -423,7 +426,7 @@ bool hiopKKTLinSysCurvCheck::factorize_inertia_free()
     continue_re_fact = fact_acceptor_->requireReFactorization(*nlp_, solver_flag);
 
     if(-1 == continue_re_fact) {
-      return false;
+      return retry_factorization_with_transient_linsol_fallback();
     } else {
       // this while loop is used to correct singularity
       assert(1 == continue_re_fact);
@@ -454,6 +457,16 @@ bool hiopKKTLinSysCurvCheck::factorize_inertia_free()
   }  // end of IC loop
 
   nlp_->runStats.kkt.tmUpdateInnerFact.stop();
+
+  if(solver_flag < 0) {
+    if(retry_factorization_with_transient_linsol_fallback()) {
+      return true;
+    }
+    nlp_->log->printf(hovError,
+                      "Reached max number (%d) of refactorization within an outer iteration.\n",
+                      max_refactorization);
+    return false;
+  }
 
   return true;
 }

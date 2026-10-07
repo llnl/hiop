@@ -143,6 +143,7 @@ public:
 protected:
   /** Hooks for a backend-specific, one-system linear-solver fallback. */
   virtual bool transient_linsol_fallback_active() const { return false; }
+  virtual bool retry_factorization_with_transient_linsol_fallback() { return false; }
   virtual bool should_retry_with_transient_linsol_fallback(bool outer_ir_failed) { return false; }
   virtual bool retry_with_transient_linsol_fallback(const hiopResidual* resid, hiopIterate* direction)
   {

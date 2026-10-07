@@ -154,6 +154,7 @@ public:
 
 protected:
   virtual bool transient_linsol_fallback_active() const { return fallback_active_; }
+  virtual bool retry_factorization_with_transient_linsol_fallback();
   virtual bool should_retry_with_transient_linsol_fallback(bool outer_ir_failed);
   virtual bool retry_with_transient_linsol_fallback(const hiopResidual* resid, hiopIterate* direction);
   virtual void note_successful_outer_ir();

@@ -606,24 +606,7 @@ int hiopKKTLinSysCompressedSparseXDYcYd::factorizeWithCurvCheck()
     nlp_->log->printf(hovWarning, "Returning to the configured GPU solver for the next KKT system.\n");
   }
   primary_linsol_failed_ = false;
-  const int solver_status = linSys_->matrixChanged();
-  if(solver_status >= 0 || !linSys_->is_device_solver()) {
-    return solver_status;
-  }
-
-  primary_linsol_failed_ = true;
-  if(!gpu_fallback_enabled()) {
-    return solver_status;
-  }
-
-  nlp_->log->printf(hovWarning,
-                    "GPU KKT factorization failed; retrying the current system with CPU MA57.\n");
-  if(!prepare_transient_fallback()) {
-    return solver_status;
-  }
-
-  primary_linsol_failed_ = false;
-  return nlp_->m_eq() + nlp_->m_ineq();
+  return linSys_->matrixChanged();
 }
 
 bool hiopKKTLinSysCompressedSparseXDYcYd::solveCompressed(hiopVector& rx,
@@ -739,6 +722,18 @@ bool hiopKKTLinSysCompressedSparseXDYcYd::gpu_fallback_enabled()
   }
   return false;
 #endif
+}
+
+bool hiopKKTLinSysCompressedSparseXDYcYd::retry_factorization_with_transient_linsol_fallback()
+{
+  if(!gpu_fallback_enabled()) {
+    return false;
+  }
+
+  nlp_->log->printf(hovWarning,
+                    "GPU KKT factorization remained unsuccessful after regularization; "
+                    "retrying the current system with CPU MA57.\n");
+  return prepare_transient_fallback();
 }
 
 bool hiopKKTLinSysCompressedSparseXDYcYd::prepare_transient_fallback()
