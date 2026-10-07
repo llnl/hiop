@@ -422,6 +422,8 @@ if __name__ == "__main__":
     'acquisition_type' : acquisition_type,
     'LCB_beta': beta,
     'bo_maxiter' : boiter, 
+    # Number of evaluated BnB-CV batch points actually assimilated into the GP at each BO iteration.
+    'bnb_batch_max_add': bo_bnb_batch_max_add,
     'batch_size' : batch_size,
     'opt_solver' : 'SLSQP',
     'bnb_warmstart' : args.bnb_warmstart,

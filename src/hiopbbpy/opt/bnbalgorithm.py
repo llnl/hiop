@@ -2695,7 +2695,7 @@ class BnBAlgorithm(GPBoundComputationCommon, BnBAlgorithmBase):
 
   def select_batch_condvar(self, q, *, delta=None, noise_variance=0.0, duplicate_tol=1.e-8,
                            variance_rtol=1.e-10, exclude_training=True, is_feasible=None,
-                           require_full=False):
+                           exclude_points=None, require_full=False):
     """Return (X_batch, diagnostics) after a completed LCB BnB search.
 
     Out of the BnB candidates within some BnB optimality gap (see delta), namely, 
@@ -2772,12 +2772,25 @@ class BnBAlgorithm(GPBoundComputationCommon, BnBAlgorithmBase):
     # Domain-normalized coordinates are used only for duplicate checks.
     width = np.where(hi > lo, hi - lo, 1.0)
     Xunit = (X - lo) / width
+    #if exclude_training:
+    #  # exclude anything within duplicate_tol from a training point
+    #  old = np.asarray(self.gpsurrogate.training_x, dtype=float)
+    #  distance, _ = cKDTree((old - lo) / width).query(Xunit, p=np.inf)
+    #  keep &= distance > duplicate_tol
     if exclude_training:
-      # exclude anything within duplicate_tol from a training point
       old = np.asarray(self.gpsurrogate.training_x, dtype=float)
+
+      # Exclude points that were evaluated previously but were deliberately
+      # not assimilated into the active GP.
+      if exclude_points is not None:
+        extra = np.atleast_2d(np.asarray(exclude_points, dtype=float))
+        if extra.shape[1] != X.shape[1]:
+          raise ValueError("exclude_points has incompatible dimension")
+        old = np.vstack([old, extra])
+
       distance, _ = cKDTree((old - lo) / width).query(Xunit, p=np.inf)
       keep &= distance > duplicate_tol
-
+      
     # Prefer incumbent; otherwise start with the best eligible LCB.
     order = np.flatnonzero(keep)
     order = order[np.argsort(values[order], kind="stable")]
