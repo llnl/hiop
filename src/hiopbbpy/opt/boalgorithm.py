@@ -747,10 +747,12 @@ class BOAlgorithm(BOAlgorithmBase):
         # some output info
         if 'batch_info' in locals():
           cv = np.asarray(batch_info["conditional_variance"], dtype=float)
+          lcb_vals = np.asarray(batch_info["lcb"], dtype=float,)
           self.logger.info("BnB-CV conditional variance:")
           for j in range(q_batch):
             suffix = "GP" if j < n_gp_add else "eval-only"
-            self.logger.info(f"  batch[{j}] var_cond={cv[j]:.6e} [{suffix}]")
+            f_true = float(np.asarray(y_new[j]).reshape(-1)[0])
+            self.logger.info(f"  batch[{j}] LCB={lcb_vals[j]:.6e} var_cond={cv[j]:.6e} f_true={f_true:.12e} [{suffix}]")
         
         x_gp_add = x_eval[:n_gp_add]
         y_gp_add = y_new[:n_gp_add]
@@ -812,7 +814,7 @@ class BOAlgorithm(BOAlgorithmBase):
       self.logger.scalars(f"Objective function improvement: {prev_best_y - curr_best_y:.4e}")
 
       # Save the new sample points and objective evaluations
-      for j in range(1, q_batch):
+      for j in range(q_batch):
         self.x_hist.append(x_eval[j].flatten())
         self.y_hist.append(y_new[j].flatten())
         self.bo_iteration_hist.append(i + 1)

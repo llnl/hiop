@@ -617,6 +617,7 @@ class AsyncLeafPartition:
       leaf.metadata.pop("task_attempt", None)
       leaf.metadata.pop("task_errors", None)
       leaf.metadata.pop("diagnostics", None)
+      leaf.metadata.pop("expsec_weights", None)
       
       if refresh_results is None:
         leaf.aq_L = float(transfer_lower_bound(old_leaf))
