@@ -20,28 +20,6 @@ import math
 import warnings
 import sys
 
-# define the variance upper bound problem
-# these problems are in the form
-# \max_{z} 1/2 z^T A z + b^T z + c
-# s.t. kl <= C z <= ku
-# where A is negative semi-definite
-# here the evaluate function is flipped negative in order that we can use ipopt minimization
-class variance_U_problem:
-  def __init__(self, A, b, c, C):
-    self.A = A
-    self.b = b
-    self.c = c
-    self.C = C 
-  # objective 1/2 x^T A x + b^T x + c
-  def evaluate(self, z):
-    return -1. * (np.inner(z, 0.5 * self.A.dot(z) + self.b) + self.c)
-  def evaluate_grad(self, z):
-    return -1. * (self.A.dot(z) + self.b)
-  def constraint(self, z):
-    return self.C.dot(z)
-  def constraintJacobian(self, z):
-    return self.C[:,:]
-
 def dist_to_corner(l, u, x):
   box = np.array([l, u])
   return np.linalg.norm(np.min(np.abs(box - x), axis=0))
@@ -1184,7 +1162,14 @@ class GPBoundComputationCommon:
                   lo_j = hi_j = float(values[1] - values[0])
 
                 else:
-                  _, _, lo_j, hi_j = pair_bound(float(l[j]), float(u[j]), float(th[j] / scale[j]), centers.tolist())
+                  #_, _, lo_j, hi_j = pair_bound(float(l[j]), float(u[j]), float(th[j] / scale[j]), centers.tolist())
+                  #values = gp_coordinate_loss(np.abs(l[j] - centers) / scale[j], th[j], self.kernel_spec)
+                  values_l = gp_coordinate_loss(np.abs(l[j] - centers) / scale[j], th[j], self.kernel_spec)
+                  values_u = gp_coordinate_loss(np.abs(u[j] - centers) / scale[j], th[j], self.kernel_spec)
+                  dphir_l = values_l[0] - values_l[1]
+                  dphir_u = values_u[0] - values_u[1]
+                  lo_j = min(dphir_l, dphir_u)
+                  hi_j = max(dphir_l, dphir_u)
 
                 lir_min += float(lo_j)
                 lir_max += float(hi_j)
