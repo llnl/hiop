@@ -1130,49 +1130,20 @@ class GPBoundComputationCommon:
           for pair_index in order:
             i_idx, r_idx = map(int, pairs[pair_index])
 
-            if self.kernel_spec == "pow_exp":
-              # Existing endpoint construction for SE and Matern 1/2,
-              # evaluated through the positive-loss helper.
-              endpoint_differences = []
+            # Existing endpoint construction for SE and Matern 1/2,
+            # evaluated through the positive-loss helper.
+            endpoint_differences = []
 
-              for endpoint in (l, u):
-                loss_i = gp_coordinate_loss(np.abs(endpoint - training_x[i_idx]) / scale, th, self.kernel_spec, self.p)
-                loss_r = gp_coordinate_loss(np.abs(endpoint - training_x[r_idx]) / scale, th, self.kernel_spec, self.p)
-                # lambda_i - lambda_r = loss_r - loss_i.
-                endpoint_differences.append(loss_r - loss_i)
+            for endpoint in (l, u):
+              loss_i = gp_coordinate_loss(np.abs(endpoint - training_x[i_idx]) / scale, th, self.kernel_spec, self.p)
+              loss_r = gp_coordinate_loss(np.abs(endpoint - training_x[r_idx]) / scale, th, self.kernel_spec, self.p)
+              # lambda_i - lambda_r = loss_r - loss_i.
+              endpoint_differences.append(loss_r - loss_i)
 
-              at_l, at_u = endpoint_differences
-              lir_min = float(np.minimum(at_l, at_u).sum())
-              lir_max = float(np.maximum(at_l, at_u).sum())
+            at_l, at_u = endpoint_differences
+            lir_min = float(np.minimum(at_l, at_u).sum())
+            lir_max = float(np.maximum(at_l, at_u).sum())
 
-            else:
-              # Preserve the existing Matern pair-bound algorithms.
-              pair_bound = dphir_minmax_threehalves if self.kernel_spec == "matern32" else dphir_minmax_fivehalves
-
-              lir_min, lir_max = 0.0, 0.0
-
-              for j in range(dimx):
-                if th[j] == 0.0:
-                  continue
-
-                centers = training_x[[i_idx, r_idx], j]
-
-                if l[j] == u[j]:
-                  values = gp_coordinate_loss(np.abs(l[j] - centers) / scale[j], th[j], self.kernel_spec)
-                  lo_j = hi_j = float(values[1] - values[0])
-
-                else:
-                  #_, _, lo_j, hi_j = pair_bound(float(l[j]), float(u[j]), float(th[j] / scale[j]), centers.tolist())
-                  #values = gp_coordinate_loss(np.abs(l[j] - centers) / scale[j], th[j], self.kernel_spec)
-                  values_l = gp_coordinate_loss(np.abs(l[j] - centers) / scale[j], th[j], self.kernel_spec)
-                  values_u = gp_coordinate_loss(np.abs(u[j] - centers) / scale[j], th[j], self.kernel_spec)
-                  dphir_l = values_l[0] - values_l[1]
-                  dphir_u = values_u[0] - values_u[1]
-                  lo_j = min(dphir_l, dphir_u)
-                  hi_j = max(dphir_l, dphir_u)
-
-                lir_min += float(lo_j)
-                lir_max += float(hi_j)
 
             # log(zeta_i/zeta_r)   = log(k_i/k_r) + scale_shift_i - scale_shift_r.
             shift = scale_shift[i_idx] - scale_shift[r_idx]
