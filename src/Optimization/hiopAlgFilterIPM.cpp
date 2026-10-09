@@ -3251,6 +3251,9 @@ bool hiopAlgFilterIPMBase::solve_feasibility_restoration(hiopKKTLinSys* kkt, hio
   nlpFR.options->SetStringValue("compute_mode", nlp->options->GetString("compute_mode").c_str());
   nlpFR.options->SetStringValue("mem_space", nlp->options->GetString("mem_space").c_str());
   nlpFR.options->SetStringValue("KKTLinsys", "xdycyd");
+  nlpFR.options->SetStringValue("linear_solver_sparse", nlp->options->GetString("linear_solver_sparse").c_str());
+  nlpFR.options->SetStringValue("fact_acceptor", nlp->options->GetString("fact_acceptor").c_str());
+  nlpFR.options->SetStringValue("linsol_mode", nlp->options->GetString("linsol_mode").c_str());
   nlpFR.options->SetIntegerValue("verbosity_level", 0);
   nlpFR.options->SetStringValue("warm_start", "yes");
   nlpFR.options->SetNumericValue("bound_relax_perturb", 0.0);

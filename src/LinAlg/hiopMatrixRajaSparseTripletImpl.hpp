@@ -140,6 +140,11 @@ template<class MEMBACKEND, class RAJAEXECPOL>
 void hiopMatrixRajaSparseTriplet<MEMBACKEND, RAJAEXECPOL>::setToZero()
 {
   setToConstant(0.0);
+  // KKT assembly registers row blocks incrementally. Clearing the matrix starts
+  // a new assembly pass, so the registration cursor must be reset as well.
+  if(row_starts_ != nullptr) {
+    row_starts_->register_row_st_ = 0;
+  }
 }
 
 /**

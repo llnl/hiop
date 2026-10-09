@@ -57,6 +57,8 @@ add_test(NAME NlpSparse1_1 COMMAND ${RUNCMD} "$<TARGET_FILE:NlpSparseEx1.exe>" "
 add_test(NAME NlpSparse1_2 COMMAND ${RUNCMD} "$<TARGET_FILE:NlpSparseEx1.exe>" "500" "-fr" "-selfcheck")
 if(HIOP_USE_RESOLVE)
   add_test(NAME NlpSparse1_ReSolve COMMAND ${RUNCMD} "$<TARGET_FILE:NlpSparseEx1.exe>" "500" "-resolve" "-selfcheck")
+  add_test(NAME NlpSparse1_ReSolve_FR
+    COMMAND ${RUNCMD} "$<TARGET_FILE:NlpSparseEx1.exe>" "500" "-resolve" "-fr" "-selfcheck")
 endif()
 if(HIOP_USE_PARDISO)
   add_test(NAME NlpSparse1_4 COMMAND ${RUNCMD} "$<TARGET_FILE:NlpSparseEx1.exe>" "500" "-pardiso" "-selfcheck")
