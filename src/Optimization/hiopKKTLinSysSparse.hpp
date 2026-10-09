@@ -178,6 +178,12 @@ protected:
   int write_linsys_counter_;
   hiopCSR_IO csr_writer_;
 
+  /// Fetches current regularizations and converts Hess/Jac to proper sparse format.
+  bool update_regularizations_and_sparse_blocks();
+
+  /// Assembles Hx = Dx + delta_wx and Hd = Dd + delta_wd, allocating them on first call.
+  void update_regularized_diagonals();
+
 private:
   // placeholder for the code that decides which linear solver to used based on safe_mode_
   hiopLinSolverSymSparse* determineAndCreateLinsys(int nxd, int neq, int nineq, int nnz);

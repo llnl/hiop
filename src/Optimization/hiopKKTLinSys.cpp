@@ -344,7 +344,9 @@ bool hiopKKTLinSysCurvCheck::factorize()
     }
 
     // the update of the linear system, including IC perturbations
-    this->build_kkt_matrix(*perturb_calc_);
+    if(!this->build_kkt_matrix(*perturb_calc_)) {
+      return false;
+    }
 
     nlp_->runStats.kkt.tmUpdateInnerFact.start();
 
@@ -400,7 +402,9 @@ bool hiopKKTLinSysCurvCheck::factorize_inertia_free()
   }
 
   // the update of the linear system, including IC perturbations
-  this->build_kkt_matrix(*perturb_calc_);
+  if(!this->build_kkt_matrix(*perturb_calc_)) {
+    return false;
+  }
 
   nlp_->runStats.kkt.tmUpdateInnerFact.start();
 
@@ -433,7 +437,9 @@ bool hiopKKTLinSysCurvCheck::factorize_inertia_free()
     }
 
     // the update of the linear system, including IC perturbations
-    this->build_kkt_matrix(*perturb_calc_);
+    if(!this->build_kkt_matrix(*perturb_calc_)) {
+      return false;
+    }
 
     nlp_->runStats.kkt.tmUpdateInnerFact.start();
 

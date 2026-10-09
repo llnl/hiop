@@ -310,6 +310,21 @@ hiopLinSolverSymSparse* hiopKKTLinSysCompressedSparseXYcYd::determineAndCreateLi
       ////////////////////////////////////////////////////////////////////////////////////////////////
       assert(nullptr == linSys_);
 
+#ifdef HIOP_USE_RESOLVE
+      if(linear_solver == "resolve") {
+        auto* fact_acceptor_ic = dynamic_cast<hiopFactAcceptorIC*>(fact_acceptor_);
+        if(fact_acceptor_ic) {
+          nlp_->log->printf(hovError,
+                            "KKT_SPARSE_XYcYd linsys with ReSolve does not support inertia correction. "
+                            "Please set option 'fact_acceptor' to 'inertia_free'.\n");
+          assert(false);
+          return nullptr;
+        }
+        linsol_actual = "ReSolve";
+        linSys_ = new hiopLinSolverSymSparseReSolve(n, nnz, nlp_);
+      }
+#endif  // HIOP_USE_RESOLVE
+
       if(linear_solver == "ma57" || linear_solver == "auto") {
 #ifdef HIOP_USE_COINHSL
         linsol_actual = "MA57";
@@ -361,20 +376,21 @@ hiopLinSolverSymSparse* hiopKKTLinSysCompressedSparseXYcYd::determineAndCreateLi
       assert(nullptr == linSys_);
       assert(compute_mode != "gpu" && "KKT_SPARSE_XYcYd linsys: GPU compute mode not supported at this time.");
 
-      if((nullptr == linSys_ && linear_solver == "auto") || linear_solver == "resolve") {
-#if defined(HIOP_USE_RESOLVE)
-        linSys_ = new hiopLinSolverSymSparseReSolve(n, nnz, nlp_);
-        linsol_actual = "ReSolve";
+#ifdef HIOP_USE_RESOLVE
+      if(nullptr == linSys_ && (linear_solver == "resolve" || linear_solver == "auto")) {
         auto* fact_acceptor_ic = dynamic_cast<hiopFactAcceptorIC*>(fact_acceptor_);
         if(fact_acceptor_ic) {
           nlp_->log->printf(hovError,
-                            "KKT_SPARSE_XYcYd linsys with ReSolve does not support inertia correction. "
-                            "Please set option 'fact_acceptor' to 'inertia_free'.\n");
+                            "KKT_SPARSE_XYcYd linsys with ReSolve does not support "
+                            "inertia correction. Please set option 'fact_acceptor' "
+                            "to 'inertia_free'.\n");
           assert(false);
           return nullptr;
         }
-#endif
+        linSys_ = new hiopLinSolverSymSparseReSolve(n, nnz, nlp_);
+        linsol_actual = "ReSolve";
       }
+#endif  // HIOP_USE_RESOLVE
 
       if((nullptr == linSys_ && linear_solver == "auto") || linear_solver == "strumpack") {
 #if defined(HIOP_USE_STRUMPACK)
@@ -445,7 +461,7 @@ hiopKKTLinSysCompressedSparseXDYcYd::~hiopKKTLinSysCompressedSparseXDYcYd()
   delete Hd_;
 }
 
-bool hiopKKTLinSysCompressedSparseXDYcYd::build_kkt_matrix(const hiopPDPerturbation& pdreg)
+bool hiopKKTLinSysCompressedSparseXDYcYd::update_regularizations_and_sparse_blocks()
 {
   delta_wx_ = perturb_calc_->get_curr_delta_wx();
   delta_wd_ = perturb_calc_->get_curr_delta_wd();
@@ -456,16 +472,39 @@ bool hiopKKTLinSysCompressedSparseXDYcYd::build_kkt_matrix(const hiopPDPerturbat
   Jac_cSp_ = dynamic_cast<const hiopMatrixSparse*>(Jac_c_);
   Jac_dSp_ = dynamic_cast<const hiopMatrixSparse*>(Jac_d_);
 
-  if(!HessSp_) {
+  if(!HessSp_ || !Jac_cSp_ || !Jac_dSp_) {
     assert(false);
     return false;
   }
-  if(!Jac_cSp_) {
-    assert(false);
-    return false;
+  return true;
+}
+
+void hiopKKTLinSysCompressedSparseXDYcYd::update_regularized_diagonals()
+{
+  const size_type nx = HessSp_->n();
+  const size_type nd = Jac_dSp_->m();
+
+  // build the diagonal Hx = Dx + delta_wx
+  if(nullptr == Hx_) {
+    Hx_ = LinearAlgebraFactory::create_vector(nlp_->options->GetString("mem_space"), nx);
+    assert(Hx_);
   }
-  if(!Jac_dSp_) {
-    assert(false);
+  Hx_->startingAtCopyFromStartingAt(0, *Dx_, 0);
+  // a good time to add the IC 'delta_wx' perturbation
+  Hx_->axpy(1., *delta_wx_);
+
+  // build the diagonal Hd = Dd + delta_wd
+  if(nullptr == Hd_) {
+    Hd_ = LinearAlgebraFactory::create_vector(nlp_->options->GetString("mem_space"), nd);
+    assert(Hd_);
+  }
+  Hd_->startingAtCopyFromStartingAt(0, *Dd_, 0);
+  Hd_->axpy(1., *delta_wd_);
+}
+
+bool hiopKKTLinSysCompressedSparseXDYcYd::build_kkt_matrix(const hiopPDPerturbation& pdreg)
+{
+  if(!update_regularizations_and_sparse_blocks()) {
     return false;
   }
 
@@ -503,26 +542,12 @@ bool hiopKKTLinSysCompressedSparseXDYcYd::build_kkt_matrix(const hiopPDPerturbat
     Msys->copyDiagMatrixToSubblock(-1., nx + nd + neq, nx, dest_nnz_st, nineq);
     dest_nnz_st += nineq;
 
-    // build the diagonal Hx = Dx + delta_wx
-    if(NULL == Hx_) {
-      Hx_ = LinearAlgebraFactory::create_vector(nlp_->options->GetString("mem_space"), nx);
-      assert(Hx_);
-    }
-    Hx_->startingAtCopyFromStartingAt(0, *Dx_, 0);
-
-    // a good time to add the IC 'delta_wx' perturbation
-    Hx_->axpy(1., *delta_wx_);
+    // build the diagonals Hx = Dx + delta_wx and Hd = Dd + delta_wd
+    update_regularized_diagonals();
 
     Msys->copySubDiagonalFrom(0, nx, *Hx_, dest_nnz_st);
     dest_nnz_st += nx;
 
-    // build the diagonal Hd = Dd + delta_wd
-    if(NULL == Hd_) {
-      Hd_ = LinearAlgebraFactory::create_vector(nlp_->options->GetString("mem_space"), nd);
-      assert(Hd_);
-    }
-    Hd_->startingAtCopyFromStartingAt(0, *Dd_, 0);
-    Hd_->axpy(1., *delta_wd_);
     Msys->copySubDiagonalFrom(nx, nd, *Hd_, dest_nnz_st);
     dest_nnz_st += nd;
 
@@ -686,6 +711,22 @@ hiopLinSolverSymSparse* hiopKKTLinSysCompressedSparseXDYcYd::determineAndCreateL
       /////////////////////////////////////////////////////////////////////////////////////////////
       // CPU compute mode
       /////////////////////////////////////////////////////////////////////////////////////////////
+
+#ifdef HIOP_USE_RESOLVE
+      if(linear_solver == "resolve") {
+        auto* fact_acceptor_ic = dynamic_cast<hiopFactAcceptorIC*>(fact_acceptor_);
+        if(fact_acceptor_ic) {
+          nlp_->log->printf(hovError,
+                            "KKT_SPARSE_XDYcYd linsys with ReSolve does not support inertia correction. "
+                            "Please set option 'fact_acceptor' to 'inertia_free'.\n");
+          assert(false);
+          return nullptr;
+        }
+        actual_lin_solver = "ReSolve";
+        linSys_ = new hiopLinSolverSymSparseReSolve(n, nnz, nlp_);
+      }
+#endif  // HIOP_USE_RESOLVE
+
       if(linear_solver == "ma57" || linear_solver == "auto") {
 #ifdef HIOP_USE_COINHSL
         linSys_ = new hiopLinSolverSymSparseMA57(n, nnz, nlp_);
@@ -742,20 +783,21 @@ hiopLinSolverSymSparse* hiopKKTLinSysCompressedSparseXDYcYd::determineAndCreateL
 
       // our first choice is cuSolver on hybrid compute mode
       assert(nullptr == linSys_);
-      if(linear_solver == "resolve" || linear_solver == "auto") {
-#if defined(HIOP_USE_RESOLVE)
-        actual_lin_solver = "ReSolve";
-        linSys_ = new hiopLinSolverSymSparseReSolve(n, nnz, nlp_);
+#ifdef HIOP_USE_RESOLVE
+      if(nullptr == linSys_ && (linear_solver == "resolve" || linear_solver == "auto")) {
         auto* fact_acceptor_ic = dynamic_cast<hiopFactAcceptorIC*>(fact_acceptor_);
         if(fact_acceptor_ic) {
           nlp_->log->printf(hovError,
-                            "KKT_SPARSE_XDYcYd linsys with ReSolve does not support inertia correction. "
-                            "Please set option 'fact_acceptor' to 'inertia_free'.\n");
+                            "KKT_SPARSE_XDYcYd linsys with ReSolve does not support "
+                            "inertia correction. Please set option 'fact_acceptor' "
+                            "to 'inertia_free'.\n");
           assert(false);
           return nullptr;
         }
-#endif
-      }  // end resolve
+        actual_lin_solver = "ReSolve";
+        linSys_ = new hiopLinSolverSymSparseReSolve(n, nnz, nlp_);
+      }
+#endif  // HIOP_USE_RESOLVE
 
       if(nullptr == linSys_ && (linear_solver == "strumpack" || linear_solver == "auto")) {
 #if defined(HIOP_USE_STRUMPACK)
@@ -814,10 +856,8 @@ hiopLinSolverSymSparse* hiopKKTLinSysCompressedSparseXDYcYd::determineAndCreateL
       //       assert(false == safe_mode_);
       assert(nullptr == linSys_);
 
-      if(linear_solver == "resolve" || linear_solver == "auto") {
 #if defined(HIOP_USE_RESOLVE)
-        linSys_ = new hiopLinSolverSymSparseReSolve(n, nnz, nlp_);
-        nlp_->log->printf(hovScalars, "KKT_SPARSE_XDYcYd linsys: alloc ReSolve size %d (%d cons) (gpu)\n", n, neq + nineq);
+      if(nullptr == linSys_ && (linear_solver == "resolve" || linear_solver == "auto")) {
         auto* fact_acceptor_ic = dynamic_cast<hiopFactAcceptorIC*>(fact_acceptor_);
         if(fact_acceptor_ic) {
           nlp_->log->printf(hovError,
@@ -826,8 +866,11 @@ hiopLinSolverSymSparse* hiopKKTLinSysCompressedSparseXDYcYd::determineAndCreateL
           assert(false);
           return nullptr;
         }
+        linSys_ = new hiopLinSolverSymSparseReSolve(n, nnz, nlp_);
+        nlp_->log->printf(hovScalars, "KKT_SPARSE_XDYcYd linsys: alloc ReSolve size %d (%d cons) (gpu)\n", n, neq + nineq);
+      }
 #endif
-      }  // end resolve
+
     }  // end of compute mode gpu
   }
   assert(linSys_ && "KKT_SPARSE_XDYcYd linsys: cannot instantiate backend linear solver");

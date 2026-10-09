@@ -62,6 +62,7 @@
 #include "hiopKKTLinSysSparse.hpp"
 #include "hiopKKTLinSysSparseCondensed.hpp"
 #include "hiopKKTLinSysSparseNormalEqn.hpp"
+#include "hiopKKTLinSysSparseHyKKT.hpp"
 
 #include "hiopFRProb.hpp"
 
@@ -1922,6 +1923,11 @@ hiopKKTLinSys* hiopAlgFilterIPMNewton::decideAndCreateLinearSystem(hiopNlpFormul
       if(strKKT == "full") {
         return new hiopKKTLinSysSparseFull(nlp);
       } else if(strKKT == "xdycyd") {
+#ifdef HIOP_USE_RESOLVE
+        if(nlp->options->GetString("linear_solver_sparse") == "hykkt") {
+          return new hiopKKTLinSysCompressedSparseXDYcYdHyKKT(nlp);
+        }
+#endif
         return new hiopKKTLinSysCompressedSparseXDYcYd(nlp);
       } else if(strKKT == "condensed") {
         return new hiopKKTLinSysCondensedSparse(nlp);
@@ -3544,7 +3550,14 @@ bool hiopAlgFilterIPMBase::compute_search_direction_inertia_free(hiopKKTLinSys* 
                          max_refactorization);
         return false;
       }
-      kkt->factorize_inertia_free();
+      // build_kkt_matrix() failures (for example, a solver that cannot apply the
+      // requested regularization) are unrecoverable and must not fall through
+      // to a solve with an inconsistent linear system.
+      if(!kkt->factorize_inertia_free()) {
+        nlp->log->write("Unrecoverable error in step computation (refactorization)(inertia free)[3]. Will exit here.",
+                        hovError);
+        return false;
+      }
       num_refact++;
       nlp->runStats.kkt.nUpdateICCorr++;
     }
