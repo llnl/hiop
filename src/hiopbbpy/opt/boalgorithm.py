@@ -652,9 +652,27 @@ class BOAlgorithm(BOAlgorithmBase):
         # Run BnB optimization
         best_xopt = bnb.optimize()
         self.logger.info(f"BnB nodes explored: {bnb.num_branches}")
-        print("size of BnB queue = ", len(bnb.queue))
-        print("optimal point = ", best_xopt)
-       
+        self.logger.info(f"size of BnB queue = {len(bnb.queue)}")
+        self.logger.info(f"optimal point = {best_xopt}")
+
+        self.bo_stop_tol = 0.01
+        # BO stopping criterion based on remaining LCB improvement potential.
+        if self.bo_stop_tol > 0.0 and np.isfinite(prev_best_y):
+
+          lcb_incumbent = float(acqf.scalar_evaluate(np.asarray(best_xopt)))
+
+          scale = max(1.0, abs(prev_best_y))
+          lcb_gap = max(0.0, prev_best_y - lcb_incumbent)
+          rel_lcb_gap = lcb_gap / scale
+
+          self.logger.info(f"BO LCB stopping gap: f_best={prev_best_y:.6e}, LCB_best={lcb_incumbent:.6e}, "
+                           f"gap={lcb_gap:.6e}, relative_gap={rel_lcb_gap:.6e}")
+
+          if rel_lcb_gap <= self.bo_stop_tol:
+            self.logger.critical(f"BO stopping: remaining LCB improvement potential "
+                                 f"{rel_lcb_gap:.3e} <= {self.bo_stop_tol:.3e}")
+            break
+        
         if self.bnb_batch_method == "conditional_variance":
           selection_options = dict(self.bnb_batch_options)
           selection_options.setdefault("is_feasible", self.prob.if_feasible)
