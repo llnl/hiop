@@ -363,8 +363,11 @@ int hiopAlgFilterIPMBase::startingProcedure(hiopIterate& it_ini,
   nlp->runStats.tmStartingPoint.stop();
   nlp->runStats.tmSolverInternal.stop();
 
-  // do function evaluation again after we adjust the primals and/or add scaling
-  if(!this->evalNlp_noHess(it_ini, f, c, d, gradf, Jac_c, Jac_d)) {
+  // Do function evaluation again after we adjust the primals and/or add scaling.
+  // Even for LP/QP, we need to re-evaluate Jacobians to ensure scaling transformations
+  // are properly applied before matrices are cached by the KKT system.
+  const bool eval_ok = this->evalNlp_noHess(it_ini, f, c, d, gradf, Jac_c, Jac_d);
+  if(!eval_ok) {
     nlp->log->printf(hovError, "Failure in evaluating user provided NLP functions.");
     assert(false);
     return false;
@@ -739,6 +742,13 @@ bool hiopAlgFilterIPMBase::evalNlp_derivOnly(hiopIterate& iter,
                                              hiopMatrix& Jac_d,
                                              hiopMatrix& Hess_L)
 {
+  // All derivatives of an LP are constant (and its Lagrangian Hessian is
+  // identically zero). They are populated during startingProcedure and kept
+  // in the algorithm-owned vectors and matrices for the remainder of the run.
+  if(nlp->get_prob_type() == hiopInterfaceBase::hiopLinear) {
+    return true;
+  }
+
   bool new_x = false;  // functions were previously evaluated in the line search
   // hiopVector& it_x = *iter.get_x();
   // double* x = it_x.local_data();
@@ -1277,6 +1287,7 @@ hiopSolveStatus hiopAlgFilterIPMQuasiNewton::run()
     // 1 "sufficient decrease" when far away from solution (theta_trial>theta_min)
     // 2 close to solution but switching condition does not hold, so trial accepted based on "sufficient decrease"
     // 3 close to solution and switching condition is true; trial accepted based on Armijo
+    // 4 accepted without globalization (accept_every_trial_step=yes)
     lsStatus = 0;
     lsNum = 0;
     use_soc = 0;
@@ -1339,6 +1350,7 @@ hiopSolveStatus hiopAlgFilterIPMQuasiNewton::run()
                        theta_trial);
 
       if(disableLS) {
+        lsStatus = 4;  // accepted without globalization
         nlp->runStats.tmSolverInternal.stop();
         break;
       }
@@ -1404,7 +1416,10 @@ hiopSolveStatus hiopAlgFilterIPMQuasiNewton::run()
     // post line-search stuff
     // filter is augmented whenever the switching condition or Armijo rule do not hold for the trial point that was just
     // accepted
-    if(nlp->options->GetString("force_resto") == "yes" && !within_FR_ && iter_num_ == 1) {
+    if(lsStatus == 4) {
+      // The first fraction-to-the-boundary trial was explicitly accepted.
+      nlp->runStats.tmSolverInternal.stop();
+    } else if(nlp->options->GetString("force_resto") == "yes" && !within_FR_ && iter_num_ == 1) {
       use_fr = apply_feasibility_restoration(kkt);
       if(use_fr) {
         // continue iterations if FR is accepted
@@ -1585,6 +1600,8 @@ void hiopAlgFilterIPMQuasiNewton::outputIteration(int lsStatus, int lsNum, int u
       strcpy(stepType, "h");
     else if(lsStatus == 3)
       strcpy(stepType, "f");
+    else if(lsStatus == 4)
+      strcpy(stepType, "a");
     else
       strcpy(stepType, "?");
 
@@ -2547,6 +2564,7 @@ hiopSolveStatus hiopAlgFilterIPMNewton::run()
       // 1 "sufficient decrease" when far away from solution (theta_trial>theta_min)
       // 2 close to solution but switching condition does not hold; trial accepted based on "sufficient decrease"
       // 3 close to solution and switching condition is true; trial accepted based on Armijo
+      // 4 accepted without globalization (accept_every_trial_step=yes)
       lsStatus = 0;
       lsNum = 0;
       use_soc = 0;
@@ -2613,6 +2631,7 @@ hiopSolveStatus hiopAlgFilterIPMNewton::run()
                          theta_trial);
 
         if(disableLS) {
+          lsStatus = 4;  // accepted without globalization
           nlp->runStats.tmSolverInternal.stop();
           break;
         }
@@ -2673,7 +2692,11 @@ hiopSolveStatus hiopAlgFilterIPMNewton::run()
 
       // post line-search: filter is augmented whenever the switching condition or Armijo rule do not
       // hold for the trial point that was just accepted
-      if(nlp->options->GetString("force_resto") == "yes" && !within_FR_ && iter_num_ == 1) {
+      if(lsStatus == 4) {
+        // The first fraction-to-the-boundary trial was explicitly accepted.
+        nlp->runStats.tmSolverInternal.stop();
+        break;  // from the linear solve (compute_search_direction) loop
+      } else if(nlp->options->GetString("force_resto") == "yes" && !within_FR_ && iter_num_ == 1) {
         use_fr = apply_feasibility_restoration(kkt);
         if(use_fr) {
           // continue iterations if FR is accepted
@@ -2887,6 +2910,8 @@ void hiopAlgFilterIPMNewton::outputIteration(int lsStatus, int lsNum, int use_so
       strcpy(stepType, "h");
     else if(lsStatus == 3)
       strcpy(stepType, "f");
+    else if(lsStatus == 4)
+      strcpy(stepType, "a");
     else
       strcpy(stepType, "?");
 

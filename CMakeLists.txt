@@ -518,6 +518,29 @@ if (HIOP_WITH_MAKETEST)
   endif(HIOP_USE_MPI)
   add_test(NAME SparseMatrixTest COMMAND ${RUNCMD} "$<TARGET_FILE:testMatrixSparse>")
   add_test(NAME SymmetricSparseMatrixTest COMMAND ${RUNCMD} "$<TARGET_FILE:testMatrixSymSparse>")
+  if(HIOP_SPARSE)
+    add_test(NAME MPSInterfaceTest
+      COMMAND ${RUNCMD} "$<TARGET_FILE:testMPSInterface>" "${PROJECT_SOURCE_DIR}/tests/MPS")
+    add_test(NAME MPSSolveTest
+      COMMAND ${RUNCMD} "$<TARGET_FILE:testMPSSolve>" "${PROJECT_SOURCE_DIR}/tests/MPS/small_lp.mps")
+    add_test(NAME MPSSolveAggressiveTest
+      COMMAND ${RUNCMD} "$<TARGET_FILE:testMPSSolve>" "${PROJECT_SOURCE_DIR}/tests/MPS/small_lp.mps"
+              "--no-line-search")
+    if(HIOP_USE_RAJA AND HIOP_USE_GPU AND HIOP_USE_RESOLVE AND (HIOP_USE_CUDA OR HIOP_USE_HIP))
+      if(HIOP_USE_CUDA)
+        add_test(NAME MPSSolveGpuGluTest
+          COMMAND ${RUNCMD} "$<TARGET_FILE:testMPSSolve>" "${PROJECT_SOURCE_DIR}/tests/MPS/small_lp.mps"
+                  "--gpu" "--resolve-refactorization" "glu")
+      endif()
+      add_test(NAME MPSSolveGpuRfTest
+        COMMAND ${RUNCMD} "$<TARGET_FILE:testMPSSolve>" "${PROJECT_SOURCE_DIR}/tests/MPS/small_lp.mps"
+                "--gpu" "--resolve-refactorization" "rf")
+    else()
+      add_test(NAME MPSSolveGpuUnavailableTest
+        COMMAND ${RUNCMD} "$<TARGET_FILE:hiop-solve-mps>" "${PROJECT_SOURCE_DIR}/tests/MPS/small_lp.mps" "--gpu")
+      set_tests_properties(MPSSolveGpuUnavailableTest PROPERTIES WILL_FAIL TRUE)
+    endif()
+  endif()
 
   # Test drivers in the form of user applications
   add_subdirectory(src/Drivers)

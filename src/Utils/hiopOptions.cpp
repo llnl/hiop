@@ -668,7 +668,11 @@ void hiopOptionsNLP::register_options()
     vector<string> range(2);
     range[0] = "no";
     range[1] = "yes";
-    register_str_option("accept_every_trial_step", "no", range, "Disable line-search and take close-to-boundary step");
+    register_str_option("accept_every_trial_step",
+                        "no",
+                        range,
+                        "Disable the filter/backtracking line search and accept the first fraction-to-the-boundary "
+                        "trial step. This experimental mode has no globalization guarantee and may fail to converge.");
 
     register_num_option("min_step_size",
                         1e-16,
