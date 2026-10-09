@@ -30,7 +30,17 @@ FortranCInterface_HEADER(FortranCInterface.hpp MACRO_NAMESPACE "FC_")
 
 option(HIOP_USE_EIGEN "Build with Eigen support" ON)
 option(HIOP_USE_MPI "Build with MPI support" ON)
-option(HIOP_USE_GPU "Build with support for GPUs - CUDA or HIP libraries" OFF)
+option(HIOP_USE_CUDA "Build with support for CUDA" OFF)
+option(HIOP_USE_HIP "Build with support for HIP" OFF)
+option(HIOP_USE_GPU "Build with support for GPUs - derived from CUDA or HIP support" OFF)
+mark_as_advanced(FORCE HIOP_USE_GPU)
+
+if(HIOP_USE_CUDA OR HIOP_USE_HIP)
+  set(HIOP_USE_GPU ON CACHE BOOL "Build with support for GPUs - derived from CUDA or HIP support" FORCE)
+else()
+  set(HIOP_USE_GPU OFF CACHE BOOL "Build with support for GPUs - derived from CUDA or HIP support" FORCE)
+endif()
+
 option(HIOP_TEST_WITH_BSUB "Use `jsrun` instead of `mpirun` commands when running tests" OFF)
 option(HIOP_TEST_WITH_SLURM "Use `srun` instead of `mpirun` commands when running tests" OFF)
 option(HIOP_USE_RAJA "Build with portability abstraction library RAJA" OFF)
@@ -89,12 +99,6 @@ if(HIOP_BUILD_SHARED)
 endif()
 
 include(CMakeDependentOption)
-cmake_dependent_option(
-  HIOP_USE_CUDA "Build with support for CUDA" OFF "HIOP_USE_GPU" OFF
-)
-cmake_dependent_option(
-  HIOP_USE_HIP "Build with support for HIP" OFF "HIOP_USE_GPU" OFF
-)
 cmake_dependent_option(
   HIOP_USE_MAGMA "Use Magma linear algebra" ON "HIOP_USE_GPU" OFF
 )
@@ -317,7 +321,7 @@ if(HIOP_USE_RAJA)
   find_package(umpire CONFIG
     PATHS ${umpire_DIR} ${umpire_DIR}/share/umpire/cmake
     REQUIRED)
-  target_link_libraries(hiop_tpl INTERFACE umpire RAJA)
+  target_link_libraries(hiop_tpl INTERFACE umpire::umpire RAJA)
   message(STATUS "Found RAJA pkg-config: ${RAJA_CONFIG}")
   message(STATUS "Found umpire pkg-config: ${umpire_CONFIG}")
 endif()

@@ -24,12 +24,12 @@ Note that this script may become out of date, and is not officially supported.
 Different versions of modules may conflict with each other; in this case, one needs to inquire additional compatibility information using `module spider package_name`.
 
 HiOp with GPU support can be configured, built, and tested using with the cmake
-options `HIOP_USE_GPU` and `HIOP_USE_CUDA`. For example, you may invoke `cmake`
+option `HIOP_USE_CUDA`. This automatically enables `HIOP_USE_GPU`. For example, you may invoke `cmake`
 like so:
 
 ```
 cd build/
-cmake -DHIOP_USE_GPU=ON -DHIOP_USE_CUDA=ON ..
+cmake -DHIOP_USE_CUDA=ON ..
 make -j 16
 make test
 make install
@@ -40,7 +40,7 @@ In some cases, `cmake` picks up a different gcc compiler than the one loaded via
 Developers are usually required to perform a more comprehensive build like so:
 ```
 rm -rf *
-CC=/sw/summit/gcc/9.2.0/bin/gcc CXX=/sw/summit/gcc/9.2.0/bin/g++ cmake -DHIOP_SPARSE=ON -DHIOP_USE_GPU=ON -HIOP_TEST_WITH_BSUB=ON -DHIOP_USE_MPI=ON -DMETIS_DIR=$INSTALL_DIR/Compiler/gcc-9.2.0/metis/5.1.0/ -DHIOP_COINHSL_DIR=/ccs/home/cpetra/work/installs/coinhsl-2015.06.23/_install -DCMAKE_BUILD_TYPE=DEBUG -DHIOP_TEST_WITH_BSUB=ON -DHIOP_USE_RAJA=ON -DHIOP_USE_UMPIRE=ON -DHIOP_USE_GPU=ON -DHIOP_DEEPCHECKS=ON .. 
+CC=/sw/summit/gcc/9.2.0/bin/gcc CXX=/sw/summit/gcc/9.2.0/bin/g++ cmake -DHIOP_SPARSE=ON -DHIOP_USE_CUDA=ON -HIOP_TEST_WITH_BSUB=ON -DHIOP_USE_MPI=ON -DMETIS_DIR=$INSTALL_DIR/Compiler/gcc-9.2.0/metis/5.1.0/ -DHIOP_COINHSL_DIR=/ccs/home/cpetra/work/installs/coinhsl-2015.06.23/_install -DCMAKE_BUILD_TYPE=DEBUG -DHIOP_TEST_WITH_BSUB=ON -DHIOP_USE_RAJA=ON -DHIOP_USE_UMPIRE=ON -DHIOP_DEEPCHECKS=ON ..
 make -j
 ```
 

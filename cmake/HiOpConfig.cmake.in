@@ -24,10 +24,13 @@ if(@HIOP_USE_RAJA@ AND NOT TARGET OpenMP::OpenMP_CXX)
   find_package(OpenMP)
 endif()
 
-# Need to export RAJA and umpire as they have find_package
+# Need to export RAJA and Umpire as they have find_package
 if(@HIOP_USE_RAJA@ AND NOT TARGET RAJA)
   find_package(RAJA PATHS @RAJA_DIR@)
-  find_package(umpire PATHS @umpire_DIR@)
+endif()
+
+if(@HIOP_USE_RAJA@ AND NOT TARGET umpire::umpire)
+  find_package(umpire CONFIG REQUIRED PATHS @umpire_DIR@)
 endif()
 
 set(HiOp::SPARSE @HIOP_SPARSE@ CACHE BOOL "indicates if hiop sparse is enabled")
