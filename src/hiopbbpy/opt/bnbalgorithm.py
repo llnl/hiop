@@ -1130,7 +1130,8 @@ class GPBoundComputationCommon:
           for pair_index in order:
             i_idx, r_idx = map(int, pairs[pair_index])
 
-            # Existing endpoint construction for SE and Matern 1/2,
+            # Existing endpoint construction for SE, Matern 1/2,
+            # Matern 3/2, and Matern 5/2
             # evaluated through the positive-loss helper.
             endpoint_differences = []
 
