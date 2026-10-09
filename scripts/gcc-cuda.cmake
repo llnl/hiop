@@ -8,12 +8,9 @@ message(STATUS "Enabling both shared and static libraries")
 set(HIOP_BUILD_SHARED OFF CACHE BOOL "")
 set(HIOP_BUILD_STATIC ON CACHE BOOL "")
 
-set(ENABLE_TESTS ON CACHE BOOL "")
-
 message(STATUS "Enabling MPI, RAJA, Umpire, Kron Reduction, and CUDA")
 set(HIOP_USE_MPI ON CACHE BOOL "")
 set(HIOP_USE_RAJA ON CACHE BOOL "")
-set(HIOP_USE_UMPIRE ON CACHE BOOL "")
 set(HIOP_WITH_KRON_REDUCTION ON CACHE BOOL "")
 set(HIOP_USE_CUDA ON CACHE BOOL "")
 set(HIOP_USE_GINKGO ON CACHE BOOL "")

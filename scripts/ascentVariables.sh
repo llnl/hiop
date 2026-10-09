@@ -84,4 +84,4 @@ EXTRA_CMAKE_ARGS="$EXTRA_CMAKE_ARGS -DMPI_C_COMPILER:STRING=/sw/ascent/spack-env
 EXTRA_CMAKE_ARGS="$EXTRA_CMAKE_ARGS -DMPI_CXX_COMPILER:STRING=/sw/ascent/spack-envs/base/opt/linux-rhel8-ppc64le/gcc-9.1.0/spectrum-mpi-10.4.0.3-20210112-6jbupg3thjwhsabgevk6xmwhd2bbyxdc/bin/mpicxx"
 EXTRA_CMAKE_ARGS="$EXTRA_CMAKE_ARGS -DMPI_Fortran_COMPILER:STRING=/sw/ascent/spack-envs/base/opt/linux-rhel8-ppc64le/gcc-9.1.0/spectrum-mpi-10.4.0.3-20210112-6jbupg3thjwhsabgevk6xmwhd2bbyxdc/bin/mpif90"
 EXTRA_CMAKE_ARGS="$EXTRA_CMAKE_ARGS -DHIOP_UMFPACK_DIR:STRING=/gpfs/wolf/csc359/proj-shared/src/spack/opt/spack/linux-rhel8-power9le/gcc-9.1.0/suite-sparse-5.10.1-ju7jhchvapbwgdkkrohatsyjfm23ybuf"
-EXTRA_CMAKE_ARGS="$EXTRA_CMAKE_ARGS -DHIOP_COINHSL_DIR:STRING=/gpfs/wolf/csc359/proj-shared/src/spack/opt/spack/linux-rhel8-power9le/gcc-9.1.0/coinhsl-2015.06.23-qe3m7kwkfwxmm4wxabwatvurt6wvhhmt"
+EXTRA_CMAKE_ARGS="$EXTRA_CMAKE_ARGS -DCOINHSL_DIR:PATH=/gpfs/wolf/csc359/proj-shared/src/spack/opt/spack/linux-rhel8-power9le/gcc-9.1.0/coinhsl-2015.06.23-qe3m7kwkfwxmm4wxabwatvurt6wvhhmt"

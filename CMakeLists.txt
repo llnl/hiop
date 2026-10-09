@@ -327,15 +327,15 @@ if(HIOP_USE_RAJA)
 endif()
 
 if(HIOP_USE_AXOM)
-  if(HIOP_USE_MPI)
-    find_package(AXOM CONFIG
-      PATHS ${AXOM_DIR} ${AXOM_DIR}/lib/cmake/
-      REQUIRED)
-    target_link_libraries(hiop_tpl INTERFACE axom)
-    message(STATUS "Found AXOM pkg-config: ${AXOM_CONFIG}")
-  elseif(HIOP_USE_MPI)
+  if(NOT HIOP_USE_MPI)
     message(FATAL_ERROR "Error: HIOP_USE_MPI is required when HIOP_USE_AXOM is ON")
   endif()
+
+  find_package(AXOM CONFIG
+    PATHS ${AXOM_DIR} ${AXOM_DIR}/lib/cmake/
+    REQUIRED)
+  target_link_libraries(hiop_tpl INTERFACE axom)
+  message(STATUS "Found AXOM pkg-config: ${AXOM_CONFIG}")
 endif()
   
 
@@ -345,7 +345,6 @@ if(HIOP_WITH_KRON_REDUCTION)
   target_link_libraries(hiop_tpl INTERFACE UMFPACK)
 
   # metis needed (5.x needed by umfpack)
-  set(HIOP_METIS_DIR CACHE PATH "Path to METIS directory")
   include(FindHiopMETIS)
   target_link_libraries(hiop_tpl INTERFACE METIS)
 endif(HIOP_WITH_KRON_REDUCTION)
@@ -356,7 +355,6 @@ if(HIOP_SPARSE)
   endif(NOT TARGET METIS)
 
   if(HIOP_USE_COINHSL)
-    set(HIOP_COINHSL_DIR CACHE PATH "Path to COINHSL directory")
     include(FindHiopCOINHSL)
     if(COINHSL_LIBRARY AND METIS_LIBRARY)
       target_link_libraries(hiop_tpl INTERFACE METIS)

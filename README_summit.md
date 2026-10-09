@@ -40,7 +40,7 @@ In some cases, `cmake` picks up a different gcc compiler than the one loaded via
 Developers are usually required to perform a more comprehensive build like so:
 ```
 rm -rf *
-CC=/sw/summit/gcc/9.2.0/bin/gcc CXX=/sw/summit/gcc/9.2.0/bin/g++ cmake -DHIOP_SPARSE=ON -DHIOP_USE_CUDA=ON -HIOP_TEST_WITH_BSUB=ON -DHIOP_USE_MPI=ON -DMETIS_DIR=$INSTALL_DIR/Compiler/gcc-9.2.0/metis/5.1.0/ -DHIOP_COINHSL_DIR=/ccs/home/cpetra/work/installs/coinhsl-2015.06.23/_install -DCMAKE_BUILD_TYPE=DEBUG -DHIOP_TEST_WITH_BSUB=ON -DHIOP_USE_RAJA=ON -DHIOP_USE_UMPIRE=ON -DHIOP_DEEPCHECKS=ON ..
+CC=/sw/summit/gcc/9.2.0/bin/gcc CXX=/sw/summit/gcc/9.2.0/bin/g++ cmake -DHIOP_SPARSE=ON -DHIOP_USE_CUDA=ON -DHIOP_TEST_WITH_BSUB=ON -DHIOP_USE_MPI=ON -DMETIS_DIR=$INSTALL_DIR/Compiler/gcc-9.2.0/metis/5.1.0/ -DCOINHSL_DIR=/ccs/home/cpetra/work/installs/coinhsl-2015.06.23/_install -DCMAKE_BUILD_TYPE=DEBUG -DHIOP_USE_RAJA=ON -DHIOP_DEEPCHECKS=ON ..
 make -j
 ```
 
