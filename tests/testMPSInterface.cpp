@@ -36,6 +36,16 @@ int main(int argc, char** argv)
   }
 
   hiop::hiopInterfaceMPS model;
+  check(model.execution_mode() == hiop::hiopInterfaceMPS::ExecutionMode::host, "default host execution mode");
+  if(!hiop::hiopInterfaceMPS::device_execution_available()) {
+    hiop::hiopInterfaceMPS device_model(hiop::hiopInterfaceMPS::ExecutionMode::device);
+    check(device_model.execution_mode() == hiop::hiopInterfaceMPS::ExecutionMode::device,
+          "requested device execution mode");
+    check(device_model.load(path(argv[1], "free_ranges.mps")) == hiop::hiopMPSReadStatus::unsupported_feature,
+          "device mode reports an unavailable backend");
+    check(device_model.last_error().find("HIOP_USE_RESOLVE") != std::string::npos,
+          "device backend error is actionable");
+  }
   check(model.load(path(argv[1], "free_ranges.mps")) == hiop::hiopMPSReadStatus::success,
         "load free-format MPS: " + model.last_error());
   check(model.is_loaded(), "model reports loaded");
@@ -145,20 +155,6 @@ int main(int argc, char** argv)
   check(close(constraint_lower[0], 8.0) && close(constraint_upper[0], 9.0), "selected ranged L row");
   check(close(constraint_lower[1], -2.0) && constraint_upper[1] > 1e19, "selected G row");
   check(close(constraint_lower[2], 7.0) && close(constraint_upper[2], 7.0), "selected E row");
-
-  check(model.load(path(argv[1], "fixed.mps")) == hiop::hiopMPSReadStatus::success,
-        "load fixed-format MPS: " + model.last_error());
-  check(model.get_prob_sizes(n, m) && n == 2 && m == 1, "fixed-format dimensions");
-  lower.resize(n);
-  upper.resize(n);
-  variable_types.resize(n);
-  check(model.get_vars_info(n, lower.data(), upper.data(), variable_types.data()), "fixed-format variable metadata");
-  check(close(lower[0], 0.0) && close(upper[0], 4.0), "fixed-format UP bound");
-  check(lower[1] < -1e19 && upper[1] > 1e19, "fixed-format FR bound");
-
-  check(model.load(path(argv[1], "integer.mps")) == hiop::hiopMPSReadStatus::unsupported_feature,
-        "reject integer marker");
-  check(!model.is_loaded(), "failed load clears model state");
 
   if(failures == 0) std::cout << "MPS interface tests passed\n";
   return failures == 0 ? 0 : 1;

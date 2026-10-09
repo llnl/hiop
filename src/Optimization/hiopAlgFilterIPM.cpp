@@ -364,12 +364,9 @@ int hiopAlgFilterIPMBase::startingProcedure(hiopIterate& it_ini,
   nlp->runStats.tmSolverInternal.stop();
 
   // Do function evaluation again after we adjust the primals and/or add scaling.
-  // For an LP, the gradient and Jacobian evaluated above are constant and have
-  // already been transformed by apply_scaling(), so only function values need
-  // to be refreshed at the adjusted point.
-  const bool is_linear = nlp->get_prob_type() == hiopInterfaceBase::hiopLinear;
-  const bool eval_ok = is_linear ? this->evalNlp_funcOnly(it_ini, f, c, d)
-                                 : this->evalNlp_noHess(it_ini, f, c, d, gradf, Jac_c, Jac_d);
+  // Even for LP/QP, we need to re-evaluate Jacobians to ensure scaling transformations
+  // are properly applied before matrices are cached by the KKT system.
+  const bool eval_ok = this->evalNlp_noHess(it_ini, f, c, d, gradf, Jac_c, Jac_d);
   if(!eval_ok) {
     nlp->log->printf(hovError, "Failure in evaluating user provided NLP functions.");
     assert(false);

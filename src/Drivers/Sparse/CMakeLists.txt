@@ -17,6 +17,11 @@ target_link_libraries(NlpSparseEx3.exe HiOp::HiOp)
 add_executable(NlpSparseEx4.exe NlpSparseEx4.cpp NlpSparseEx4Driver.cpp)
 target_link_libraries(NlpSparseEx4.exe HiOp::HiOp)
 
+# MPS linear program solver
+add_executable(hiop-solve-mps hiopSolveMPS.cpp)
+target_link_libraries(hiop-solve-mps HiOp::HiOp)
+install(TARGETS hiop-solve-mps DESTINATION bin)
+
 if(HIOP_USE_RAJA)
   if(HIOP_USE_GPU AND HIOP_USE_RESOLVE)
     if(HIOP_USE_CUDA)
