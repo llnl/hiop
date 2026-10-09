@@ -77,6 +77,8 @@ public:
    * exit is contains the solution(s).  */
   bool solve(hiopVector& x_);
 
+  virtual bool is_device_solver() const { return nlp_->options->GetString("ginkgo_exec") != "reference"; }
+
 private:
   int m_;    // number of rows of the whole matrix
   int n_;    // number of cols of the whole matrix

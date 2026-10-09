@@ -128,6 +128,11 @@ public:
    */
   virtual bool solve(hiopVector& x);
 
+  virtual bool is_device_solver() const
+  {
+    return solve_on_device_;
+  }
+
   /** Multiple right-hand sides are not supported yet. */
   virtual bool solve(hiopMatrix& /* x */)
   {

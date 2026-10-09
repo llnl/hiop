@@ -245,6 +245,12 @@ $(\mu-\mu_{target}) / (\mu_{init}-\mu_{target}) * ({bound\_relax\_perturb\_initi
 \noindent \textbf{linear\_solver\_sparse}: string option specifying the sparse linear solver used to solve the sparse KKT system. Possible values are ``auto'', ``ma57'', ``pardiso'', ``resolve'', ``strumpack'' or ``ginkgo''. Default value: is ``auto''.
 \medskip
 
+\noindent \textbf{gpu\_linsol\_fallback}: CPU solver used to retry the current sparse KKT system when its GPU linear solver fails. Possible values are ``ma57'' (default) and ``none''. The configured GPU solver is used again for the next KKT system.
+\medskip
+
+\noindent \textbf{gpu\_linsol\_fallback\_threshold}: number of consecutive outer iterative-refinement failures before the current KKT system is retried with the GPU linear-solver fallback. Integer values in $[1,100]$. Default value: $8$. Hard GPU factorization and solve failures trigger the fallback immediately.
+\medskip
+
 \warningcp{When KKTLinsys is `full' (unsymmetric)}: only resolve, strumpack, and pardiso are available (and will be selected in this order under `auto' or incompatible/unsupported value for `linear\_solver\_sparse').
 
 \warningcp{For KKTLinsys `xycyd' and `xdycyd'  (symmetric indefinite)}: 
