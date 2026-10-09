@@ -2790,6 +2790,8 @@ class BnBAlgorithm(GPBoundComputationCommon, BnBAlgorithmBase):
 
       distance, _ = cKDTree((old - lo) / width).query(Xunit, p=np.inf)
       keep &= distance > duplicate_tol
+      # The BnB incumbent is the LCB BO decision and must always remain in the batch.
+      keep[0] = True
       
     # Prefer incumbent; otherwise start with the best eligible LCB.
     order = np.flatnonzero(keep)

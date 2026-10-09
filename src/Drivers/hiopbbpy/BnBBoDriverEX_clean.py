@@ -381,7 +381,7 @@ if __name__ == "__main__":
   gp_model = smtKRG(theta, problem.xlimits, nx, corr=corr, pow_exp_power=pow_exp_power, eval_noise=eval_noise, fix_theta=fix_theta, theta_bounds=theta_bounds, hyper_opt=hyper_opt, nugget=nugget)
   gp_model.train(x_train, y_train)
 
-  beta = 3
+  beta = 1
   if acquisition_type == 'LCB':
     acqf = LCBacquisition(gp_model, beta=beta)
   else:
@@ -434,12 +434,12 @@ if __name__ == "__main__":
     options['opt_solver'] = 'BnB'
     options['solver_options'] = bnb_solver_options 
     options['bnb_batch_method'] = "conditional_variance" #CV
-    options['bnb_batch_options'] = { "delta": 0.1, # absolute; None uses the final absolute BnB gap 
+    options['bnb_batch_options'] = { "delta": 0.25, # absolute; None uses the final absolute BnB gap 
                                      "noise_variance": 0.0,
-                                     "duplicate_tol": 1.e-2, #duplicates and training points exclusion radius
-                                     "variance_rtol": 1.e-2,#min variance for selecting batch candidates with CV 
-                                     "exclude_training": True,
-                                     "require_full": False} # error out if batch_size cannot be honored #fixme remove this
+                                     "duplicate_tol": 1.e-5, #duplicates and training points exclusion radius
+                                     "variance_rtol": 1.e-2, #min variance for selecting batch candidates with CV 
+                                     "exclude_training": False,
+                                     "require_full": False}  # error out if batch_size cannot be honored #fixme remove this
     
   options['executor'] = executor
   options['obj_evaluator'] = MPIEvaluator(function_mode=True, executor=executor, task_name="BO_OBJ", profiling=False)
