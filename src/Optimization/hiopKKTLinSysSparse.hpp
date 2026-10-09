@@ -141,6 +141,8 @@ public:
 
   virtual bool build_kkt_matrix(const hiopPDPerturbation& pdreg);
 
+  virtual int factorizeWithCurvCheck();
+
   virtual bool solveCompressed(hiopVector& rx,
                                hiopVector& rd,
                                hiopVector& ryc,
@@ -151,6 +153,12 @@ public:
                                hiopVector& dyd);
 
 protected:
+  virtual bool transient_linsol_fallback_active() const { return fallback_active_; }
+  virtual bool retry_factorization_with_transient_linsol_fallback();
+  virtual bool should_retry_with_transient_linsol_fallback(bool outer_ir_failed);
+  virtual bool retry_with_transient_linsol_fallback(const hiopResidual* resid, hiopIterate* direction);
+  virtual void note_successful_outer_ir();
+
   hiopVector* rhs_;  //[rx_tilde, rd_tilde, ryc, ryd]
 
   //
@@ -187,6 +195,19 @@ protected:
 private:
   // placeholder for the code that decides which linear solver to used based on safe_mode_
   hiopLinSolverSymSparse* determineAndCreateLinsys(int nxd, int neq, int nineq, int nnz);
+
+  bool gpu_fallback_enabled();
+  bool prepare_transient_fallback();
+  bool solve_with_transient_fallback();
+
+  hiopMatrixSparse* fallback_matrix_;
+  hiopVector* fallback_rhs_;
+  hiopLinSolverSymSparse* fallback_linsys_;
+  hiopFactAcceptor* fallback_fact_acceptor_;
+  bool fallback_active_;
+  bool primary_linsol_failed_;
+  bool fallback_unavailable_warned_;
+  int consecutive_gpu_ir_failures_;
 };
 
 /*

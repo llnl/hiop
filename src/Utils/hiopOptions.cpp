@@ -828,6 +828,20 @@ void hiopOptionsNLP::register_options()
                         100,
                         "Max number of outer iterative refinement iterations (default 8). "
                         "Setting it to 0 deactivates the outer iterative refinement");
+
+    vector<string> fallback_range{"ma57", "none"};
+    register_str_option("gpu_linsol_fallback",
+                        "ma57",
+                        fallback_range,
+                        "CPU linear solver used to retry only the current KKT system after a GPU linear-solver "
+                        "failure. The next KKT system uses the configured GPU solver again.");
+
+    register_int_option("gpu_linsol_fallback_threshold",
+                        8,
+                        1,
+                        100,
+                        "Number of consecutive failed outer iterative-refinement solves before retrying the current "
+                        "KKT system with the configured GPU linear-solver fallback (default 8).");
   }
 
   // relax bounds
