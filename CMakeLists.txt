@@ -1,9 +1,35 @@
 cmake_minimum_required (VERSION 3.18)
 
+# Compiler selection happens in project(), before ccmake can be used to enable
+# HIP interactively. When a ROCm environment is loaded, select its compilers
+# up front so the workflow `cmake ..` followed by `ccmake .` can enable HIP.
+# Explicit CMake or CC/CXX compiler selections always take precedence.
+if(NOT DEFINED CMAKE_C_COMPILER
+    AND NOT DEFINED CMAKE_CXX_COMPILER
+    AND "$ENV{CC}" STREQUAL ""
+    AND "$ENV{CXX}" STREQUAL "")
+  if(DEFINED ROCM_PATH AND NOT "${ROCM_PATH}" STREQUAL "")
+    set(_hiop_rocm_path "${ROCM_PATH}")
+  elseif(DEFINED ENV{ROCM_PATH} AND NOT "$ENV{ROCM_PATH}" STREQUAL "")
+    set(_hiop_rocm_path "$ENV{ROCM_PATH}")
+  endif()
+
+  if(DEFINED _hiop_rocm_path
+      AND EXISTS "${_hiop_rocm_path}/bin/amdclang"
+      AND EXISTS "${_hiop_rocm_path}/bin/amdclang++")
+    set(ROCM_PATH "${_hiop_rocm_path}" CACHE PATH "ROCm installation prefix")
+    set(CMAKE_C_COMPILER "${_hiop_rocm_path}/bin/amdclang" CACHE FILEPATH "C compiler")
+    set(CMAKE_CXX_COMPILER "${_hiop_rocm_path}/bin/amdclang++" CACHE FILEPATH "C++ compiler")
+  endif()
+
+  unset(_hiop_rocm_path)
+endif()
+
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 if(NOT DEFINED CMAKE_CXX_STANDARD)
-  set(CMAKE_CXX_STANDARD 17)
+  # Current RAJA and Umpire releases require C++20.
+  set(CMAKE_CXX_STANDARD 20)
 endif()
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -29,7 +55,24 @@ FortranCInterface_HEADER(FortranCInterface.hpp MACRO_NAMESPACE "FC_")
 
 option(HIOP_USE_EIGEN "Build with Eigen support" ON)
 option(HIOP_USE_MPI "Build with MPI support" ON)
-option(HIOP_USE_GPU "Build with support for GPUs - CUDA or HIP libraries" OFF)
+option(HIOP_USE_CUDA "Build with support for CUDA" OFF)
+option(HIOP_USE_HIP "Build with support for HIP" OFF)
+option(HIOP_USE_GPU "Build with support for GPUs - derived from CUDA or HIP support" OFF)
+mark_as_advanced(FORCE HIOP_USE_GPU)
+
+if(HIOP_USE_CUDA OR HIOP_USE_HIP)
+  set(HIOP_USE_GPU ON CACHE BOOL "Build with support for GPUs - derived from CUDA or HIP support" FORCE)
+else()
+  set(HIOP_USE_GPU OFF CACHE BOOL "Build with support for GPUs - derived from CUDA or HIP support" FORCE)
+endif()
+
+if(HIOP_USE_HIP AND NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  message(FATAL_ERROR
+    "HIOP_USE_HIP requires ROCm Clang as the C++ compiler, but CMake selected "
+    "${CMAKE_CXX_COMPILER_ID} (${CMAKE_CXX_COMPILER}). Configure a fresh build "
+    "directory with -C scripts/clang-hip.cmake or select amdclang++ explicitly.")
+endif()
+
 option(HIOP_TEST_WITH_BSUB "Use `jsrun` instead of `mpirun` commands when running tests" OFF)
 option(HIOP_TEST_WITH_SLURM "Use `srun` instead of `mpirun` commands when running tests" OFF)
 option(HIOP_USE_RAJA "Build with portability abstraction library RAJA" OFF)
@@ -89,13 +132,7 @@ endif()
 
 include(CMakeDependentOption)
 cmake_dependent_option(
-  HIOP_USE_CUDA "Build with support for CUDA" OFF "HIOP_USE_GPU" OFF
-)
-cmake_dependent_option(
-  HIOP_USE_HIP "Build with support for HIP" OFF "HIOP_USE_GPU" OFF
-)
-cmake_dependent_option(
-  HIOP_USE_MAGMA "Use Magma linear algebra" ON "HIOP_USE_GPU" OFF
+  HIOP_USE_MAGMA "Use Magma linear algebra" OFF "HIOP_USE_GPU" OFF
 )
 
 add_library(hiop_tpl INTERFACE)
@@ -112,18 +149,42 @@ endif()
 if(HIOP_USE_MPI)
   find_package(MPI REQUIRED COMPONENTS C CXX Fortran)
 
-  #find_package(MPI REQUIRED)
-  if(NOT DEFINED MPI_CXX_COMPILER)
-    set(CMAKE_CXX_COMPILER ${MPI_CXX_COMPILER})
-    set(CMAKE_C_COMPILER ${MPI_C_COMPILER})
-  endif(NOT DEFINED MPI_CXX_COMPILER)
-  include_directories(${MPI_CXX_ADDITIONAL_INCLUDE_DIRS} ${MPI_CXX_COMPILER_INCLUDE_DIRS} )
-  
-  set(CMAKE_Fortran_COMPILER ${MPI_Fortran_COMPILER})
-  include_directories(${MPI_Fortran_ADDITIONAL_INCLUDE_DIRS} ${MPI_Fortran_COMPILER_INCLUDE_DIRS} )
+  target_link_libraries(hiop_tpl INTERFACE MPI::MPI_CXX)
+
+  # On Cray systems FindMPI may discover MPI through compiler wrappers and
+  # record their include directories as implicit. ROCm Clang, selected for HIP
+  # compilation, does not inherit the wrapper's implicit paths.
+  # Pass the FindMPI results as compile options so CMake cannot filter them out.
+  if(HIOP_USE_HIP)
+    set(_hiop_mpi_c_include_dirs
+      ${MPI_C_INCLUDE_DIRS}
+      ${MPI_C_COMPILER_INCLUDE_DIRS}
+      ${MPI_C_ADDITIONAL_INCLUDE_DIRS}
+    )
+    list(REMOVE_DUPLICATES _hiop_mpi_c_include_dirs)
+    foreach(_mpi_include_dir IN LISTS _hiop_mpi_c_include_dirs)
+      target_compile_options(hiop_tpl INTERFACE
+        "$<BUILD_INTERFACE:$<$<COMPILE_LANGUAGE:C>:-I${_mpi_include_dir}>>"
+      )
+    endforeach()
+
+    set(_hiop_mpi_cxx_include_dirs
+      ${MPI_CXX_INCLUDE_DIRS}
+      ${MPI_CXX_COMPILER_INCLUDE_DIRS}
+      ${MPI_CXX_ADDITIONAL_INCLUDE_DIRS}
+    )
+    list(REMOVE_DUPLICATES _hiop_mpi_cxx_include_dirs)
+    foreach(_mpi_include_dir IN LISTS _hiop_mpi_cxx_include_dirs)
+      target_compile_options(hiop_tpl INTERFACE
+        "$<BUILD_INTERFACE:$<$<COMPILE_LANGUAGE:CXX,HIP>:-I${_mpi_include_dir}>>"
+      )
+    endforeach()
+
+    unset(_hiop_mpi_c_include_dirs)
+    unset(_hiop_mpi_cxx_include_dirs)
+  endif()
+
   set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -D HIOP_USE_MPI")
-  
-  target_link_libraries(hiop_tpl INTERFACE MPI::MPI_CXX MPI::MPI_CXX)
   set(HIOP_EXTRA_MPI_FLAGS "" CACHE STRING "Extra arguments to mpiexec when running tests")
 endif(HIOP_USE_MPI)
 
@@ -131,7 +192,7 @@ list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
 
 target_compile_features(hiop_options
   INTERFACE
-  cxx_std_17
+  cxx_std_20
   cxx_alignas
   cxx_alignof
   cxx_attributes
@@ -258,6 +319,11 @@ if(HIOP_USE_GPU)
     if(HIOP_USE_MAGMA)
       set(HIOP_MAGMA_DIR CACHE PATH "Path to Magma directory")
       include(FindHiopMagma)
+      if(NOT TARGET Magma)
+        message(FATAL_ERROR
+          "HIOP_USE_MAGMA is ON, but MAGMA was not found. Set MAGMA_DIR to "
+          "the MAGMA installation prefix or configure with HIOP_USE_MAGMA=OFF.")
+      endif()
     endif()
 
     include(FindHiopCudaLibraries)
@@ -291,21 +357,21 @@ if(HIOP_USE_RAJA)
   find_package(umpire CONFIG
     PATHS ${umpire_DIR} ${umpire_DIR}/share/umpire/cmake
     REQUIRED)
-  target_link_libraries(hiop_tpl INTERFACE umpire RAJA)
+  target_link_libraries(hiop_tpl INTERFACE umpire::umpire RAJA)
   message(STATUS "Found RAJA pkg-config: ${RAJA_CONFIG}")
   message(STATUS "Found umpire pkg-config: ${umpire_CONFIG}")
 endif()
 
 if(HIOP_USE_AXOM)
-  if(HIOP_USE_MPI)
-    find_package(AXOM CONFIG
-      PATHS ${AXOM_DIR} ${AXOM_DIR}/lib/cmake/
-      REQUIRED)
-    target_link_libraries(hiop_tpl INTERFACE axom)
-    message(STATUS "Found AXOM pkg-config: ${AXOM_CONFIG}")
-  elseif(HIOP_USE_MPI)
+  if(NOT HIOP_USE_MPI)
     message(FATAL_ERROR "Error: HIOP_USE_MPI is required when HIOP_USE_AXOM is ON")
   endif()
+
+  find_package(AXOM CONFIG
+    PATHS ${AXOM_DIR} ${AXOM_DIR}/lib/cmake/
+    REQUIRED)
+  target_link_libraries(hiop_tpl INTERFACE axom)
+  message(STATUS "Found AXOM pkg-config: ${AXOM_CONFIG}")
 endif()
   
 
@@ -315,7 +381,6 @@ if(HIOP_WITH_KRON_REDUCTION)
   target_link_libraries(hiop_tpl INTERFACE UMFPACK)
 
   # metis needed (5.x needed by umfpack)
-  set(HIOP_METIS_DIR CACHE PATH "Path to METIS directory")
   include(FindHiopMETIS)
   target_link_libraries(hiop_tpl INTERFACE METIS)
 endif(HIOP_WITH_KRON_REDUCTION)
@@ -326,7 +391,6 @@ if(HIOP_SPARSE)
   endif(NOT TARGET METIS)
 
   if(HIOP_USE_COINHSL)
-    set(HIOP_COINHSL_DIR CACHE PATH "Path to COINHSL directory")
     include(FindHiopCOINHSL)
     if(COINHSL_LIBRARY AND METIS_LIBRARY)
       target_link_libraries(hiop_tpl INTERFACE METIS)

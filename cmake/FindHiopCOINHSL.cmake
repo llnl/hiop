@@ -5,15 +5,17 @@ Exports target `COINHSL`
 
 Users may set the following variables:
 
-- HIOP_COINHSL_DIR
+- COINHSL_DIR: CoinHSL installation prefix
 
 ]]
+
+set(COINHSL_DIR "" CACHE PATH "CoinHSL installation prefix")
 
 find_library(COINHSL_LIBRARY
   NAMES
   coinhsl
   PATHS
-  ${COINHSL_DIR} $ENV{COINHSL_DIR} ${HIOP_COINHSL_DIR}
+  ${COINHSL_DIR} $ENV{COINHSL_DIR}
   ENV LD_LIBRARY_PATH ENV DYLD_LIBRARY_PATH
   PATH_SUFFIXES
   lib64 lib)
@@ -26,7 +28,7 @@ find_path(COINHSL_INCLUDE_DIR
   NAMES
   CoinHslConfig.h
   PATHS
-  ${COINHSL_DIR} $ENV{COINHSL_DIR} ${HIOP_COINHSL_DIR} ${COINHSL_LIBRARY_DIR}/..
+  ${COINHSL_DIR} $ENV{COINHSL_DIR} ${COINHSL_LIBRARY_DIR}/..
   PATH_SUFFIXES
   include/coin/ThirdParty
   include/coinor

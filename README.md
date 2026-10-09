@@ -76,7 +76,7 @@ $> cmake -DCMAKE_INSTALL_PREFIX=/usr/lib/hiop ..'
 
 ### Selected HiOp-specific build options
 * Enable/disable MPI: *-DHIOP_USE_MPI=[ON/OFF]* (by default ON)
-* GPU support: *-DHIOP_USE_GPU=ON*. MPI can be either off or on. For more build system options related to GPUs, see "Dependencies" section below.
+* GPU support: *-DHIOP_USE_CUDA=ON* for NVIDIA GPUs or *-DHIOP_USE_HIP=ON* for AMD GPUs. `HIOP_USE_GPU` is enabled automatically. MPI can be either off or on. For more build system options related to GPUs, see "Dependencies" section below.
 * Enable/disable "developer mode" build that enforces more restrictive compiler rules and guidelines: *-DHIOP_DEVELOPER_MODE=ON*. This option is by default off.
 * Additional checks and self-diagnostics inside HiOp meant to detect abnormalities and help to detect bugs and/or troubleshoot problematic instances: *-DHIOP_DEEPCHECKS=[ON/OFF]* (by default ON). Disabling HIOP_DEEPCHECKS usually provides 30-40% execution speedup in HiOp. For full strength, it is recommended to use HIOP_DEEPCHECKS with debug builds. With non-debug builds, in particular the ones that disable the assert macro, HIOP_DEEPCHECKS does not perform all checks and, thus, may overlook potential issues.
 
@@ -97,9 +97,11 @@ $> make install
 
 A complete list of dependencies is maintained [here](https://github.com/spack/spack/blob/develop/var/spack/repos/builtin/packages/hiop/package.py).
 
+HiOp requires C++20 because the latest supported RAJA and Umpire releases require C++20.
+
 For a minimal build, HiOp requires LAPACK and BLAS. These dependencies are automatically detected by the build system. MPI is optional and by default enabled. To disable use cmake option '-DHIOP_USE_MPI=OFF'.
 
-Please note that HiOp has support for GPU computations, for both NVIDIA and AMD hardware, via RAJA and Umpire performance portability libraries.   To quickly enable the use of GPUs, use cmake with '-DHIOP_USE_GPU=ON'.
+Please note that HiOp supports GPU computations on NVIDIA and AMD hardware through the RAJA and Umpire performance portability libraries. Enable the desired backend with `-DHIOP_USE_CUDA=ON` or `-DHIOP_USE_HIP=ON`; CMake enables the internal `HIOP_USE_GPU` option automatically.
 
 ## Install with Spack
 

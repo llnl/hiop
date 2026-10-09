@@ -5,15 +5,17 @@ Exports target `METIS`
 
 Users may set the following variables:
 
-- HIOP_METIS_DIR
+- METIS_DIR: METIS installation prefix
 
 ]]
+
+set(METIS_DIR "" CACHE PATH "METIS installation prefix")
 
 find_library(METIS_LIBRARY
   NAMES
   metis
   PATHS
-  ${METIS_DIR} $ENV{METIS_DIR} ${HIOP_METIS_DIR}
+  ${METIS_DIR} $ENV{METIS_DIR}
   ENV LD_LIBRARY_PATH ENV DYLD_LIBRARY_PATH
   PATH_SUFFIXES
   lib64 lib)
@@ -26,7 +28,7 @@ find_path(METIS_INCLUDE_DIR
   NAMES
   metis.h
   PATHS
-  ${METIS_DIR} $ENV{METIS_DIR} ${HIOP_METIS_DIR} ${METIS_LIBRARY_DIR}/..
+  ${METIS_DIR} $ENV{METIS_DIR} ${METIS_LIBRARY_DIR}/..
   PATH_SUFFIXES
   include)
 

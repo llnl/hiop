@@ -35,9 +35,16 @@ find_package(rocprim REQUIRED)
 target_link_libraries(Hipblas INTERFACE ${HIPBLAS_LIBRARY})
 target_include_directories(Hipblas INTERFACE ${HIPBLAS_INCLUDE_DIR})
 
-# for now we rely on MAGMA for GPUs computations
-include(FindHiopMagma)
-target_link_libraries(Magma    INTERFACE Hipblas)
+# MAGMA is optional. Only discover and link it when explicitly enabled.
+if(HIOP_USE_MAGMA)
+  include(FindHiopMagma)
+  if(NOT TARGET Magma)
+    message(FATAL_ERROR
+      "HIOP_USE_MAGMA is ON, but MAGMA was not found. Set MAGMA_DIR to "
+      "the MAGMA installation prefix or configure with HIOP_USE_MAGMA=OFF.")
+  endif()
+  target_link_libraries(Magma INTERFACE Hipblas)
+endif()
 
 target_include_directories(hiop_hip INTERFACE ${ROCM_PATH}/include/hipfft)
 target_link_libraries(hiop_hip INTERFACE
@@ -45,8 +52,11 @@ target_link_libraries(hiop_hip INTERFACE
   hip::hipfft
   roc::hipblas roc::rocblas
   hip::hipcub roc::rocprim_hip
-  Magma
   )
+
+if(HIOP_USE_MAGMA)
+  target_link_libraries(hiop_hip INTERFACE Magma)
+endif()
 
 message(STATUS "HiOp support for GPUs is on")
 get_target_property(hip_includes hiop_hip INTERFACE_INCLUDE_DIRECTORIES)
@@ -55,4 +65,3 @@ get_target_property(hip_libraries hiop_hip INTERFACE_LINK_LIBRARIES)
 message(STATUS "HIP linked libraries: ${hip_libraries}")
 
 install(TARGETS Hipblas hiop_hip EXPORT hiop-targets)
-

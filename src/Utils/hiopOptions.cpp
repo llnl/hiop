@@ -1001,8 +1001,12 @@ void hiopOptionsNLP::register_options()
 
   // ReSolve refactorization options
   {
-    vector<std::string> range = {"klu","glu", "rf"};
+    vector<std::string> range = {"klu", "glu", "rf"};
     auto default_value = range[0];
+#ifdef HIOP_USE_HIP
+    // KLU refactorization is host-only. HIP device solves require RF.
+    default_value = range[2];
+#endif
     register_str_option("resolve_refactorization",
                         default_value,
                         range,

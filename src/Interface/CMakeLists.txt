@@ -26,3 +26,4 @@ install(
   )
 
 add_library(hiopInterface OBJECT ${hiopInterface_SRC})
+target_link_libraries(hiopInterface PRIVATE hiop_tpl)
