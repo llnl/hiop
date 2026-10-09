@@ -38,6 +38,11 @@ target_include_directories(Hipblas INTERFACE ${HIPBLAS_INCLUDE_DIR})
 # MAGMA is optional. Only discover and link it when explicitly enabled.
 if(HIOP_USE_MAGMA)
   include(FindHiopMagma)
+  if(NOT TARGET Magma)
+    message(FATAL_ERROR
+      "HIOP_USE_MAGMA is ON, but MAGMA was not found. Set MAGMA_DIR to "
+      "the MAGMA installation prefix or configure with HIOP_USE_MAGMA=OFF.")
+  endif()
   target_link_libraries(Magma INTERFACE Hipblas)
 endif()
 

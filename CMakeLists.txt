@@ -1,5 +1,30 @@
 cmake_minimum_required (VERSION 3.18)
 
+# Compiler selection happens in project(), before ccmake can be used to enable
+# HIP interactively. When a ROCm environment is loaded, select its compilers
+# up front so the workflow `cmake ..` followed by `ccmake .` can enable HIP.
+# Explicit CMake or CC/CXX compiler selections always take precedence.
+if(NOT DEFINED CMAKE_C_COMPILER
+    AND NOT DEFINED CMAKE_CXX_COMPILER
+    AND "$ENV{CC}" STREQUAL ""
+    AND "$ENV{CXX}" STREQUAL "")
+  if(DEFINED ROCM_PATH AND NOT "${ROCM_PATH}" STREQUAL "")
+    set(_hiop_rocm_path "${ROCM_PATH}")
+  elseif(DEFINED ENV{ROCM_PATH} AND NOT "$ENV{ROCM_PATH}" STREQUAL "")
+    set(_hiop_rocm_path "$ENV{ROCM_PATH}")
+  endif()
+
+  if(DEFINED _hiop_rocm_path
+      AND EXISTS "${_hiop_rocm_path}/bin/amdclang"
+      AND EXISTS "${_hiop_rocm_path}/bin/amdclang++")
+    set(ROCM_PATH "${_hiop_rocm_path}" CACHE PATH "ROCm installation prefix")
+    set(CMAKE_C_COMPILER "${_hiop_rocm_path}/bin/amdclang" CACHE FILEPATH "C compiler")
+    set(CMAKE_CXX_COMPILER "${_hiop_rocm_path}/bin/amdclang++" CACHE FILEPATH "C++ compiler")
+  endif()
+
+  unset(_hiop_rocm_path)
+endif()
+
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 if(NOT DEFINED CMAKE_CXX_STANDARD)
@@ -39,6 +64,13 @@ if(HIOP_USE_CUDA OR HIOP_USE_HIP)
   set(HIOP_USE_GPU ON CACHE BOOL "Build with support for GPUs - derived from CUDA or HIP support" FORCE)
 else()
   set(HIOP_USE_GPU OFF CACHE BOOL "Build with support for GPUs - derived from CUDA or HIP support" FORCE)
+endif()
+
+if(HIOP_USE_HIP AND NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  message(FATAL_ERROR
+    "HIOP_USE_HIP requires ROCm Clang as the C++ compiler, but CMake selected "
+    "${CMAKE_CXX_COMPILER_ID} (${CMAKE_CXX_COMPILER}). Configure a fresh build "
+    "directory with -C scripts/clang-hip.cmake or select amdclang++ explicitly.")
 endif()
 
 option(HIOP_TEST_WITH_BSUB "Use `jsrun` instead of `mpirun` commands when running tests" OFF)
@@ -100,7 +132,7 @@ endif()
 
 include(CMakeDependentOption)
 cmake_dependent_option(
-  HIOP_USE_MAGMA "Use Magma linear algebra" ON "HIOP_USE_GPU" OFF
+  HIOP_USE_MAGMA "Use Magma linear algebra" OFF "HIOP_USE_GPU" OFF
 )
 
 add_library(hiop_tpl INTERFACE)
@@ -119,10 +151,9 @@ if(HIOP_USE_MPI)
 
   target_link_libraries(hiop_tpl INTERFACE MPI::MPI_CXX)
 
-  # On Cray systems FindMPI discovers MPI through the compiler wrappers and
-  # CMake consequently records the MPI include directories as implicit. The
-  # legacy ROCm HIP package later replaces the actual C/C++ compile driver with
-  # amdclang/amdclang++, which does not inherit the wrapper's implicit paths.
+  # On Cray systems FindMPI may discover MPI through compiler wrappers and
+  # record their include directories as implicit. ROCm Clang, selected for HIP
+  # compilation, does not inherit the wrapper's implicit paths.
   # Pass the FindMPI results as compile options so CMake cannot filter them out.
   if(HIOP_USE_HIP)
     set(_hiop_mpi_c_include_dirs
@@ -288,6 +319,11 @@ if(HIOP_USE_GPU)
     if(HIOP_USE_MAGMA)
       set(HIOP_MAGMA_DIR CACHE PATH "Path to Magma directory")
       include(FindHiopMagma)
+      if(NOT TARGET Magma)
+        message(FATAL_ERROR
+          "HIOP_USE_MAGMA is ON, but MAGMA was not found. Set MAGMA_DIR to "
+          "the MAGMA installation prefix or configure with HIOP_USE_MAGMA=OFF.")
+      endif()
     endif()
 
     include(FindHiopCudaLibraries)
