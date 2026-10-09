@@ -97,6 +97,8 @@ $> make install
 
 A complete list of dependencies is maintained [here](https://github.com/spack/spack/blob/develop/var/spack/repos/builtin/packages/hiop/package.py).
 
+HiOp requires C++20 because the latest supported RAJA and Umpire releases require C++20.
+
 For a minimal build, HiOp requires LAPACK and BLAS. These dependencies are automatically detected by the build system. MPI is optional and by default enabled. To disable use cmake option '-DHIOP_USE_MPI=OFF'.
 
 Please note that HiOp has support for GPU computations, for both NVIDIA and AMD hardware, via RAJA and Umpire performance portability libraries.   To quickly enable the use of GPUs, use cmake with '-DHIOP_USE_GPU=ON'.

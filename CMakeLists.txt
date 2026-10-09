@@ -3,7 +3,8 @@ cmake_minimum_required (VERSION 3.18)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 if(NOT DEFINED CMAKE_CXX_STANDARD)
-  set(CMAKE_CXX_STANDARD 17)
+  # Current RAJA and Umpire releases require C++20.
+  set(CMAKE_CXX_STANDARD 20)
 endif()
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -112,18 +113,43 @@ endif()
 if(HIOP_USE_MPI)
   find_package(MPI REQUIRED COMPONENTS C CXX Fortran)
 
-  #find_package(MPI REQUIRED)
-  if(NOT DEFINED MPI_CXX_COMPILER)
-    set(CMAKE_CXX_COMPILER ${MPI_CXX_COMPILER})
-    set(CMAKE_C_COMPILER ${MPI_C_COMPILER})
-  endif(NOT DEFINED MPI_CXX_COMPILER)
-  include_directories(${MPI_CXX_ADDITIONAL_INCLUDE_DIRS} ${MPI_CXX_COMPILER_INCLUDE_DIRS} )
-  
-  set(CMAKE_Fortran_COMPILER ${MPI_Fortran_COMPILER})
-  include_directories(${MPI_Fortran_ADDITIONAL_INCLUDE_DIRS} ${MPI_Fortran_COMPILER_INCLUDE_DIRS} )
+  target_link_libraries(hiop_tpl INTERFACE MPI::MPI_CXX)
+
+  # On Cray systems FindMPI discovers MPI through the compiler wrappers and
+  # CMake consequently records the MPI include directories as implicit. The
+  # legacy ROCm HIP package later replaces the actual C/C++ compile driver with
+  # amdclang/amdclang++, which does not inherit the wrapper's implicit paths.
+  # Pass the FindMPI results as compile options so CMake cannot filter them out.
+  if(HIOP_USE_HIP)
+    set(_hiop_mpi_c_include_dirs
+      ${MPI_C_INCLUDE_DIRS}
+      ${MPI_C_COMPILER_INCLUDE_DIRS}
+      ${MPI_C_ADDITIONAL_INCLUDE_DIRS}
+    )
+    list(REMOVE_DUPLICATES _hiop_mpi_c_include_dirs)
+    foreach(_mpi_include_dir IN LISTS _hiop_mpi_c_include_dirs)
+      target_compile_options(hiop_tpl INTERFACE
+        "$<BUILD_INTERFACE:$<$<COMPILE_LANGUAGE:C>:-I${_mpi_include_dir}>>"
+      )
+    endforeach()
+
+    set(_hiop_mpi_cxx_include_dirs
+      ${MPI_CXX_INCLUDE_DIRS}
+      ${MPI_CXX_COMPILER_INCLUDE_DIRS}
+      ${MPI_CXX_ADDITIONAL_INCLUDE_DIRS}
+    )
+    list(REMOVE_DUPLICATES _hiop_mpi_cxx_include_dirs)
+    foreach(_mpi_include_dir IN LISTS _hiop_mpi_cxx_include_dirs)
+      target_compile_options(hiop_tpl INTERFACE
+        "$<BUILD_INTERFACE:$<$<COMPILE_LANGUAGE:CXX,HIP>:-I${_mpi_include_dir}>>"
+      )
+    endforeach()
+
+    unset(_hiop_mpi_c_include_dirs)
+    unset(_hiop_mpi_cxx_include_dirs)
+  endif()
+
   set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -D HIOP_USE_MPI")
-  
-  target_link_libraries(hiop_tpl INTERFACE MPI::MPI_CXX MPI::MPI_CXX)
   set(HIOP_EXTRA_MPI_FLAGS "" CACHE STRING "Extra arguments to mpiexec when running tests")
 endif(HIOP_USE_MPI)
 
@@ -131,7 +157,7 @@ list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
 
 target_compile_features(hiop_options
   INTERFACE
-  cxx_std_17
+  cxx_std_20
   cxx_alignas
   cxx_alignof
   cxx_attributes
