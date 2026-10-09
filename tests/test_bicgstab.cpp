@@ -11,6 +11,28 @@
 
 using namespace hiop;
 
+namespace
+{
+class IdentityLinearOperator : public hiopLinearOperator
+{
+public:
+  bool times_vec(hiopVector& y, const hiopVector& x) override
+  {
+    y.copyFrom(x);
+    return true;
+  }
+
+  bool trans_times_vec(hiopVector& y, const hiopVector& x) override { return times_vec(y, x); }
+};
+
+class FailingLinearOperator : public hiopLinearOperator
+{
+public:
+  bool times_vec(hiopVector&, const hiopVector&) override { return false; }
+  bool trans_times_vec(hiopVector&, const hiopVector&) override { return false; }
+};
+}  // namespace
+
 void initializeSymSparseMat(hiop::hiopMatrixSparse* mat, bool is_diag_pred)
 {
   auto* A = dynamic_cast<hiop::hiopMatrixSymSparseTriplet*>(mat);
@@ -121,6 +143,7 @@ void initializeRajaSymSparseMat(hiop::hiopMatrixSparse* mat, bool is_diag_pred)
 
 int main(int argc, char** argv)
 {
+  int failures = 0;
 #ifdef HIOP_USE_MPI
   int rank = 0;
   int numRanks = 1;
@@ -141,6 +164,21 @@ int main(int argc, char** argv)
     if(n <= 0) {
       n = 50;
     }
+  }
+
+  // A failed preconditioner must be reported to callers so that the KKT
+  // system can activate its configured fallback solver.
+  {
+    hiop::hiopVector* rhs = hiop::LinearAlgebraFactory::create_vector("DEFAULT", n);
+    rhs->setToConstant(1.0);
+    IdentityLinearOperator identity;
+    FailingLinearOperator failing_preconditioner;
+    hiopBiCGStabSolver solver(n, &identity, &failing_preconditioner);
+    if(solver.solve(rhs) || solver.get_convergence_flag() != 5) {
+      std::cerr << "BiCGStab did not propagate a preconditioner failure\n";
+      ++failures;
+    }
+    delete rhs;
   }
 
   printf("\nTesting hiopBiCGStabSolver with matrix_%dx%d\n\n", n, n);
@@ -230,4 +268,5 @@ int main(int argc, char** argv)
 #ifdef HIOP_USE_MPI
   MPI_Finalize();
 #endif
+  return failures == 0 ? 0 : 1;
 }

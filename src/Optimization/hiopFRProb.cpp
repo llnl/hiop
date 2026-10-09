@@ -56,6 +56,7 @@
 
 #include "hiopVector.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>  //for memcpy
 #include <cstdio>
@@ -195,8 +196,10 @@ bool hiopFRProbSparse::get_vars_info(const size_type& n, double* xlow, double* x
   xu.copyToStarting(*wrk_primal_, 0);
   wrk_primal_->copyTo(xupp);
 
-  wrk_primal_->set_array_from_to(type, 0, n_x_, var_type, 0);
-  wrk_primal_->set_array_from_to(type, n_x_, n_, hiopLinear);
+  // Nonlinearity metadata is host-resident even when numerical vectors are
+  // device-resident. Avoid dispatching a device kernel for these arrays.
+  std::copy(var_type, var_type + n_x_, type);
+  std::fill(type + n_x_, type + n_, hiopLinear);
 
   return true;
 }
@@ -222,8 +225,8 @@ bool hiopFRProbSparse::get_cons_info(const size_type& m, double* clow, double* c
   du.copyToStarting(*wrk_dual_, (int)m_eq_);
   wrk_dual_->copyTo(cupp);
 
-  wrk_dual_->set_array_from_to(type, 0, m_eq_, cons_eq_type, 0);
-  wrk_dual_->set_array_from_to(type, m_eq_, m_, cons_ineq_type, 0);
+  std::copy(cons_eq_type, cons_eq_type + m_eq_, type);
+  std::copy(cons_ineq_type, cons_ineq_type + m_ineq_, type + m_eq_);
 
   return true;
 }
@@ -830,9 +833,11 @@ bool hiopFRProbMDS::get_vars_info(const size_type& n, double* xlow, double* xupp
   xu.startingAtCopyToStartingAt(n_x_sp_, *wrk_primal_, x_de_st_, n_x_de_);
   wrk_primal_->copyTo(xupp);
 
-  wrk_primal_->set_array_from_to(type, 0, n_, hiopLinear);
-  wrk_primal_->set_array_from_to(type, x_sp_st_, x_sp_st_ + n_x_sp_, var_type, 0);
-  wrk_primal_->set_array_from_to(type, x_de_st_, x_de_st_ + n_x_de_, var_type, n_x_sp_);
+  // Nonlinearity metadata is host-resident even when numerical vectors are
+  // device-resident. Avoid dispatching a device kernel for these arrays.
+  std::fill(type, type + n_, hiopLinear);
+  std::copy(var_type, var_type + n_x_sp_, type + x_sp_st_);
+  std::copy(var_type + n_x_sp_, var_type + n_x_sp_ + n_x_de_, type + x_de_st_);
 
   return true;
 }
@@ -858,8 +863,8 @@ bool hiopFRProbMDS::get_cons_info(const size_type& m, double* clow, double* cupp
   du.copyToStarting(*wrk_dual_, (int)m_eq_);
   wrk_dual_->copyTo(cupp);
 
-  wrk_dual_->set_array_from_to(type, 0, m_eq_, cons_eq_type, 0);
-  wrk_dual_->set_array_from_to(type, m_eq_, m_, cons_ineq_type, 0);
+  std::copy(cons_eq_type, cons_eq_type + m_eq_, type);
+  std::copy(cons_ineq_type, cons_ineq_type + m_ineq_, type + m_eq_);
 
   return true;
 }

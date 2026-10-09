@@ -80,6 +80,8 @@ public:
    * exit is contains the solution(s).  */
   bool solve(hiopVector &x_);
 
+  virtual bool is_device_solver() const { return nlp_->options->GetString("compute_mode") != "cpu"; }
+
   // protected:
   //   int* ipiv;
   //   hiopVector* dwork;
