@@ -281,7 +281,10 @@ hiopLinSolverSymSparseReSolve::hiopLinSolverSymSparseReSolve(const int& n, const
                                         "none",
                                         "none");
 #elif defined(HIOP_USE_HIP)
-    if(refactorization == "glu") {
+    if(refactorization == "klu") {
+      nlp_->log->printf(hovWarning, "KLU refactorization is unavailable on a HIP device; using rocSolverRf.\n");
+      refactorization = "rocsolverrf";
+    } else if(refactorization == "glu") {
       nlp_->log->printf(hovWarning, "GLU is unavailable with HIP; using rocSolverRf.\n");
       refactorization = "rocsolverrf";
     }
