@@ -656,22 +656,61 @@ class BOAlgorithm(BOAlgorithmBase):
         self.logger.info(f"optimal point = {best_xopt}")
 
         self.bo_stop_tol = 0.01
-        # BO stopping criterion based on remaining LCB improvement potential.
-        if self.bo_stop_tol > 0.0 and np.isfinite(prev_best_y):
+        # BO stopping criterion based on remaining LCB improvement potential and small exploration term
 
-          lcb_incumbent = float(acqf.scalar_evaluate(np.asarray(best_xopt)))
+        if self.bo_stop_tol > 0.0:
 
-          scale = max(1.0, abs(prev_best_y))
-          lcb_gap = max(0.0, prev_best_y - lcb_incumbent)
-          rel_lcb_gap = lcb_gap / scale
+          # Best feasible objective actually assimilated into the current GP.
+          gp_feas = self.prob.if_feasible(x_train) & np.isfinite(y_train).ravel()
 
-          self.logger.info(f"BO LCB stopping gap: f_best={prev_best_y:.6e}, LCB_best={lcb_incumbent:.6e}, "
-                           f"gap={lcb_gap:.6e}, relative_gap={rel_lcb_gap:.6e}")
+          if np.any(gp_feas):
+            f_gp_best = float(np.min(y_train[gp_feas]))
+            x_lcb = np.asarray(best_xopt, dtype=float).reshape(1, -1)
 
-          if rel_lcb_gap <= self.bo_stop_tol:
-            self.logger.critical(f"BO stopping: remaining LCB improvement potential "
-                                 f"{rel_lcb_gap:.3e} <= {self.bo_stop_tol:.3e}")
-            break
+            mu_lcb = float(np.asarray(self.gpsurrogate.mean(x_lcb)).reshape(-1)[0])
+            var_lcb = float(np.asarray(self.gpsurrogate.variance(x_lcb)).reshape(-1)[0])
+            sigma_lcb = np.sqrt(max(0.0, var_lcb))
+
+            lcb_incumbent = mu_lcb - self.LCB_beta * sigma_lcb
+            scale = max(1.0, abs(f_gp_best))
+
+            # raw gap, can be negative (acq does not have enough uncertatinty)
+            raw_gap = f_gp_best - lcb_incumbent
+
+            rel_gap = raw_gap / scale
+            rel_unc = self.LCB_beta * sigma_lcb / scale
+
+            self.logger.info(f"BO stopping diagnostics: f_GP_best={f_gp_best:.6e}, "
+                             f"f_archive_best={prev_best_y:.6e}, mu_LCB={mu_lcb:.6e}, "
+                             f"sigma_LCB={sigma_lcb:.6e},  LCB_best={lcb_incumbent:.6e}, "
+                             f"signed_gap={raw_gap:.6e}, relative_gap={rel_gap:.6e}, "
+                             f"relative_uncertainty={rel_unc:.6e}")
+
+            # A materially negative gap is NOT convergence.
+            gap_sign_tol = 1.e-8 * scale
+
+            if raw_gap < -gap_sign_tol:
+              self.logger.info("BO stopping disabled this iteration: LCB minimum is above the active-GP incumbent.")
+
+            elif (rel_gap <= self.bo_stop_tol and rel_unc <= self.bo_stop_tol):
+              self.logger.critical(f"BO stopping: relative LCB gap {rel_gap:.3e} and uncertainty {rel_unc:.3e} <= {self.bo_stop_tol:.3e}")
+              break
+        
+        # if self.bo_stop_tol > 0.0 and np.isfinite(prev_best_y):
+
+        #   lcb_incumbent = float(acqf.scalar_evaluate(np.asarray(best_xopt)))
+
+        #   scale = max(1.0, abs(prev_best_y))
+        #   lcb_gap = max(0.0, prev_best_y - lcb_incumbent)
+        #   rel_lcb_gap = lcb_gap / scale
+
+        #   self.logger.info(f"BO LCB stopping gap: f_best={prev_best_y:.6e}, LCB_best={lcb_incumbent:.6e}, "
+        #                    f"gap={lcb_gap:.6e}, relative_gap={rel_lcb_gap:.6e}")
+
+        #   if rel_lcb_gap <= self.bo_stop_tol:
+        #     self.logger.critical(f"BO stopping: remaining LCB improvement potential "
+        #                          f"{rel_lcb_gap:.3e} <= {self.bo_stop_tol:.3e}")
+        #     break
         
         if self.bnb_batch_method == "conditional_variance":
           selection_options = dict(self.bnb_batch_options)
