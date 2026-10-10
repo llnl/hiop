@@ -778,11 +778,31 @@ class BOAlgorithm(BOAlgorithmBase):
       #   ...
       #
       # Hence the first 'bo_bnb_batch_max_add' points give a default exploitation
-      # and the heurstical pure-exploration subset.
+      # and the heuristical pure-exploration subset.
+      #
+      # If a batch point improves the best known true function, it will be added to
+      # the GP (even when bnb_batch_max_add == 1)
       ###############################################################################
       if (self.opt_solver == "BnB" and self.bnb_batch_method == "conditional_variance"):
-        n_gp_add = min(self.bnb_batch_max_add, q_batch,)
+        n_gp_add = min(self.bnb_batch_max_add, q_batch)
 
+        # assimilate first n_gp_add, and maybe one batch point that improves true function 
+        gp_idx = np.arange(n_gp_add)
+
+        # see if true func is improved
+        feas_new = self.prob.if_feasible(x_eval) & np.isfinite(y_new).ravel()
+        j_inc = -1
+        if np.any(feas_new):
+          feas_idx = np.flatnonzero(feas_new)
+          j_inc = int(feas_idx[np.argmin(y_new[feas_new].reshape(-1))])
+          f_inc = float(np.asarray(y_new[j_inc]).reshape(-1)[0])
+          
+          if f_inc < prev_best_y:
+            if j_inc >= n_gp_add:
+              gp_idx = np.append(gp_idx, j_inc)
+              self.logger.info(f"BnB-CV: new incumbent found in batch at idx {j_inc}: adding it to GP")
+          else:
+            j_inc = -1 #invalidate idx since no global improvement
         # some output info
         if 'batch_info' in locals():
           cv = np.asarray(batch_info["conditional_variance"], dtype=float)
@@ -790,20 +810,21 @@ class BOAlgorithm(BOAlgorithmBase):
           self.logger.info("BnB-CV conditional variance:")
           for j in range(q_batch):
             suffix = "GP" if j < n_gp_add else "eval-only"
+            if j==j_inc: suffix = "GP (new incumb)"
             f_true = float(np.asarray(y_new[j]).reshape(-1)[0])
             self.logger.info(f"  batch[{j}] LCB={lcb_vals[j]:.6e} var_cond={cv[j]:.6e} f_true={f_true:.12e} [{suffix}]")
         
-        x_gp_add = x_eval[:n_gp_add]
-        y_gp_add = y_new[:n_gp_add]
+        x_gp_add = x_eval[gp_idx]
+        y_gp_add = y_new[gp_idx]
 
         x_train = np.vstack([x_train, x_gp_add,])
         y_train = np.vstack([y_train, y_gp_add,])
 
-        self.logger.info(f"BnB-CV GP assimilation: {n_gp_add}/{q_batch} evaluated points")
+        self.logger.info(f"BnB-CV GP assimilation: {gp_idx.size}/{q_batch} evaluated points")
 
-        if 'batch_info' in locals():
-          self.logger.info(f"  assimilated conditional variances: {batch_info['conditional_variance'][:n_gp_add]}")
-          self.logger.info(f"  assimilated LCB values: {batch_info['lcb'][:n_gp_add]}")
+        #if 'batch_info' in locals():
+        #  self.logger.info(f"  assimilated conditional variances: {batch_info['conditional_variance'][:n_gp_add]}")
+        #  self.logger.info(f"  assimilated LCB values: {batch_info['lcb'][:n_gp_add]}")
 
       else:
         # Preserve existing behavior for the other, non BnB-CV batch methods.
@@ -867,18 +888,18 @@ class BOAlgorithm(BOAlgorithmBase):
       for j in range(q_batch):
         self.logger.debug(f"  {y_new[j]}")
 
-      for j, point_metrics in enumerate(selected_point_metrics):
-        self.logger.scalars(f"Selected-point clustering at end of BO iteration {bo_iteration_number}, batch point {j+1}: ")
-        self.logger.scalars(f"  domain_nn(Euclidean dist)="
-                            f"{point_metrics['domain_nn']:.6e}, "
-                            f"smt_nn(distance in SMT coordinates)="
-                            f"{point_metrics['smt_nn']:.6e}, "
-                            f"kernel_nn(theta-weighted distances)="
-                            f"{point_metrics['kernel_nn']:.6e}, "
-                            f"kernel_corr_to_nearest="
-                            f"{point_metrics['kernel_corr_to_nearest']:.6e}, "
-                            f"nearest_old_index="
-                            f"{point_metrics['nearest_old_index']}")
+      #for j, point_metrics in enumerate(selected_point_metrics):
+      #  self.logger.scalars(f"Selected-point clustering at end of BO iteration {bo_iteration_number}, batch point {j+1}: ")
+      #  self.logger.scalars(f"  domain_nn(Euclidean dist)="
+      #                      f"{point_metrics['domain_nn']:.6e}, "
+      #                      f"smt_nn(distance in SMT coordinates)="
+      #                      f"{point_metrics['smt_nn']:.6e}, "
+      #                      f"kernel_nn(theta-weighted distances)="
+      #                      f"{point_metrics['kernel_nn']:.6e}, "
+      #                      f"kernel_corr_to_nearest="
+      #                      f"{point_metrics['kernel_corr_to_nearest']:.6e}, "
+      #                      f"nearest_old_index="
+      #                      f"{point_metrics['nearest_old_index']}")
 
       prev_best_y = curr_best_y
 

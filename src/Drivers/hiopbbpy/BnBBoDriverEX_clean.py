@@ -436,7 +436,7 @@ if __name__ == "__main__":
     options['bnb_batch_method'] = "conditional_variance" #CV
     options['bnb_batch_options'] = { "delta": 0.25, # absolute; None uses the final absolute BnB gap 
                                      "noise_variance": 0.0,
-                                     "duplicate_tol": 1.e-5, #duplicates and training points exclusion radius
+                                     "duplicate_tol": 1.e-2, #duplicates and training points exclusion radius
                                      "variance_rtol": 1.e-2, #min variance for selecting batch candidates with CV 
                                      "exclude_training": False,
                                      "require_full": False}  # error out if batch_size cannot be honored #fixme remove this
