@@ -244,7 +244,10 @@ if __name__ == "__main__":
   parser.add_argument("--bnbmaxtime", type=float, default=180., help="maximum time for bnb opt") 
   parser.add_argument("--bnb", action=argparse.BooleanOptionalAction, type=bool, default=True, help="BnB or multistart")
   parser.add_argument("--nsamples", type=int, default=6, help="number of initial samples")
+  parser.add_argument("--gp_kernel", type=str, default="se", help="GP kernel: se, matern12, matern32, or matern52")
   parser.add_argument("--nretraingp", type=int, default=1, help="number of BO iterations after which the GP is fully retrained")
+  parser.add_argument("--bo_batch_size", type=int, default=1, help="Number of batches used by the batched BO algorithm")
+  parser.add_argument("--bo_bnb_batch_max_add", type=int, default=1, help="Number of batches added to the GP by the batched BO algorithm")
   parser.add_argument("--seed", type=int, default=42, help="random seed")
   parser.add_argument("--problem", type=str, default="Periodic", help="black-box objective") 
   parser.add_argument("--make_plts", action=argparse.BooleanOptionalAction, type=bool, default=False, help="create plots or not")
@@ -306,9 +309,14 @@ if __name__ == "__main__":
   relbnbtol = args.relbnbtol
   bnbmaxiter = args.bnbmaxiter
   bnbmaxtime = args.bnbmaxtime
-  batch_size = 1
+  batch_size = args.bo_batch_size
+  bo_bnb_batch_max_add = args.bo_bnb_batch_max_add
+  if bo_bnb_batch_max_add>batch_size or bo_bnb_batch_max_add<1:
+    raise ValueError("Invalid value for input argument 'bo_bnb_batch_max_add': must be 1 <= bo_bnb_batch_max_add <= batch_size")
+  
   randseed = args.seed
-  n_samples = args.nsamples 
+  n_samples = args.nsamples
+  gp_kernel = args.gp_kernel
   problem_name = args.problem
   make_plts = args.make_plts
   random.seed(randseed)
@@ -349,8 +357,17 @@ if __name__ == "__main__":
   theta = 1.  # hyperparameter for GP kernel
   fix_theta = False
   theta_bounds = [0.05, 5]
+
   pow_exp_power = 2.0 #1. or 2., only relevant for pow_exp kernel
   corr = "pow_exp" #"matern52" # "pow_exp", "matern32", "matern52"
+  if gp_kernel == "matern12":
+    pow_exp_power = 1.0
+  elif gp_kernel == "matern32" or gp_kernel == "matern52":
+    corr = gp_kernel
+  else:
+    if gp_kernel != "se":
+      raise ValueError("Unexpected value for input argument 'gp_kernel'")
+
   eval_noise = False
 
   hyper_opt="Cobyla" #More robust, derivative-free hyperparameter optimization
@@ -364,7 +381,7 @@ if __name__ == "__main__":
   gp_model = smtKRG(theta, problem.xlimits, nx, corr=corr, pow_exp_power=pow_exp_power, eval_noise=eval_noise, fix_theta=fix_theta, theta_bounds=theta_bounds, hyper_opt=hyper_opt, nugget=nugget)
   gp_model.train(x_train, y_train)
 
-  beta = 3
+  beta = 1
   if acquisition_type == 'LCB':
     acqf = LCBacquisition(gp_model, beta=beta)
   else:
@@ -405,6 +422,8 @@ if __name__ == "__main__":
     'acquisition_type' : acquisition_type,
     'LCB_beta': beta,
     'bo_maxiter' : boiter, 
+    # Number of evaluated BnB-CV batch points actually assimilated into the GP at each BO iteration.
+    'bnb_batch_max_add': bo_bnb_batch_max_add,
     'batch_size' : batch_size,
     'opt_solver' : 'SLSQP',
     'bnb_warmstart' : args.bnb_warmstart,
@@ -414,7 +433,14 @@ if __name__ == "__main__":
   if BnB:
     options['opt_solver'] = 'BnB'
     options['solver_options'] = bnb_solver_options 
-
+    options['bnb_batch_method'] = "conditional_variance" #CV
+    options['bnb_batch_options'] = { "delta": 0.25, # absolute; None uses the final absolute BnB gap 
+                                     "noise_variance": 0.0,
+                                     "duplicate_tol": 1.e-2, #duplicates and training points exclusion radius
+                                     "variance_rtol": 1.e-2, #min variance for selecting batch candidates with CV 
+                                     "exclude_training": False,
+                                     "require_full": False}  # error out if batch_size cannot be honored #fixme remove this
+    
   options['executor'] = executor
   options['obj_evaluator'] = MPIEvaluator(function_mode=True, executor=executor, task_name="BO_OBJ", profiling=False)
   options['opt_evaluator'] = MPIEvaluator(function_mode=True, executor=executor, task_name="BO_OPT", profiling=False)

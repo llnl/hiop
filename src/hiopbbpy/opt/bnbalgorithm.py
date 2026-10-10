@@ -10,6 +10,9 @@ from .bnb_utils import *
 from .opt_utils import minimizer_wrapper, fit_common_se_point_from_ratios
 from .async_bnb import BnBNode, BranchResult, RestartResult, CloseReason, LeafState, initialize_async_search, run_async_search
 from itertools import count
+
+from scipy.spatial import cKDTree
+
 try:
   from mpi4py import MPI
 except ImportError:
@@ -42,6 +45,117 @@ class variance_U_problem:
   def constraintJacobian(self, z):
     return self.C[:,:]
 
+class _BatchKrigingCovariance:
+  """Lazy covariance for the current scalar, continuous SMT KRG.
+
+  Covariances are divided by sigma2 internally. The GP is not refitted.
+  """
+
+  def __init__(self, bnb, X):
+    sm = bnb.gpsurrogate.surrogatesmt
+    if sm.options["poly"] != "constant":
+      raise NotImplementedError("Batch covariance requires poly='constant'")
+    if not getattr(sm, "is_continuous", True):
+      raise NotImplementedError("Continuous inputs are required")
+    if "is_ri" in sm.options and sm.options["is_ri"]:
+      raise NotImplementedError("Reinterpolating KRG is not supported")
+
+    par = sm.optimal_par
+    scale = np.asarray(par["sigma2"], dtype=float).reshape(-1)
+    if (scale.size != 1 or not np.isfinite(scale[0]) or scale[0] <= 0.0):
+      raise ValueError("A positive scalar SMT process variance is required")
+
+    self.sigma2 = float(scale[0])
+    self.kind = bnb.kernel_spec
+    self.power = getattr(bnb, "p", 1.0)
+    self.theta = np.broadcast_to(np.asarray(bnb.theta, dtype=float).reshape(-1), (X.shape[1],))
+    self.Z = (X - bnb.X_offset) / bnb.X_scale
+
+    # W[:, i] = C^{-1} k(Xtrain, X[i]).
+    self.W = linalg.solve_triangular(par["C"], self.kernel(bnb.Xc, self.Z), lower=True)
+
+    # Constant-trend correction, matching SMT's variance formula.
+    self.H = linalg.solve_triangular(par["G"].T, par["Ft"].T @ self.W - np.ones((1, len(X))), lower=True)
+
+    self.diag = 1.0 - np.sum(self.W**2, axis=0) + np.sum(self.H**2, axis=0)
+    self.roundoff = 1.e-9 * max(1.0, float(np.max(np.abs(self.diag))))
+    if (not np.all(np.isfinite(self.diag)) or np.min(self.diag) < -self.roundoff):
+      raise FloatingPointError("Invalid posterior covariance diagonal")
+    self.diag = np.maximum(self.diag, 0.0)
+
+    # Detect kernel, scaling, or SMT API mismatches.
+    ii = np.unique(np.linspace(0, len(X) - 1, min(16, len(X)), dtype=int))
+    reference = np.asarray(bnb.gpsurrogate.variance(X[ii])).reshape(-1)
+    if not np.allclose(self.sigma2 * self.diag[ii], reference, rtol=1.e-6, atol=1.e-10 * self.sigma2,):
+      raise RuntimeError("Batch covariance does not match SMT variances")
+
+  def kernel(self, A, B):
+    """Correlation in SMT coordinates; product-form Matern kernels."""
+    logk = np.zeros((len(A), len(B)))
+    for j, theta in enumerate(self.theta):
+      distance = np.abs(A[:, j, None] - B[None, :, j])
+
+      if self.kind == "pow_exp":
+        logk -= theta * distance**self.power
+      elif self.kind in ("matern32", "matern52"):
+        root = np.sqrt(3.0 if self.kind == "matern32" else 5.0)
+        t = root * theta * distance
+        polynomial_minus_one = (t if self.kind == "matern32" else t + t*t/3.0)
+        logk += np.log1p(polynomial_minus_one) - t
+      else:
+        raise NotImplementedError(self.kind)
+
+    return np.exp(logk)
+
+  def column(self, j):
+    """Return C_t(X, X[j]) / sigma2 without forming C_t(X, X)."""
+    col = self.kernel(self.Z, self.Z[j:j+1]).ravel() - self.W.T @ self.W[:, j] + self.H.T @ self.H[:, j]        
+    col[j] = self.diag[j]
+    return col
+
+
+def _greedy_condvar(cov, q, noise_variance=0.0, variance_rtol=1.e-10):
+  """Select index zero first, then maximize residual latent variance.
+
+  Constructs the full candidate-by-candidate covariance matrix.
+  """
+  m = len(cov.diag)
+  q = min(q, m)
+  residual = cov.diag.copy()
+  available = np.ones(m, dtype=bool)
+  
+  # Columns encode successive covariance reductions.
+  factors = np.zeros((m, q))
+  selected, selected_var = [], []
+  floor = variance_rtol * float(np.max(residual))
+  noise = noise_variance / cov.sigma2
+  
+  for j in range(q):
+    p = (0 if j == 0 else int(np.argmax(np.where(available, residual, -np.inf))))
+    if j > 0 and residual[p] <= floor:
+      break
+
+    selected.append(p)
+    selected_var.append(cov.sigma2 * residual[p])
+    available[p] = False
+
+    if j + 1 == q:
+      break
+
+    denominator = residual[p] + noise
+    # A zero-variance noiseless observation adds no information.
+    if denominator > 0.0:
+      col = (cov.column(p) - factors[:, :j] @ factors[p, :j])
+      factors[:, j] = col / np.sqrt(denominator)
+      residual -= factors[:, j]**2
+      
+      if (not np.all(np.isfinite(residual)) or np.any(residual[available] < -cov.roundoff)):
+        raise FloatingPointError("Unstable conditional-variance update")
+      residual = np.maximum(residual, 0.0)
+      
+      
+  return np.asarray(selected, dtype=int), np.asarray(selected_var)
+  
 def dist_to_corner(l, u, x):
   box = np.array([l, u])
   return np.linalg.norm(np.min(np.abs(box - x), axis=0))
@@ -2522,6 +2636,9 @@ class BnBAlgorithm(GPBoundComputationCommon, BnBAlgorithmBase):
     # self.pairs_dist = {(i, j): dist for dist, i, j in pairs}
     self.nearest_neighbor_pairs, self.pairs_dist = build_mode6_pair_candidates(self, nneighbors=3, include_mst=True)
 
+    self.collect_batch_candidates = options.get("collect_batch_candidates", False)
+    self._batch_candidates = {}
+
   # For minimization, we find a feasible function value as the upper bound on the minimum value of the acquisition function.
   def compute_acqf_upper_bound(self, l, u):
     # We compute the upper bound of the acquisition function based on bounds of the kernel, mu and sigma.
@@ -2564,6 +2681,153 @@ class BnBAlgorithm(GPBoundComputationCommon, BnBAlgorithmBase):
     """Return leaves useful for batching, excluding only pruned leaves."""
     return self.leaf_partition.candidate_nodes()
 
+  def _remember_batch_candidates(self, nodes):
+    """Store points only; acquisition values are recomputed later."""
+    if not self.collect_batch_candidates:
+      return
+
+    for node in nodes:
+      if node.aq_U_x is None or not np.isfinite(node.aq_U):
+        continue
+      x = np.asarray(node.aq_U_x, dtype=float).reshape(-1)
+      if np.all(np.isfinite(x)):
+        self._batch_candidates[tuple(x)] = x.copy()
+
+  def select_batch_condvar(self, q, *, delta=None, noise_variance=0.0, duplicate_tol=1.e-8,
+                           variance_rtol=1.e-10, exclude_training=True, is_feasible=None,
+                           exclude_points=None, require_full=False):
+    """Return (X_batch, diagnostics) after a completed LCB BnB search.
+
+    Out of the BnB candidates within some BnB optimality gap (see delta), namely, 
+      Cdelta = { x | x in a BnB box with at most delta optimality gap}
+    selects q candidates z1, z2, ..., zq that maximize conditional posterior variance:
+      zj = argmax \sigma_{t|Zj}(x) s.t. x in Cdeltat \ {z1, z2, \ldots, zj-1}.
+    Here t represents the BO iteration number.
+
+    Arguments: 
+    delta:
+        Allowed LCB excess above the incumbent, in objective units.
+        None uses the final absolute BnB gap.
+    noise_variance:
+        Prospective observation variance, in original y-units squared.
+        Use zero for deterministic evaluations.
+    duplicate_tol:
+        Infinity-norm tolerance in domain-normalized coordinates.
+    require_full:
+        Raise rather than return fewer than q eligible points.
+    """
+    if not isinstance(self.acqf, LCBacquisition):
+      raise TypeError("Conditional-variance batching requires LCB")
+    if (isinstance(q, bool) or not isinstance(q, (int, np.integer)) or q < 1):
+      raise ValueError("q must be a positive integer")
+    if any(not np.isfinite(v) or v < 0.0 for v in (noise_variance, duplicate_tol, variance_rtol)):
+      raise ValueError("Noise and tolerances must be finite and nonnegative")
+
+    store = self.leaf_partition
+    if store.inflight:
+      raise RuntimeError("Finish/drain BnB before selecting the BO batch")
+    if store.incumbent_x is None:
+      raise RuntimeError("BnB has no feasible incumbent")
+
+    # Include stored parents and every final leaf, including pruned leaves.
+    points = [np.asarray(store.incumbent_x, dtype=float).reshape(-1)]
+    points += list(getattr(self, "_batch_candidates", {}).values())
+    points += [np.asarray(n.aq_U_x, dtype=float).reshape(-1) for n in store.leaves.values() if n.aq_U_x is not None and np.isfinite(n.aq_U)]
+    X = np.vstack(points)
+
+    # Remove exact duplicates, retaining incumbent at index zero.
+    _, ii = np.unique(X, axis=0, return_index=True)
+    X = X[np.sort(ii)]
+
+    bounds = np.asarray(self.gpsurrogate.xlimits, dtype=float)
+    lo, hi = bounds[:, 0], bounds[:, 1]
+    valid = np.all(np.isfinite(X) & (X >= lo) & (X <= hi), axis=1)
+    if not valid[0]:
+      raise RuntimeError("Invalid BnB incumbent")
+    X = X[valid]
+
+    # Chunk SMT predictions to limit temporary storage.
+    # LCB acquisition is evaluated 
+    values = np.concatenate([np.asarray(self.acqf.evaluate(X[k:k+512]), dtype=float).reshape(-1) for k in range(0, len(X), 512)])
+    U = float(values[0])
+    L = float(store.global_lower_bound())
+    if not np.isfinite(U):
+      raise RuntimeError("Nonfinite incumbent LCB")
+
+    if delta is None:
+      if not np.isfinite(L) or L > U:
+        raise ValueError("Set delta explicitly; no consistent finite BnB gap")
+      delta = U - L
+    delta = float(delta)
+    if not np.isfinite(delta) or delta < 0.0:
+      raise ValueError("delta must be finite and nonnegative")
+
+    keep = np.isfinite(values) & (values <= U + delta)
+    if is_feasible is not None:
+      feasible = np.asarray(is_feasible(X), dtype=bool).reshape(-1)
+      if feasible.size != len(X):
+        raise ValueError("is_feasible must return one Boolean per point")
+      keep &= feasible
+
+    # Domain-normalized coordinates are used only for duplicate checks.
+    width = np.where(hi > lo, hi - lo, 1.0)
+    Xunit = (X - lo) / width
+    #if exclude_training:
+    #  # exclude anything within duplicate_tol from a training point
+    #  old = np.asarray(self.gpsurrogate.training_x, dtype=float)
+    #  distance, _ = cKDTree((old - lo) / width).query(Xunit, p=np.inf)
+    #  keep &= distance > duplicate_tol
+    if exclude_training:
+      old = np.asarray(self.gpsurrogate.training_x, dtype=float)
+
+      # Exclude points that were evaluated previously but were deliberately
+      # not assimilated into the active GP.
+      if exclude_points is not None:
+        extra = np.atleast_2d(np.asarray(exclude_points, dtype=float))
+        if extra.shape[1] != X.shape[1]:
+          raise ValueError("exclude_points has incompatible dimension")
+        old = np.vstack([old, extra])
+
+      distance, _ = cKDTree((old - lo) / width).query(Xunit, p=np.inf)
+      keep &= distance > duplicate_tol
+      # The BnB incumbent is the LCB BO decision and must always remain in the batch.
+      keep[0] = True
+      
+    # Prefer incumbent; otherwise start with the best eligible LCB.
+    order = np.flatnonzero(keep)
+    order = order[np.argsort(values[order], kind="stable")]
+    if keep[0]:
+      order = np.r_[0, order[order != 0]]
+    if order.size == 0:
+      raise RuntimeError("No eligible near-optimal points; increase delta")
+
+    # Remove near-duplicates, preferring incumbent, then lower LCB.
+    tree = cKDTree(Xunit[order])
+    blocked = np.zeros(len(order), dtype=bool)
+    unique = []
+    for i in range(len(order)):
+      if not blocked[i]:
+        unique.append(int(order[i]))
+        neighbors = tree.query_ball_point(Xunit[order[i]], duplicate_tol, p=np.inf)
+        blocked[neighbors] = True
+
+    pool = np.asarray(unique, dtype=int)
+    cov = _BatchKrigingCovariance(self, X[pool])
+    selected, conditional_var = _greedy_condvar(cov, q, noise_variance, variance_rtol)
+    chosen = pool[selected]
+
+    if require_full and len(chosen) < q:
+      raise RuntimeError(f"Only {len(chosen)} nonredundant points "
+                         f"for requested q={q}; increase delta")
+
+    # These certificates rely on validity of the existing BnB bound.
+    bounds_valid = (np.isfinite(L) and L <= np.min(values[np.isfinite(values)]))
+    info = dict(candidate_count=len(X), pool_size=len(pool), requested=q, returned=len(chosen),
+                delta=delta, incumbent_lcb=U, lower_bound=L, incumbent_in_batch=bool(keep[0]),
+                lcb=values[chosen].copy(), conditional_variance=conditional_var,
+                lcb_suboptimality_bound=(values[chosen] - L if bounds_valid else np.full(len(chosen), np.nan)))
+    return X[chosen].copy(), info
+  
   def optimize(self):
     opt = self.bnboptimize(self.gpsurrogate.xlimits[:,0], self.gpsurrogate.xlimits[:,1])
     lopt = opt[0]
@@ -2577,16 +2841,18 @@ class BnBAlgorithm(GPBoundComputationCommon, BnBAlgorithmBase):
   def initialize(self, l0=None, u0=None, queue=None, partition=None, transfer_lower_bound=None):
     """Initialize a root or reclassify a full leaf partition from previous iteration."""
     restart_worker = None
+    # reset batch candidates as well
+    self._batch_candidates = {}
     if partition is not None:
       restart_worker = branching_wrapper(self.acqf, LUB=np.inf, epsilon_prune=self.epsilon_prune,
                                          acqf_UB_solver=self.acqf_UB_solver, random_seed=self.random_seed,
                                          opt_mode=self.opt_mode, nearest_neighbor_pairs=self.nearest_neighbor_pairs,
                                          diagnostics=self.diagnostics, restart_lower_bound=transfer_lower_bound,
                                          pairs_dist=self.pairs_dist)
-      
-    return initialize_async_search(self, l0=l0, u0=u0, queue=queue, partition=partition,
+    ret =  initialize_async_search(self, l0=l0, u0=u0, queue=queue, partition=partition,
                                    transfer_lower_bound=transfer_lower_bound, restart_worker=restart_worker)
-
+    self._remember_batch_candidates(self.leaf_partition.leaves.values())
+    return ret
   def bnboptimize(self, l_init, u_init):
     """Run the certified asynchronous leaf-partition event loop."""
     return run_async_search(self, branching_wrapper, l_init, u_init)

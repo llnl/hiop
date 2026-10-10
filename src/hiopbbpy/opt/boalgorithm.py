@@ -235,13 +235,15 @@ class BOAlgorithmBase:
     self.n_start = 10             # estimating acquisition global optima by determining local optima n_start times and then determining the discrete max of that set
     self.batch_size = 1           # batch size
     self.nretraingp = 1           # number of BO iterations after which the GP is fully retrained
-    # save some internal member train
+    # save some internal member training data and true function evaluations (that do not end up in the GP train)
     self.y_hist = None            # History of evaluations
     self.x_hist = None            # History of evaluations
     self.x_BO_opt = None          # Best point generated via BO
     self.y_BO_opt = None          # Best objective value generated via BO
     self.x_opt = None             # Best feasible point  (BO + feasible initial training points)
-    self.y_opt = None             # Best objective value (BO + feasible initial training points) 
+    self.y_opt = None             # Best objective value (BO + feasible initial training points)
+    self.x_evaluated = None       # points at which true function was evaluated
+    self.y_evaluated = None       # evaluated values for the above
     self.logger = Logger()        # logger
     self.bnb_num_branch_hist = [] # number of BnB branches visited per BO iter
 
@@ -257,6 +259,8 @@ class BOAlgorithmBase:
     self.xtrain = xtrain
     self.ytrain = ytrain
 
+  def getEvaluationArchive(self):
+    return (np.array(self.x_evaluated, copy=True), np.array(self.y_evaluated, copy=True))
   # Method to perform Bayesian optimization
   def optimize(self, fun):
     raise NotImplementedError("Child class of hiopEGO should implement method optimize")
@@ -314,7 +318,6 @@ class BOAlgorithm(BOAlgorithmBase):
     assert self.LCB_beta > 0., f"Invalid LCB beta (variance penalty): {self.LCB_beta}"
 
     batch_size = options.get('batch_size', 1)
-
     self.setAcquisitionType(acquisition_type, batch_size)
 
     self.obj_evaluator = options.get('obj_evaluator', self.obj_evaluator)
@@ -346,6 +349,26 @@ class BOAlgorithm(BOAlgorithmBase):
       self.solver_options = options.get('solver_options', self.solver_options)
 
     self.opt_solver = opt_solver
+
+    # BnB batching 
+    self.bnb_batch_method = options.get("bnb_batch_method", "kmeans")
+    self.bnb_batch_options = dict(options.get("bnb_batch_options", {}))
+
+    self.bnb_batch_max_add = options.get("bnb_batch_max_add", 1)
+    if (isinstance(self.bnb_batch_max_add, bool) or not isinstance(self.bnb_batch_max_add, (int, np.integer))
+        or self.bnb_batch_max_add < 1 or self.bnb_batch_max_add > self.batch_size):
+      raise ValueError("bnb_batch_max_add must be an integer and satisfy 1 <= bnb_batch_max_add <= batch_size")
+    
+    if self.bnb_batch_method not in ("kmeans", "conditional_variance"):
+      raise ValueError("Unknown bnb_batch_method")
+
+    if self.bnb_batch_method == "conditional_variance":
+      if self.opt_solver != "BnB" or self.acquisition_type != "LCB":
+        raise ValueError("Conditional-variance batching requires BnB and LCB")
+      self.batch_type = "BnB-CV"
+      self.logger.info(f"BnB-CV GP additions per iteration: at most {self.bnb_batch_max_add}")
+
+    # BnB default initializations 
     self.bnb_queue = None  # legacy; not a complete spatial partition
     self.bnb_partition = None
     self.bnb_lower_bound_transfer = options.get('BnBLowerBoundTransfer', None)
@@ -356,20 +379,10 @@ class BOAlgorithm(BOAlgorithmBase):
     self.bnb_warm_start = options.get('bnb_warmstart', self.bnb_warm_start)
     assert isinstance(self.bnb_warm_start, bool), "provided bnb_warmstart is not a boolean type"
 
-
-    
-    self.bnb_affordable_lcb_transfer = options.get(
-        "bnb_affordable_lcb_transfer",
-        False,
-    )
-    if not isinstance(
-        self.bnb_affordable_lcb_transfer, bool
-    ):
-      raise TypeError(
-          "bnb_affordable_lcb_transfer must be bool"
-      )
-
-    
+    # transfer of BnB bounds
+    self.bnb_affordable_lcb_transfer = options.get("bnb_affordable_lcb_transfer", False)
+    if not isinstance(self.bnb_affordable_lcb_transfer, bool):
+      raise TypeError("bnb_affordable_lcb_transfer must be bool")
     # Transfer prepared at the end of the preceding BO iteration.
     self._bnb_affordable_transfer = None
 
@@ -379,6 +392,7 @@ class BOAlgorithm(BOAlgorithmBase):
     if self.bnb_affordable_lcb_transfer:
       if (self.opt_solver != "BnB" or self.acquisition_type != "LCB"):
         raise ValueError("Affordable transfer requires BnB and LCB with BO solver")
+      #fixme
       if self.batch_size != 1:
         raise ValueError("Affordable tranfer only supports batch_size=1")
       if not self.bnb_warm_start:
@@ -515,8 +529,14 @@ class BOAlgorithm(BOAlgorithmBase):
 
   # Method to perform Bayesian optimization
   def optimize(self):
-    x_train = self.xtrain
-    y_train = self.ytrain
+    # x_train/y_train below denote only the active GP training set.
+    x_train = np.array(self.xtrain, copy=True)
+    y_train = np.array(self.ytrain, copy=True)
+
+    # Complete true-evaluation archive.
+    
+    x_evaluated = np.array(x_train, copy=True)
+    y_evaluated = np.array(y_train, copy=True)
     self.logger.iterations(f"Best objective from {np.size(x_train, 0)} initial samples: {np.min(y_train):.4e} ")
 
     self._train_surrogate(x_train, y_train, full_retrain=True)
@@ -546,8 +566,8 @@ class BOAlgorithm(BOAlgorithmBase):
 
     self.x_hist = []
     self.y_hist = []
-    
     prev_best_y = best_constrained_train_y
+    self.bo_iteration_hist = []    
     for i in range(self.bo_maxiter):
       self.logger.critical(f"*****************************")
       self.logger.critical(f"Iteration {i+1}/{self.bo_maxiter}")
@@ -579,7 +599,7 @@ class BOAlgorithm(BOAlgorithmBase):
                           f"{sample_metrics['pairs_corr_ge_0p99']}")
 
       selected_point_metrics = []
-      
+      q_batch = self.batch_size      
       y_train_virtual = y_train.copy() # old training + batch_size num of virtual points
       if self.opt_solver != "BnB":
         for j in range(self.batch_size):
@@ -606,6 +626,7 @@ class BOAlgorithm(BOAlgorithmBase):
           sd_val = np.sqrt(self.gpsurrogate.variance(np.array([x_new])).item())
           self.logger.scalars(f"  (mu, sigma) at new sample x: {mean_val}, {sd_val} ")
       else:
+        # BNB execution path here
         if self.acquisition_type == "LCB":
           acqf = LCBacquisition(self.gpsurrogate, beta=self.LCB_beta)
         elif self.acquisition_type == "EI":
@@ -613,7 +634,9 @@ class BOAlgorithm(BOAlgorithmBase):
         else:
           raise NotImplementedError("No implemented acquisition_type associated to"+self.acquisition_type)
         # Instantiate BnB with GP surrogate and BO callback
-        bnb = BnBAlgorithm(acqf, options=self.solver_options, BOit=i)
+        bnb_options = dict(self.solver_options)
+        bnb_options["collect_batch_candidates"] = (self.bnb_batch_method == "conditional_variance")
+        bnb = BnBAlgorithm(acqf, options=bnb_options, BOit=i)        
      
         # Initialize BnB (perhaps use old set of boxes if self.bnb_queue is not None)
         #bnb.initialize(partition=self.bnb_partition, transfer_lower_bound=self.bnb_lower_bound_transfer)
@@ -629,38 +652,89 @@ class BOAlgorithm(BOAlgorithmBase):
         # Run BnB optimization
         best_xopt = bnb.optimize()
         self.logger.info(f"BnB nodes explored: {bnb.num_branches}")
-        print("size of BnB queue = ", len(bnb.queue))
-        print("optimal point = ", best_xopt)
-        # experimental, testing clustering of BnB queue----
-        bnb_nodes = bnb.get_candidate_nodes()
-        node_pts = np.array([node.aq_U_x for node in bnb_nodes])
-        """
-          approach -- 1) split queue into batch_size 
-                         number of clusters
-                      2) from each cluster grab point
-                         with best upper-bound
-        """
-        n_clusters = int(self.batch_size)
-        x_new = []
-        if n_clusters == 1:
-          x_new.append(best_xopt)
-        elif n_clusters > 1:
-          assert len(bnb_nodes) >= n_clusters, "not enough BnB nodes to acquire requested number of batch points"
-          kmeans = KMeans(n_clusters=n_clusters, init='k-means++', n_init='auto', random_state=self.solver_options.get("random_seed", 42))
-          cluster_labels = kmeans.fit_predict(node_pts)
-          clusters = [[node_pts[i] for i, val in enumerate(cluster_labels) if val == lbl] for lbl in range(n_clusters)]
-          UBs_by_cluster = [[bnb_nodes[i].aq_U for i, val in enumerate(cluster_labels) if val == lbl] for lbl in range(n_clusters)]
-          s_score = silhouette_score(node_pts, cluster_labels)
-          print("Silhouette score = ", s_score)
-          for i in range(n_clusters):
-            print("cluster # ", i, " contains ", len(clusters[i]), " pts")
-            arg = np.argmin(UBs_by_cluster[i])
-            print("smallest acqf UB in cluster = ", UBs_by_cluster[i][arg])
-            print(" at x = ", clusters[i][arg])
-            print("-"*40)
-            x_new.append(clusters[i][arg])
-            distances = np.zeros(int((len(clusters[i]) * len(clusters[i]) -1 ) / 2))
-        x_new = np.atleast_2d(x_new)
+        self.logger.info(f"size of BnB queue = {len(bnb.queue)}")
+        self.logger.info(f"optimal point = {best_xopt}")
+
+        self.bo_stop_tol = 0.01
+        # BO stopping criterion based on remaining LCB improvement potential and small exploration term
+
+        if self.acquisition_type == "LCB" and self.bo_stop_tol > 0.0:
+
+          # Best feasible true incumbent over all evaluated points.
+          archive_feas = (self.prob.if_feasible(x_evaluated) & np.isfinite(y_evaluated).ravel())
+
+          if np.any(archive_feas):
+            feasible_idx = np.flatnonzero(archive_feas)
+            k = int(np.argmin(y_evaluated[archive_feas].reshape(-1)))
+            best_idx = int(feasible_idx[k])
+
+            x_incumbent = np.asarray(x_evaluated[best_idx], dtype=float).reshape(-1)
+            f_incumbent = float(np.asarray(y_evaluated[best_idx]).reshape(-1)[0])
+
+            # Evaluate the CURRENT LCB at the best true incumbent.
+            lcb_at_incumbent = float(acqf.scalar_evaluate(x_incumbent))
+
+            # Globally minimized LCB returned by BnB.
+            lcb_min = float(acqf.scalar_evaluate(np.asarray(best_xopt, dtype=float)))
+            
+            scale = max(1.0, abs(f_incumbent))
+            incumbent_gap = abs(lcb_at_incumbent - f_incumbent) / scale
+
+            global_lcb_gap = abs(lcb_min - f_incumbent) / scale
+
+            self.logger.info(f"BO stopping diagnostics: incumbent f_best={f_incumbent:.6e}  "
+                             f"LCB_at_best={lcb_at_incumbent:.6e} gap={incumbent_gap:.6e} | "
+                             f"LCB best LCB_at_LCB_best={lcb_min:.6e} gap={global_lcb_gap:.6e}")
+
+
+
+            if (incumbent_gap <= self.bo_stop_tol and global_lcb_gap <= self.bo_stop_tol):
+              self.logger.critical(f"BO stopping: LCB converged: incumbent LCB gap={incumbent_gap:.3e} | "
+                  f"gap at LCB best {global_lcb_gap:.3e}. tol={self.bo_stop_tol:.3e}")
+              break            
+
+        
+        if self.bnb_batch_method == "conditional_variance":
+          selection_options = dict(self.bnb_batch_options)
+          selection_options.setdefault("is_feasible", self.prob.if_feasible)
+
+          # Avoid reevaluating points that were previously evaluated but not assimilated in the active GP
+          selection_options.setdefault("exclude_points", x_evaluated)
+          
+          x_new, batch_info = bnb.select_batch_condvar(self.batch_size, **selection_options)
+
+          self.logger.info(f"BnB-CV batch: candidates={batch_info['candidate_count']} "
+                           f"pool={batch_info['pool_size']} selected={len(x_new)}/{self.batch_size} "
+                           f"delta={batch_info['delta']:.6e}")
+          self.logger.info(f"  LCB values: {batch_info['lcb']}")
+          self.logger.info(f"  Conditional variances at selection: {batch_info['conditional_variance']}")
+          self.logger.scalars(f"Acquisition-suboptimality bounds: {batch_info['lcb_suboptimality_bound']}")
+          if len(x_new) < self.batch_size:
+            self.logger.info("Small BnB-CV batch: insufficient distinct candidates or remaining conditional variance.")
+
+        elif self.batch_size == 1:
+          x_new = np.atleast_2d(best_xopt)
+
+        else:
+          # K-means batching
+          bnb_nodes = bnb.get_candidate_nodes()
+          node_pts = np.asarray([node.aq_U_x for node in bnb_nodes])
+          if len(bnb_nodes) < self.batch_size:
+            raise RuntimeError("Not enough BnB nodes for K-means batching")
+
+          labels = KMeans(n_clusters=self.batch_size, init="k-means++", n_init="auto",
+                          random_state=self.solver_options.get("random_seed", 42)).fit_predict(node_pts)
+          chosen = []
+          for label in range(self.batch_size):
+            members = np.flatnonzero(labels == label)
+            if members.size == 0:
+              raise RuntimeError("Empty K-means cluster in BnB batching")
+            values = [float(bnb_nodes[k].aq_U) for k in members]
+            chosen.append(members[int(np.argmin(values))])
+          x_new = node_pts[chosen]
+
+        q_batch = len(x_new)
+        x_eval = np.asarray(x_new, dtype=float)
         
         diagnostic_old_x = np.array(x_train, copy=True)
         for point in x_new:
@@ -670,17 +744,97 @@ class BOAlgorithm(BOAlgorithmBase):
           # with points selected earlier in this batch.
           diagnostic_old_x = np.vstack([diagnostic_old_x, point])
         
-        x_train = np.vstack([x_train, x_new])
         if self.bnb_warm_start:
           # Update queue in order to warm-start BnB at next BO step
           self.bnb_partition = bnb.export_partition()
           self.bnb_queue = bnb.queue  # compatibility/diagnostics only
         self.bnb_num_branch_hist.append(bnb.num_branches)
 
-      y_new = self.obj_evaluator.run(self.prob.evaluate, x_train[-self.batch_size:])
-      y_new = np.array(y_new)
-      y_train = np.vstack([y_train, y_new])
+      ####################################################################
+      # True / black-box evaluations: evaluate the complete BO batch.
+      ###################################################################
+      if self.opt_solver == "BnB":
+        x_eval = np.asarray(x_new, dtype=float)
+      else:
+        # Existing non-BnB code has already appended the selected points
+        # to x_train while constructing the virtual batch.
+        x_eval = np.asarray(x_train[-q_batch:], dtype=float)
 
+      # evaluate true function for all batch candidates
+      y_new = np.asarray(self.obj_evaluator.run(self.prob.evaluate, x_eval))
+
+      # Every expensive evaluation is retained
+      x_evaluated = np.vstack([x_evaluated, x_eval])
+      y_evaluated = np.vstack([y_evaluated, y_new])
+
+
+      ###############################################################################
+      # Select the subset assimilated into the active GP.
+      #
+      # For BnB-CV, x_eval is already ordered as
+      #   0: LCB global minimizer point
+      #   1: max conditional variance given point 0
+      #   2: max conditional variance given points 0,1
+      #   ...
+      #
+      # Hence the first 'bo_bnb_batch_max_add' points give a default exploitation
+      # and the heuristical pure-exploration subset.
+      #
+      # If a batch point improves the best known true function, it will be added to
+      # the GP (even when bnb_batch_max_add == 1)
+      ###############################################################################
+      if (self.opt_solver == "BnB" and self.bnb_batch_method == "conditional_variance"):
+        n_gp_add = min(self.bnb_batch_max_add, q_batch)
+
+        # assimilate first n_gp_add, and maybe one batch point that improves true function 
+        gp_idx = np.arange(n_gp_add)
+
+        # see if true func is improved
+        feas_new = self.prob.if_feasible(x_eval) & np.isfinite(y_new).ravel()
+        j_inc = -1
+        if np.any(feas_new):
+          feas_idx = np.flatnonzero(feas_new)
+          j_inc = int(feas_idx[np.argmin(y_new[feas_new].reshape(-1))])
+          f_inc = float(np.asarray(y_new[j_inc]).reshape(-1)[0])
+          
+          if f_inc < prev_best_y:
+            if j_inc >= n_gp_add:
+              gp_idx = np.append(gp_idx, j_inc)
+              self.logger.info(f"BnB-CV: new incumbent found in batch at idx {j_inc}: adding it to GP")
+          else:
+            j_inc = -1 #invalidate idx since no global improvement
+        # some output info
+        if 'batch_info' in locals():
+          cv = np.asarray(batch_info["conditional_variance"], dtype=float)
+          lcb_vals = np.asarray(batch_info["lcb"], dtype=float,)
+          self.logger.info("BnB-CV conditional variance:")
+          for j in range(q_batch):
+            suffix = "GP" if j < n_gp_add else "eval-only"
+            if j==j_inc: suffix = "GP (new incumb)"
+            f_true = float(np.asarray(y_new[j]).reshape(-1)[0])
+            self.logger.info(f"  batch[{j}] LCB={lcb_vals[j]:.6e} var_cond={cv[j]:.6e} f_true={f_true:.12e} [{suffix}]")
+        
+        x_gp_add = x_eval[gp_idx]
+        y_gp_add = y_new[gp_idx]
+
+        x_train = np.vstack([x_train, x_gp_add,])
+        y_train = np.vstack([y_train, y_gp_add,])
+
+        self.logger.info(f"BnB-CV GP assimilation: {gp_idx.size}/{q_batch} evaluated points")
+
+        #if 'batch_info' in locals():
+        #  self.logger.info(f"  assimilated conditional variances: {batch_info['conditional_variance'][:n_gp_add]}")
+        #  self.logger.info(f"  assimilated LCB values: {batch_info['lcb'][:n_gp_add]}")
+
+      else:
+        # Preserve existing behavior for the other, non BnB-CV batch methods.
+
+        # for non-BnB batching, x_new / x_eval were already added to x_train
+        if self.opt_solver == "BnB":
+          x_train = np.vstack([x_train, x_eval,])
+        y_train = np.vstack([y_train, y_new,])
+
+      
       # Full theta optimization after each nretrainGP completed iterations.
       full_retrain = (i + 1) % self.nretraingp == 0
       next_transfer = None
@@ -707,8 +861,8 @@ class BOAlgorithm(BOAlgorithmBase):
 
       self._bnb_affordable_transfer = next_transfer
       
-      feas_new = self.prob.if_feasible(x_train[-self.batch_size:])
-      self.logger.debug(f"Feasible samples: {np.sum(feas_new)}/{self.batch_size}")
+      feas_new = self.prob.if_feasible(x_eval)
+      self.logger.debug(f"Feasible samples: {np.sum(feas_new)}/{q_batch}")
 
       min_y_new = np.min(y_new)
       curr_best_y = np.min([prev_best_y, min_y_new])
@@ -720,41 +874,41 @@ class BOAlgorithm(BOAlgorithmBase):
       self.logger.scalars(f"Objective function improvement: {prev_best_y - curr_best_y:.4e}")
 
       # Save the new sample points and objective evaluations
-      for j in range(1, self.batch_size+1):
-        self.x_hist.append(x_train[-j].flatten())
-        self.y_hist.append(y_train[-j].flatten())
+      for j in range(q_batch):
+        self.x_hist.append(x_eval[j].flatten())
+        self.y_hist.append(y_new[j].flatten())
+        self.bo_iteration_hist.append(i + 1)
+        
+      self.logger.debug(f"Sample point(s) X:")
 
-      if self.batch_size == 1:
-        self.logger.debug(f"Sample point X:")
-      else:
-        self.logger.debug(f"Sample points X:")
-      for j in range(self.batch_size):
-        self.logger.debug(f"  {x_train[-j-1]}")
+      for j in range(q_batch):
+        self.logger.debug(f"  {x_eval[j]}")
 
-      if self.batch_size == 1:
-        self.logger.debug(f"Observation Y:")
-      else:
-        self.logger.debug(f"Observations Y:")
-      for j in range(self.batch_size):
-        self.logger.debug(f"  {y_new[-j-1]}")
+      self.logger.debug(f"Observation(s) Y:")
+      for j in range(q_batch):
+        self.logger.debug(f"  {y_new[j]}")
 
-      for j, point_metrics in enumerate(selected_point_metrics):
-        self.logger.scalars(f"Selected-point clustering at end of BO iteration {bo_iteration_number}, batch point {j+1}: ")
-        self.logger.scalars(f"  domain_nn(Euclidean dist)="
-                            f"{point_metrics['domain_nn']:.6e}, "
-                            f"smt_nn(distance in SMT coordinates)="
-                            f"{point_metrics['smt_nn']:.6e}, "
-                            f"kernel_nn(theta-weighted distances)="
-                            f"{point_metrics['kernel_nn']:.6e}, "
-                            f"kernel_corr_to_nearest="
-                            f"{point_metrics['kernel_corr_to_nearest']:.6e}, "
-                            f"nearest_old_index="
-                            f"{point_metrics['nearest_old_index']}")
+      #for j, point_metrics in enumerate(selected_point_metrics):
+      #  self.logger.scalars(f"Selected-point clustering at end of BO iteration {bo_iteration_number}, batch point {j+1}: ")
+      #  self.logger.scalars(f"  domain_nn(Euclidean dist)="
+      #                      f"{point_metrics['domain_nn']:.6e}, "
+      #                      f"smt_nn(distance in SMT coordinates)="
+      #                      f"{point_metrics['smt_nn']:.6e}, "
+      #                      f"kernel_nn(theta-weighted distances)="
+      #                      f"{point_metrics['kernel_nn']:.6e}, "
+      #                      f"kernel_corr_to_nearest="
+      #                      f"{point_metrics['kernel_corr_to_nearest']:.6e}, "
+      #                      f"nearest_old_index="
+      #                      f"{point_metrics['nearest_old_index']}")
 
       prev_best_y = curr_best_y
 
+    # active GP points
     self.setTrainingData(x_train, y_train)
-    
+    # All true evaluations, including points omitted from GP.
+    self.x_evaluated = np.array(x_evaluated, copy=True)
+    self.y_evaluated = np.array(y_evaluated, copy=True)
+
     # Save the BO optimal (excluding initial training pts) results
     # filter non-finite BB objective function values --> inf
     y_hist_filt = np.where(np.isfinite(self.y_hist), self.y_hist, np.inf)
@@ -773,7 +927,7 @@ class BOAlgorithm(BOAlgorithmBase):
     
     if np.isfinite(self.y_BO_opt) or y_train_fea.size > 0:
       if self.y_BO_opt < best_constrained_train_y:
-        self.logger.critical(f"Optimal at BO iteration: {idx_BO_opt//self.batch_size+1} ")
+        self.logger.critical(f"Optimal at BO iteration: {self.bo_iteration_hist[idx_BO_opt]} ")
       else:
         self.logger.critical(f"BO did not generate points more optimal than initial training points")
       self.logger.critical(f"Best (BO) point: {self.x_BO_opt.flatten()}")

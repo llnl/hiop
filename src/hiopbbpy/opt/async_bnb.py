@@ -617,6 +617,7 @@ class AsyncLeafPartition:
       leaf.metadata.pop("task_attempt", None)
       leaf.metadata.pop("task_errors", None)
       leaf.metadata.pop("diagnostics", None)
+      leaf.metadata.pop("expsec_weights", None)
       
       if refresh_results is None:
         leaf.aq_L = float(transfer_lower_bound(old_leaf))
@@ -1017,6 +1018,10 @@ def run_async_search(
   def record_children(children: Sequence[BnBNode]) -> None:
     if not children:
       return
+    remember = getattr(algorithm, "_remember_batch_candidates", None)
+    if remember is not None:
+      remember(children)
+
     algorithm.num_parent_tasks += 1
     algorithm.num_branches += len(children)
     algorithm.branch_history.append(algorithm.num_branches)
