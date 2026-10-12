@@ -752,7 +752,7 @@ bool hiopKKTLinSysCompressedSparseXDYcYd::prepare_transient_fallback()
 
   if(nullptr == fallback_matrix_) {
     fallback_matrix_ = LinearAlgebraFactory::create_matrix_sparse(
-        "default", primary_matrix->m(), primary_matrix->n(), primary_matrix->numberOfNonzeros());
+        "host", primary_matrix->m(), primary_matrix->n(), primary_matrix->numberOfNonzeros());
     fallback_linsys_ = new hiopLinSolverSymSparseMA57(fallback_matrix_, nlp_);
     fallback_rhs_ = LinearAlgebraFactory::create_vector("default", primary_matrix->m());
     fallback_fact_acceptor_ = new hiopFactAcceptorIC(perturb_calc_, nlp_->m_eq() + nlp_->m_ineq());
