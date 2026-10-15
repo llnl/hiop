@@ -46,6 +46,17 @@ jobs:
           source ~/.bashrc
           conda activate base
           python -c "import mpi4py; print('mpi4py install OK')"
+      
+      - name: Install cvxpy via conda
+        run: |
+          conda init bash
+          conda install -c conda-forge cvxpy 
+      
+      - name: Verify cvxpy installation
+        run: |
+          source ~/.bashrc
+          conda activate base
+          python -c "import cvxpy; print('cvxpy install OK')"
 
       - name: Install HiOpBBPy
         run: |

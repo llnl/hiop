@@ -45,9 +45,9 @@ class IpoptProb:
             or constraint == {}
             or constraint == []
         )
+    self.cl = []
+    self.cu = []
     if unconstrained:
-      self.cl = []
-      self.cu = []
       self.ncon = 0
     elif isinstance(self.cons, list):
       # constraints is provided as a list of dict, supported by SLSQP and Ipopt

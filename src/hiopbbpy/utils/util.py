@@ -73,6 +73,10 @@ class MPIEvaluator(Evaluator):
 
   1. Single-node with ProcessPoolExecutor or ThreadPoolExecutor:
      python application.py
+    
+     It should be noted that performance issues due to (lack of) thready affinity
+     was observed on LC clusters with ThreadPoolExecutor. In all these cases, 
+     ProcessPoolExecutor worked flawelessly. We used srun -n 1 -c cores_or_threads 
 
   2. Single-node with MPI (legacy mode):
      env MPI4PY_FUTURES_MAX_WORKERS=8 mpiexec -n 1 python application.py
@@ -105,34 +109,40 @@ class MPIEvaluator(Evaluator):
   """
   def __init__(self, function_mode=True, executor=None, profiling=False,
                  task_name="MPITASK", run_root="./hiop_temp", use_run_dir=False):
-    # If no executor provided, create a default ThreadPoolExecutor
+    # If no executor provided, create a default ProcessPoolExecutor
     if executor is None:
-      from concurrent.futures import ThreadPoolExecutor
+      from concurrent.futures import ProcessPoolExecutor
+      #from concurrent.futures import ThreadPoolExecutor
       import multiprocessing
-      max_workers = multiprocessing.cpu_count()
-      executor = ThreadPoolExecutor(max_workers=max_workers)
-      print(f"No executor provided for {task_name}, using ThreadPoolExecutor with {max_workers} workers")
+      max_workers = multiprocessing.cpu_count()-1
+      #executor = ThreadPoolExecutor(max_workers=max_workers)
+      executor = ProcessPoolExecutor(max_workers=max_workers)
+      print(f"No executor provided for {task_name}, using ProcessPoolExecutor with {max_workers} workers")
 
     self.manager = EvaluationManager(executor, profiling=profiling, task_name=task_name)
     self.function_mode = function_mode
     self.run_root = Path(run_root)
-    self.run_root.mkdir(parents=True, exist_ok=True)
     self.use_run_dir = use_run_dir
-    print(f"Create Evaluator for task: {task_name}")
+    if self.use_run_dir:
+      self.run_root.mkdir(parents=True, exist_ok=True)
+    nworkers = getattr(executor, "_max_workers", None)
+    print(f"Create Evaluator for task: {task_name} using {executor.__class__.__name__} with {nworkers} workers")
   
   def __del__(self):
     del self.manager
   
-  def set_task_name(self, task_name):
+  def set_task_name(self, task_name) -> None:
     self.manager.set_task_name(task_name)
-  
-  def run(self, fun, Xin):  
+    return
+ 
+  def submit_tasks(self, fun, Xin) -> None:
     nevals = Xin.shape[0]
 
-    # unique batch directory so repeated calls do not reuse temp_dir_0, temp_dir_1, ...
-    batch_id = f"{self.manager.task_name}_{os.getpid()}_{time.time_ns()}_{uuid.uuid4().hex[:8]}"
-    batch_dir = self.run_root / batch_id
-    batch_dir.mkdir(parents=True, exist_ok=False)
+    if self.use_run_dir:
+      # unique batch directory so repeated calls do not reuse temp_dir_0, temp_dir_1, ...
+      batch_id = f"{self.manager.task_name}_{os.getpid()}_{time.time_ns()}_{uuid.uuid4().hex[:8]}"
+      batch_dir = self.run_root / batch_id
+      batch_dir.mkdir(parents=True, exist_ok=False)
 
     for i in range(nevals):
       xi = np.atleast_2d(Xin[i])
@@ -144,13 +154,16 @@ class MPIEvaluator(Evaluator):
         kwargs["run_dir"] = str(run_dir)
 
       # submit (index, x) so we can restore original order later
-      self.manager.submit_tasks(
-        _run_indexed_fun,
-        [(fun, i, xi)],
-        **kwargs,
-      )
 
+      self.manager.submit_tasks(_run_indexed_fun, [(fun, i, xi)], **kwargs)
+    return None
+
+
+  def run(self, fun, Xin):  
+    nevals = Xin.shape[0]
+    self.submit_tasks(fun, Xin)
     self.manager.sync()
+
     Xout, Fout = self.manager.retrieve_results()
 
     # restore original order using returned indices
@@ -174,8 +187,35 @@ class MPIEvaluator(Evaluator):
         Y[i, 0] = float(arr.reshape(-1)[0])
     else:
       Y = [val[0] for val in ordered]
-
     return Y
+  def num_submitted_tasks(self):
+    return self.manager.num_submitted_tasks()
+  def num_workers(self):
+    return self.manager._get_num_workers()
+  def sync(self):
+    self.manager.sync()
+    return
+  def retrieve_results(self):
+    inputs, indexed_results = self.manager.retrieve_results()
+    values = []
+    for task_input, out in zip(inputs, indexed_results):
+      if out is None:
+        # EvaluationManager records failed/cancelled futures as None.  Silently
+        # skipping one would leave its BnB parent permanently marked in-flight.
+        raise RuntimeError(f"Asynchronous evaluation failed for input: {task_input!r}")
+      if not isinstance(out, tuple) or len(out) != 2:
+        raise RuntimeError(f"Unexpected indexed evaluator result: {out!r}")
+      _, value = out
+      values.append(value)
+
+    if self.function_mode:
+      y = np.empty((len(values), 1), dtype=float)
+      for i, value in enumerate(values):
+        arr = np.asarray(value, dtype=float)
+        y[i, 0] = float(arr.reshape(-1)[0])
+      return y
+
+    return [value[0] for value in values]
 
 def _run_indexed_fun(fun, idx, x, **kwargs):
     return idx, fun(x, **kwargs)

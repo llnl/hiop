@@ -1,0 +1,3278 @@
+import numpy as np
+from numpy.random import uniform
+import cvxpy as cp
+import heapq
+from scipy import linalg, sparse
+from scipy.stats import qmc
+from .acquisition import EIacquisition, LCBacquisition
+from ..utils.util import Evaluator, MPIEvaluator, Logger
+from .bnb_utils import * 
+from .opt_utils import minimizer_wrapper, fit_common_se_point_from_ratios
+from .async_bnb import BnBNode, BranchResult, RestartResult, CloseReason, LeafState, initialize_async_search, run_async_search
+from itertools import count
+
+from scipy.spatial import cKDTree
+
+try:
+  from mpi4py import MPI
+except ImportError:
+  print("unable to import mpi4py")
+
+import time
+import math
+import warnings
+import sys
+
+class _BatchKrigingCovariance:
+  """Lazy covariance for the current scalar, continuous SMT KRG.
+
+  Covariances are divided by sigma2 internally. The GP is not refitted.
+  """
+
+  def __init__(self, bnb, X):
+    sm = bnb.gpsurrogate.surrogatesmt
+    if sm.options["poly"] != "constant":
+      raise NotImplementedError("Batch covariance requires poly='constant'")
+    if not getattr(sm, "is_continuous", True):
+      raise NotImplementedError("Continuous inputs are required")
+    if "is_ri" in sm.options and sm.options["is_ri"]:
+      raise NotImplementedError("Reinterpolating KRG is not supported")
+
+    par = sm.optimal_par
+    scale = np.asarray(par["sigma2"], dtype=float).reshape(-1)
+    if (scale.size != 1 or not np.isfinite(scale[0]) or scale[0] <= 0.0):
+      raise ValueError("A positive scalar SMT process variance is required")
+
+    self.sigma2 = float(scale[0])
+    self.kind = bnb.kernel_spec
+    self.power = getattr(bnb, "p", 1.0)
+    self.theta = np.broadcast_to(np.asarray(bnb.theta, dtype=float).reshape(-1), (X.shape[1],))
+    self.Z = (X - bnb.X_offset) / bnb.X_scale
+
+    # W[:, i] = C^{-1} k(Xtrain, X[i]).
+    self.W = linalg.solve_triangular(par["C"], self.kernel(bnb.Xc, self.Z), lower=True)
+
+    # Constant-trend correction, matching SMT's variance formula.
+    self.H = linalg.solve_triangular(par["G"].T, par["Ft"].T @ self.W - np.ones((1, len(X))), lower=True)
+
+    self.diag = 1.0 - np.sum(self.W**2, axis=0) + np.sum(self.H**2, axis=0)
+    self.roundoff = 1.e-9 * max(1.0, float(np.max(np.abs(self.diag))))
+    if (not np.all(np.isfinite(self.diag)) or np.min(self.diag) < -self.roundoff):
+      raise FloatingPointError("Invalid posterior covariance diagonal")
+    self.diag = np.maximum(self.diag, 0.0)
+
+    # Detect kernel, scaling, or SMT API mismatches.
+    ii = np.unique(np.linspace(0, len(X) - 1, min(16, len(X)), dtype=int))
+    reference = np.asarray(bnb.gpsurrogate.variance(X[ii])).reshape(-1)
+    if not np.allclose(self.sigma2 * self.diag[ii], reference, rtol=1.e-6, atol=1.e-10 * self.sigma2,):
+      raise RuntimeError("Batch covariance does not match SMT variances")
+
+  def kernel(self, A, B):
+    """Correlation in SMT coordinates; product-form Matern kernels."""
+    logk = np.zeros((len(A), len(B)))
+    for j, theta in enumerate(self.theta):
+      distance = np.abs(A[:, j, None] - B[None, :, j])
+
+      if self.kind == "pow_exp":
+        logk -= theta * distance**self.power
+      elif self.kind in ("matern32", "matern52"):
+        root = np.sqrt(3.0 if self.kind == "matern32" else 5.0)
+        t = root * theta * distance
+        polynomial_minus_one = (t if self.kind == "matern32" else t + t*t/3.0)
+        logk += np.log1p(polynomial_minus_one) - t
+      else:
+        raise NotImplementedError(self.kind)
+
+    return np.exp(logk)
+
+  def column(self, j):
+    """Return C_t(X, X[j]) / sigma2 without forming C_t(X, X)."""
+    col = self.kernel(self.Z, self.Z[j:j+1]).ravel() - self.W.T @ self.W[:, j] + self.H.T @ self.H[:, j]        
+    col[j] = self.diag[j]
+    return col
+
+
+def _greedy_condvar(cov, q, noise_variance=0.0, variance_rtol=1.e-10):
+  """Select index zero first, then maximize residual latent variance.
+
+  Constructs the full candidate-by-candidate covariance matrix.
+  """
+  m = len(cov.diag)
+  q = min(q, m)
+  residual = cov.diag.copy()
+  available = np.ones(m, dtype=bool)
+  
+  # Columns encode successive covariance reductions.
+  factors = np.zeros((m, q))
+  selected, selected_var = [], []
+  floor = variance_rtol * float(np.max(residual))
+  noise = noise_variance / cov.sigma2
+  
+  for j in range(q):
+    p = (0 if j == 0 else int(np.argmax(np.where(available, residual, -np.inf))))
+    if j > 0 and residual[p] <= floor:
+      break
+
+    selected.append(p)
+    selected_var.append(cov.sigma2 * residual[p])
+    available[p] = False
+
+    if j + 1 == q:
+      break
+
+    denominator = residual[p] + noise
+    # A zero-variance noiseless observation adds no information.
+    if denominator > 0.0:
+      col = (cov.column(p) - factors[:, :j] @ factors[p, :j])
+      factors[:, j] = col / np.sqrt(denominator)
+      residual -= factors[:, j]**2
+      
+      if (not np.all(np.isfinite(residual)) or np.any(residual[available] < -cov.roundoff)):
+        raise FloatingPointError("Unstable conditional-variance update")
+      residual = np.maximum(residual, 0.0)
+      
+      
+  return np.asarray(selected, dtype=int), np.asarray(selected_var)
+  
+def dist_to_corner(l, u, x):
+  box = np.array([l, u])
+  return np.linalg.norm(np.min(np.abs(box - x), axis=0))
+
+def inside_box(l, u, xk):
+  return np.all(xk >= l) and np.all(xk <= u) # and not a corner node
+
+def branch(l, u, X = None, corner_tol = 1.e-6):
+  # Force to float to avoid truncation issues
+  l = l.astype(float)
+  u = u.astype(float)
+
+  # Pick the dimension with largest length
+  d = np.argmax(u - l)
+  midpt = 0.5 * (l + u)
+
+  # If the midpoint is the same as one bound (degenerate split), return nothing
+  # shouldn't this issue have been caught?
+  if np.isclose(midpt[d], l[d]) or np.isclose(midpt[d], u[d]):
+    return []
+
+  # Generate child boxes
+  l1, u1 = l.copy(), u.copy()
+  l2, u2 = l.copy(), u.copy()
+  
+  # Split the largest axis
+  # along along midpoint of said axis
+  if X is None:
+    u1[d] = midpt[d]
+    l2[d] = midpt[d]
+  else:
+    # training pts (X) that are internal to box defined by l, u
+    internal_training_pts = []
+    for x in X:
+      if inside_box(l, u, x) and dist_to_corner(l, u, x) > corner_tol:
+        internal_training_pts.append(x)
+    if len(internal_training_pts) > 0:
+      minpt_idx = np.argmin(np.linalg.norm(internal_training_pts - midpt, axis=1))
+      xsplit = internal_training_pts[minpt_idx]
+      # closer to l or u?
+      if np.linalg.norm(xsplit - l, np.inf) >= np.linalg.norm(xsplit - u, np.inf):
+        d = np.argmax(np.abs(xsplit -l))
+      else:
+        d = np.argmax(np.abs(xsplit - u))
+    else:
+      xsplit = midpt
+    u1[d] = xsplit[d]
+    l2[d] = xsplit[d]
+  return [(l1, u1), (l2, u2)]
+
+def gradient_branch(l, u, acqf, gradient_floor=0.05):
+    l, u = np.asarray(l,dtype=float),np.asarray(u,dtype=float);
+    w = u-l;
+    #w = np.ones(l.shape, dtype=float)
+    m = .5*(l+u)
+    g = np.abs(np.asarray(acqf.eval_g(np.atleast_2d(m)),dtype=float).reshape(-1));
+    ok = g.size==w.size and np.all(np.isfinite(g)) and np.max(g)>0.
+    s = w*(gradient_floor+(1.-gradient_floor)*g/np.max(g)) if ok else w
+    d = int(np.argmax(s))
+    l0, u0, l1, u1 = l.copy(), u.copy(), l.copy(), u.copy()
+
+    u0[d] = m[d]
+    l1[d] = m[d]
+    #g = np.asarray(acqf.eval_g(np.atleast_2d(m)),dtype=float).reshape(-1);
+    #print("--- g ", g, " || ", d, " | ", l0, " ", u0, " | ", l1, " ", u1) 
+    return [(l0, u0), (l1, u1)]
+
+def minmax_expsec_branch(l, u, bnb, weights=None):
+  l,u = np.asarray(l,float),np.asarray(u,float);
+  n = l.size
+  off,scale = np.asarray(bnb.X_offset).ravel(),np.asarray(bnb.X_scale).ravel()
+  lc,uc = (l-off)/scale,(u-off)/scale
+  X = np.asarray(bnb.Xc,float).reshape(-1,n)
+  th = np.broadcast_to(np.asarray(bnb.theta,float).ravel(),(n,))
+  spec = bnb.kernel_spec
+  if spec not in ("pow_exp","matern32","matern52"):
+    raise ValueError(f"Unsupported kernel {spec}")
+  def q(d,j):
+    if spec=="pow_exp": return -th[j]*d**bnb.p
+    t = np.sqrt(3. if spec=="matern32" else 5.)*th[j]*d
+    return np.log1p(t if spec=="matern32" else t+t*t/3.)-t
+  def gap(a,b):
+    d = np.maximum(b-a,0.);
+    h = np.divide(-np.expm1(-d),d,out=np.ones_like(d),where=d>1.e-4)
+    return np.where(d>1.e-4,np.exp(b)*(1.-h+h*np.log(h)),np.exp((a+b)/2.)*d*d/8.)
+  dn = np.maximum(0.,np.maximum(lc-X,X-uc))
+  df = np.maximum(abs(lc-X),abs(uc-X))
+  L = np.column_stack([q(df[:,j],j) for j in range(n)])
+  U = np.column_stack([q(dn[:,j],j) for j in range(n)])
+  la,lb = L.sum(1),U.sum(1)
+  w = np.ones(X.shape[0]) if weights is None else np.asarray(weights,float).ravel()
+  if w.size != X.shape[0] or np.any(w<0) or not np.all(np.isfinite(w)):
+    print("wwwweights:", weights, flush=True)
+    raise ValueError("Invalid exp-sec weights")
+  candidates=[]
+  for j in range(n):
+    m = .5*(l[j]+u[j])
+    if not l[j]<m<u[j]: continue
+    z = (m-off[j])/scale[j]
+    scores = []
+    for a,b in ((lc[j],z),(z,uc[j])):
+      dn = np.maximum(0.,np.maximum(a-X[:,j],X[:,j]-b))
+      df = np.maximum(abs(a-X[:,j]),abs(b-X[:,j]))
+      scores.append(w@gap(la-L[:,j]+q(df,j), lb-U[:,j]+q(dn,j)))
+    l1,u1,l2,u2 = l.copy(),u.copy(),l.copy(),u.copy()
+    u1[j] = m
+    l2[j] = m
+    candidates.append((max(scores),-(uc[j]-lc[j]),j,[(l1,u1),(l2,u2)]))
+  return min(candidates,key=lambda x:x[:3])[3] if candidates else []
+
+
+def lcb_gradient_at_single_reference(owner, x_ref, sigma_floor=None):
+  """Return the full LCB gradient with respect to k at one feasible kernel vector k_ref=k(x_ref)."""
+  if not isinstance(owner.acqf, LCBacquisition):
+    raise TypeError("lcb_gradient_at_single_reference requires an LCB acquisition")
+  x_ref = np.asarray(x_ref, dtype=float).ravel()
+  training_x = np.asarray(owner.x, dtype=float)
+  x_scale = np.asarray(owner.X_scale, dtype=float).ravel()
+  theta = np.asarray(owner.theta, dtype=float).ravel()
+  dx = np.abs((x_ref[None, :] - training_x) / x_scale[None, :])
+  if owner.kernel_spec == "pow_exp":
+    k_ref = np.exp(-np.sum(theta[None, :] * dx**float(owner.p), axis=1))
+  elif owner.kernel_spec == "matern32":
+    t = np.sqrt(3.0) * theta[None, :] * dx;
+    k_ref = np.prod((1.0 + t) * np.exp(-t), axis=1)
+  elif owner.kernel_spec == "matern52":
+    t = np.sqrt(5.0) * theta[None, :] * dx;
+    k_ref = np.prod((1.0 + t + t**2 / 3.0) * np.exp(-t), axis=1)
+  else:
+    raise ValueError(f"Unsupported kernel specification '{owner.kernel_spec}'")
+  gamma = np.asarray(owner.gamma, dtype=float).ravel()
+  C = np.asarray(owner.C, dtype=float)
+  A = np.asarray(owner.A_obj, dtype=float)
+  A = 0.5 * (A + A.T)
+  b = np.asarray(owner.b_obj, dtype=float).ravel()
+  c = float(np.asarray(owner.c_obj, dtype=float).reshape(()))
+  sigma2 = float(owner.sigma2)
+  z_ref = np.linalg.solve(C, k_ref)
+  variance_ref_raw = sigma2 * (0.5 * np.dot(z_ref, A @ z_ref) + np.dot(b, z_ref) + c)
+  variance_scale = max(1.0, abs(sigma2 * c), abs(variance_ref_raw))
+  if variance_ref_raw < -1.0e-10 * variance_scale:
+    raise RuntimeError(f"Reference kernel produces negative variance {variance_ref_raw:.16e}")
+  sigma_ref = float(np.sqrt(max(0.0, variance_ref_raw)))
+  sigma_floor = 1.0e-8 * max(1.0, np.sqrt(abs(sigma2))) if sigma_floor is None else float(sigma_floor)
+  grad_variance_z = sigma2 * (A @ z_ref + b)
+  grad_variance_k = np.linalg.solve(C.T, grad_variance_z)
+  grad_mean_k = float(owner.y_std) * gamma
+  grad_variance_lcb_k = -float(owner.acqf.beta) * grad_variance_k / (2.0 * max(sigma_ref, sigma_floor))
+  grad_lcb_k = grad_mean_k + grad_variance_lcb_k
+  if not np.all(np.isfinite(grad_lcb_k)):
+    raise RuntimeError("Nonfinite LCB kernel gradient")
+  return grad_lcb_k, k_ref, sigma_ref, grad_mean_k, grad_variance_lcb_k
+
+def compute_sigma_ir_bounds(l, u, theta, x_scale, x_i, x_r, kernel_spec, p=2.0):
+  """
+    Compute outward-rounded bounds
+  
+        sigma_ir_min <= lambda_i(x) + lambda_r(x) <= sigma_ir_max
+
+    over x in [l, u].
+
+    For every supported kernel, the coordinate function
+
+        phi_ij(t) + phi_rj(t)
+
+    is concave and symmetric about (x_i[j] + x_r[j]) / 2. Hence:
+
+      * its minimum over [l_j, u_j] occurs at an endpoint;
+      * its maximum occurs at the projected midpoint.
+
+    Parameters are in the same convention as bnbalgorithm.py:
+    l, u, x_i, and x_r are in original coordinates, while x_scale
+    converts distances to SMT's normalized coordinates.
+
+    Supported kernel_spec values
+    ----------------------------
+    "pow_exp"   with p in {1, 2}
+    "squar_exp"
+    "abs_exp"
+    "matern12"
+    "matern32"
+    "matern52"
+
+    Returns
+    -------
+    sigma_ir_min, sigma_ir_max : float
+        Bounds denoted by underline{Sigma}_{ir} and
+        overline{Sigma}_{ir} in the manuscript.
+  """
+  l = np.asarray(l, dtype=float).ravel()
+  u = np.asarray(u, dtype=float).ravel()
+  theta = np.asarray(theta, dtype=float).ravel()
+  x_scale = np.asarray(x_scale, dtype=float).ravel()
+  x_i = np.asarray(x_i, dtype=float).ravel()
+  x_r = np.asarray(x_r, dtype=float).ravel()
+  
+  arrays = (u, theta, x_scale, x_i, x_r)
+  if any(a.shape != l.shape for a in arrays):
+    raise ValueError("l, u, theta, x_scale, x_i, and x_r must have the same shape")
+  
+  if not all(np.all(np.isfinite(a)) for a in (l,) + arrays):
+    raise ValueError("Nonfinite data in log-kernel-sum bound computation")
+  
+  if np.any(l > u):
+    raise ValueError("Invalid box: some l_j > u_j")
+  
+  if np.any(theta < 0.0):
+    raise ValueError("Kernel parameters theta must be nonnegative")
+  
+  if np.any(x_scale <= 0.0):
+    raise ValueError("Every normalization scale must be positive")
+  
+  # Accept either self.kernel_spec or the original SMT corr name.
+  spec = str(kernel_spec).lower()
+  
+  if spec == "squar_exp":
+    spec = "pow_exp"
+    p = 2.0
+  elif spec in ("abs_exp", "matern12"):
+    spec = "pow_exp"
+    p = 1.0
+  if spec == "pow_exp":
+    p = float(p)
+    if p not in (1.0, 2.0):
+      raise ValueError("pow_exp is supported here only for p in {1, 2}")
+  elif spec not in ("matern32", "matern52"):
+    raise ValueError(f"Unsupported kernel specification '{kernel_spec}'")
+
+  def phi_component(t, center):
+    """Return the vector (phi_{nu,ij}(t_j))_j."""
+    distance = np.abs((t - center) / x_scale)
+    
+    if spec == "pow_exp":
+      return -theta * distance**p
+
+    if spec == "matern32":
+      z = np.sqrt(3.0) * theta * distance
+      return np.log1p(z) - z
+    
+    # Matérn-5/2:
+    # log(1 + z + z^2/3) - z,
+    # where z = sqrt(5) theta_j |t - center| / x_scale_j.
+    z = np.sqrt(5.0) * theta * distance
+    return np.log1p(z + z*z / 3.0) - z
+  
+  # A concave one-dimensional function attains its minimum over an
+  # interval at one of the two endpoints.
+  sum_at_l = phi_component(l, x_i) + phi_component(l, x_r)
+  sum_at_u = phi_component(u, x_i) + phi_component(u, x_r)
+  
+  sigma_ir_min = float(np.sum(np.minimum(sum_at_l, sum_at_u)))
+  
+  # The maximum is attained at the midpoint of the two centers,
+  # projected onto the coordinate interval.
+  projected_midpoint = np.clip(0.5 * (x_i + x_r), l, u)
+  
+  sigma_ir_max = float(np.sum(phi_component(projected_midpoint, x_i) +
+                              phi_component(projected_midpoint, x_r)))
+  
+  # Slight outward rounding protects validity against accumulated
+  # floating-point error. Log correlations are always nonpositive.
+  magnitude = max(1.0, abs(sigma_ir_min), abs(sigma_ir_max))
+  roundoff = 32.0 * np.finfo(float).eps * max(1, l.size) * magnitude
+  
+  sigma_ir_min -= roundoff
+  sigma_ir_max = min(0.0, sigma_ir_max + roundoff)
+  
+  return sigma_ir_min, sigma_ir_max
+
+def add_ratio_informed_product_constraints(cons, ki, kr, dirL, dirU, sirL, sirU):
+  """
+    Add linear ratio and ratio-informed product constraints.
+  
+    Bounds:
+        dirL <= lambda_i - lambda_r <= dirU,
+        sirL <= lambda_i + lambda_r <= sirU.
+  
+    Assumes normalized kernels:
+        0 <= ki <= 1,  0 <= kr <= 1.
+  
+    This function calls the existing add_ratio_constraints() and
+    add_product_constraints(), then adds
+        exp(-dm/2) ki + exp(dm/2) kr <= 2 exp(sirU/2) cosh(dw/2),
+    where
+        dm = (dirL + dirU)/2, dw = (dirU - dirL)/2,
+
+    and the lower-product tangent rows
+        exp(-d0/2) ki + exp(d0/2) kr >= 2 exp(sirL/2),
+    for d0 in {dirL, dm, dirU}.
+  """
+  dirL, dirU = float(dirL), float(dirU)
+  sirL, sirU = float(sirL), float(sirU)
+
+  values = np.asarray([dirL, dirU, sirL, sirU])
+  if not np.all(np.isfinite(values)):
+    raise ValueError("Finite log-ratio and log-product bounds are required")
+  
+  if dirL > dirU:
+    raise ValueError(f"Invalid log-ratio interval [{dirL}, {dirU}]")
+  if sirL > sirU:
+    raise ValueError(f"Invalid log-product interval [{sirL}, {sirU}]")
+  if sirL > 0.0:
+    raise ValueError("Normalized kernels require lambda_i + lambda_r <= 0")
+
+  # The universal bound ki*kr <= 1 gives sirU <= 0.
+  sirU = min(sirU, 0.0)
+  dm = 0.5 * dirL + 0.5 * dirU
+  dw = 0.5 * (dirU - dirL)
+
+  def normalized_coefficients(d0):
+    """
+    Return exp(-d0/2) and exp(d0/2), divided by
+    exp(abs(d0)/2). Thus the largest coefficient is one.
+    """
+    small = float(np.exp(-abs(d0)))
+    if d0 >= 0.0:
+      return small, 1.0
+    return 1.0, small
+
+  # --------------------------------------------------------------
+  # Centered ratio-informed upper-product row.
+  #
+  # Before scaling:
+  #   exp(-dm/2) ki + exp(dm/2) kr
+  #       <= 2 exp(sirU/2) cosh(dw/2).
+  #
+  # Divide through by exp(abs(dm)/2).
+  # --------------------------------------------------------------
+  coef_i, coef_r = normalized_coefficients(dm)
+  
+  # Stable evaluation of
+  #
+  # log(2 exp(sirU/2) cosh(dw/2) / exp(abs(dm)/2)).
+  log_upper_rhs = 0.5 * sirU + np.logaddexp(0.5 * dw, -0.5 * dw) - 0.5 * abs(dm)
+  
+  # With ki,kr <= 1, the maximum scaled left-hand side is
+  # coef_i + coef_r. Omit a provably redundant row.
+  if log_upper_rhs < np.log(coef_i + coef_r):
+    upper_rhs = float(np.exp(log_upper_rhs))
+
+    # If the positive RHS underflows, omitting the row preserves
+    # the outer-relaxation property.
+    if upper_rhs > 0.0:
+      # For an upper inequality, round coefficients downward
+      # and the right-hand side upward.
+      coef_i_upper = float(np.nextafter(coef_i, 0.0)) if coef_i > 0.0 else 0.0
+      coef_r_upper = float(np.nextafter(coef_r, 0.0)) if coef_r > 0.0 else 0.0
+      upper_rhs = float(np.nextafter(upper_rhs, np.inf))
+
+      cons.append(coef_i_upper * ki + coef_r_upper * kr <= upper_rhs)
+
+  # --------------------------------------------------------------
+  # Lower-product tangent rows.
+  #
+  # Before scaling:
+  #   exp(-d0/2) ki + exp(d0/2) kr
+  #       >= 2 exp(sirL/2).
+  #
+  # Divide through by exp(abs(d0)/2).
+  # --------------------------------------------------------------
+  tangent_points = np.unique(np.asarray([dirL, dm, dirU], dtype=float))
+
+  for d0 in tangent_points:
+    coef_i, coef_r = normalized_coefficients(d0)
+
+    log_lower_rhs = (np.log(2.0) + 0.5 * sirL - 0.5 * abs(d0))
+    lower_rhs = float(np.exp(log_lower_rhs))
+
+    # If the RHS underflows, the row has numerically reduced to
+    # a nonnegativity constraint.
+    if lower_rhs == 0.0:
+      continue
+
+    # For a lower inequality, round coefficients upward and the
+    # right-hand side downward.
+    coef_i_lower = float(np.nextafter(coef_i, np.inf))
+    coef_r_lower = float(np.nextafter(coef_r, np.inf))
+    lower_rhs = float(np.nextafter(lower_rhs, 0.0))
+
+    cons.append(coef_i_lower * ki + coef_r_lower * kr >= lower_rhs)
+
+def add_product_constraints(cons, ki, kr, sir_min, sir_max):
+    """
+    Add product cuts
+        2 exp(sir_min / 2) <= ki + kr <= 1 + exp(sir_max).
+
+    Here sir_min and sir_max are valid bounds on
+        lambda_i + lambda_r = log(ki * kr).
+
+    This function assumes normalized correlations:
+        0 <= ki <= 1,  0 <= kr <= 1.
+
+    """
+    sir_min = float(sir_min)
+    sir_max = float(sir_max)
+
+    if not np.all(np.isfinite([sir_min, sir_max])):
+      raise ValueError("Finite bounds on lambda_i + lambda_r are required")
+
+    if sir_min > sir_max:
+      raise ValueError(f"Invalid log-product interval [{sir_min}, {sir_max}]")
+
+    if sir_min > 0.0:
+      raise ValueError("A normalized kernel must have lambda_i + lambda_r <= 0")
+
+    # The universal normalized-kernel bound provides Sigma_ir <= 0.
+    sir_max = min(sir_max, 0.0)
+
+    # If either exponential underflows, its corresponding constraint is omitted rather
+    # than replacing a positive exact quantity by zero.
+
+    
+    # Lower row:
+    #     ki + kr >= 2 sqrt(ki*kr)
+    #             >= 2 exp(sir_min/2).
+    exp_half_min = float(np.exp(0.5 * sir_min))
+    if exp_half_min > 0.0:
+      lower_rhs = float(np.nextafter(2.0 * exp_half_min, 0.0))
+      cons.append(ki + kr >= lower_rhs)
+
+    # Upper row:
+    #     ki + kr <= 1 + ki*kr
+    #             <= 1 + exp(sir_max).
+    product_upper = float(np.exp(sir_max))
+    if product_upper > 0.0:
+      upper_rhs = float(np.nextafter(1.0 + product_upper, np.inf))
+      cons.append(ki + kr <= upper_rhs)
+
+    
+def add_ratio_constraints(cons, ki, kr, lir_min, lir_max):
+    """
+    Add:
+        exp(lir_min) * kr <= ki <= exp(lir_max) * kr
+
+    Every generated linear row has coefficients with magnitude <= 1.
+    """
+
+    # Lower ratio inequality:
+    # exp(lir_min) * kr <= ki
+    if lir_min <= 0.0:
+        coef = np.exp(lir_min)
+
+        # If coef underflows to zero, omitting this inequality is safe:
+        # it has numerically reduced to the already-present ki >= 0.
+        if coef > 0.0:
+            cons.append(ki >= coef * kr)
+    else:
+        # Divide by exp(lir_min):
+        # kr <= exp(-lir_min) * ki
+        coef = np.exp(-lir_min)
+
+        # Do not impose kr <= 0 if this underflows.
+        # Omitting the inequality preserves the outer-relaxation property.
+        if coef > 0.0:
+            cons.append(kr <= coef * ki)
+
+    # Upper ratio inequality:
+    # ki <= exp(lir_max) * kr
+    if lir_max <= 0.0:
+        coef = np.exp(lir_max)
+
+        # Do not impose ki <= 0 if this underflows.
+        if coef > 0.0:
+            cons.append(ki <= coef * kr)
+    else:
+        # Divide by exp(lir_max):
+        # exp(-lir_max) * ki <= kr
+        coef = np.exp(-lir_max)
+
+        # If this underflows, the inequality reduces numerically to kr >= 0.
+        if coef > 0.0:
+            cons.append(kr >= coef * ki)
+
+def add_mccormick_ratio_constraints(
+    cons, ki, kr, lam_i, lam_r, lir_min, lir_max,
+    ki_min, ki_max, kr_min, kr_max, name=None,
+    add_linear_ratio_rows=True,
+):
+    """
+    Add the lifted exponential/McCormick relaxation
+        d_ir = lam_i - lam_r
+        q_ir = exp(d_ir)
+        ki   = q_ir * kr
+    over
+        lir_min <= d_ir <= lir_max,
+        ki_min <= ki <= ki_max,
+        kr_min <= kr <= kr_max.
+
+    The exact equality q_ir = exp(d_ir) is relaxed by its convex hull:
+        exp(d_ir) <= q_ir <= sec_exp(d_ir).
+
+    The exact product ki = q_ir * kr is relaxed by the four  McCormick inequalities.
+
+    To improve numerical scaling, the pair is automatically reversed when doing so 
+    produces a smaller upper bound on q. Thus, internally, the function may represent either
+        ki = q * kr
+    or the equivalent relation
+        kr = q * ki.
+    """
+    lir_min, lir_max = float(lir_min), float(lir_max)
+    ki_min, ki_max = max(0.0, float(ki_min)), float(ki_max)
+    kr_min, kr_max = max(0.0, float(kr_min)), float(kr_max)
+
+    values = np.asarray([lir_min, lir_max, ki_min, ki_max, kr_min, kr_max], dtype=float)
+
+    if not np.all(np.isfinite(values)):
+        raise ValueError("Nonfinite log-ratio or kernel bounds in McCormick ratio relaxation")
+    if lir_min > lir_max:
+        raise ValueError(f"Invalid log-ratio interval [{lir_min}, {lir_max}]")
+    if ki_min > ki_max or kr_min > kr_max:
+        raise ValueError("Invalid individual kernel bounds in McCormick ratio relaxation")
+    if ki_max < 0.0 or kr_max < 0.0:
+        raise ValueError("Kernel upper bounds must be nonnegative")
+
+    swapped = lir_min + lir_max > 0.0
+
+    if not swapped:
+        k_num, k_den = ki, kr
+        lam_num, lam_den = lam_i, lam_r
+        d_min, d_max = lir_min, lir_max
+        k_num_min, k_num_max = ki_min, ki_max
+        k_den_min, k_den_max = kr_min, kr_max
+    else:
+        k_num, k_den = kr, ki
+        lam_num, lam_den = lam_r, lam_i
+        d_min, d_max = -lir_max, -lir_min
+        k_num_min, k_num_max = kr_min, kr_max
+        k_den_min, k_den_max = ki_min, ki_max
+
+    d_expr = lam_num - lam_den
+    cons += [d_expr >= d_min, d_expr <= d_max]
+
+    def append_normalized_linear_ratio_rows():
+        if d_min <= 0.0:
+            coef = float(np.exp(d_min))
+            if coef > 0.0: cons.append(k_num >= coef * k_den)
+        else:
+            coef = float(np.exp(-d_min))
+            if coef > 0.0: cons.append(k_den <= coef * k_num)
+
+        if d_max <= 0.0:
+            coef = float(np.exp(d_max))
+            if coef > 0.0: cons.append(k_num <= coef * k_den)
+        else:
+            coef = float(np.exp(-d_max))
+            if coef > 0.0: cons.append(k_den >= coef * k_num)
+
+    width = d_max - d_min
+    log_max_float = float(np.log(np.finfo(float).max))
+
+    if d_max >= log_max_float - 4.0:
+        append_normalized_linear_ratio_rows()
+        return {
+            "q": None, "swapped": swapped, "fallback": True, "exact": False,
+            "log_bounds": (d_min, d_max), "reason": "q upper bound would overflow",
+        }
+
+    q_max_raw = float(np.exp(d_max))
+
+    if not np.isfinite(q_max_raw) or q_max_raw < np.finfo(float).tiny:
+        append_normalized_linear_ratio_rows()
+        return {
+            "q": None, "swapped": swapped, "fallback": True, "exact": False,
+            "log_bounds": (d_min, d_max),
+            "reason": "q upper bound is numerically unrepresentable",
+        }
+
+    q_min_raw = float(np.exp(d_min))
+    q_min = float(np.nextafter(q_min_raw, 0.0)) if q_min_raw > 0.0 else 0.0
+    q_max = float(np.nextafter(q_max_raw, np.inf))
+
+    if width == 0.0:
+        cons.append(k_num == q_max_raw * k_den)
+        if add_linear_ratio_rows: append_normalized_linear_ratio_rows()
+
+        return {
+            "q": None, "swapped": swapped, "fallback": False, "exact": True,
+            "log_bounds": (d_min, d_max), "q_bounds": (q_max_raw, q_max_raw),
+        }
+
+    qvar = cp.Variable(nonneg=True) if name is None else cp.Variable(nonneg=True, name=f"q_{name}")
+
+    cons += [
+        qvar >= q_min,
+        qvar <= q_max,
+        qvar >= cp.exp(d_expr),
+    ]
+
+    secant_slope_raw = float(q_max_raw * (-np.expm1(-width)) / width)
+
+    if not np.isfinite(secant_slope_raw) or secant_slope_raw <= 0.0:
+        append_normalized_linear_ratio_rows()
+        return {
+            "q": None, "swapped": swapped, "fallback": True, "exact": False,
+            "log_bounds": (d_min, d_max),
+            "reason": "invalid exponential secant slope",
+        }
+
+    q_min_secant = (
+        float(np.nextafter(q_min_raw, np.inf))
+        if q_min_raw > 0.0
+        else float(np.nextafter(0.0, np.inf))
+    )
+    secant_slope = float(np.nextafter(secant_slope_raw, np.inf))
+
+    cons.append(qvar <= q_min_secant + secant_slope * (d_expr - d_min))
+
+    cons += [
+        k_num >= q_min * k_den + k_den_min * qvar - q_min * k_den_min,
+        k_num >= q_max * k_den + k_den_max * qvar - q_max * k_den_max,
+        k_num <= q_max * k_den + k_den_min * qvar - q_max * k_den_min,
+        k_num <= q_min * k_den + k_den_max * qvar - q_min * k_den_max,
+    ]
+
+    if add_linear_ratio_rows:
+      append_normalized_linear_ratio_rows()
+
+    return {
+        "q": qvar, "swapped": swapped, "fallback": False, "exact": False,
+        "log_bounds": (d_min, d_max), "q_bounds": (q_min, q_max),
+        "numerator_bounds": (k_num_min, k_num_max),
+        "denominator_bounds": (k_den_min, k_den_max),
+    }
+
+def add_mccormick_sum_product_constraints(
+    cons, ki, kr, lami, lamr,
+    ki_min, ki_max, kr_min, kr_max,
+    sir_min, sir_max, secant_width_tol=1.0e-12,
+):
+    """
+    Add the complementary lifted sum/product relaxation
+        sir = lami + lamr, pir = exp(sir), pir = ki * kr.
+
+    The graph pir = exp(sir) is relaxed using its convex exponential
+    lower envelope and affine secant upper envelope. The bilinear
+    equality pir = ki * kr is relaxed using the four McCormick
+    inequalities.
+    """
+    ki_min, ki_max = float(ki_min), float(ki_max)
+    kr_min, kr_max = float(kr_min), float(kr_max)
+    sir_min, sir_max = float(sir_min), float(sir_max)
+
+    if ki_min < 0.0 or kr_min < 0.0:
+        raise ValueError("Kernel lower bounds must be nonnegative")
+    if ki_min > ki_max or kr_min > kr_max:
+        raise ValueError("Invalid kernel bounds")
+    if not np.isfinite(sir_min) or not np.isfinite(sir_max):
+        raise ValueError("Finite bounds on lambda_i + lambda_r are required")
+    if sir_min > sir_max:
+        raise ValueError("Invalid bounds on lambda_i + lambda_r")
+
+    pir_min, pir_max = float(np.exp(sir_min)), float(np.exp(sir_max))
+
+    if pir_max == 0.0: return None, None
+    if not np.isfinite(pir_max):
+        raise FloatingPointError("exp(sir_max) overflowed in sum/product relaxation")
+
+    sir, pir = cp.Variable(), cp.Variable(nonneg=True)
+
+    cons += [
+        sir == lami + lamr,
+        sir >= sir_min,
+        sir <= sir_max,
+        pir >= cp.exp(sir),
+        pir >= pir_min,
+        pir <= pir_max,
+    ]
+
+    width = sir_max - sir_min
+
+    if width > secant_width_tol:
+        slope = -pir_max * np.expm1(-width) / width
+        cons.append(pir <= pir_min + slope * (sir - sir_min))
+    else:
+        cons.append(pir <= pir_max)
+
+    cons += [
+        pir >= ki_min * kr + kr_min * ki - ki_min * kr_min,
+        pir >= ki_max * kr + kr_max * ki - ki_max * kr_max,
+        pir <= ki_max * kr + kr_min * ki - ki_max * kr_min,
+        pir <= ki_min * kr + kr_max * ki - ki_min * kr_max,
+    ]
+
+    return sir, pir
+
+def gp_coordinate_loss(distance, theta, kernel_spec, p=2.0):
+  """Coordinate contributions to q=-log(k).
+
+  distance contains nonnegative distances in SMT-normalized coordinates. theta must be 
+  compatible with distance.
+  """
+  distance, theta = np.broadcast_arrays(np.asarray(distance, dtype=float), np.asarray(theta, dtype=float),)
+
+  if(not np.all(np.isfinite(distance)) or not np.all(np.isfinite(theta)) or np.any(distance < 0.0) or np.any(theta < 0.0)):
+    raise ValueError("Distances and theta must be finite and nonnegative")
+
+  # raise an exception on overflow and invalid floating point ops
+  with np.errstate(over="raise", invalid="raise"):
+    if kernel_spec == "pow_exp":
+      p = float(p)
+      if p not in (1.0, 2.0):
+        raise ValueError("Only p=1 and p=2 are supported")
+
+      # p=2: SE; p=1: Matern 1/2.
+      loss = theta * distance**p
+    elif kernel_spec in ("matern32", "matern52"):
+      factor = np.sqrt(3.0 if kernel_spec == "matern32" else 5.0)
+      r = factor * theta * distance
+      loss = np.empty_like(r)
+
+      # Avoid cancellation near r=0.
+      small = r < 1.0e-3
+      t = r[small]
+      if kernel_spec == "matern32":
+        # r - log(1+r), through degree 8.
+        loss[small] = t*t * (0.5 + t*(-1.0/3.0 + t*(0.25 + t*(-0.2 + t*(1.0/6.0 + t*(-1.0/7.0 + t/8.0))))))
+        t = r[~small]
+        loss[~small] = t - np.log1p(t)
+      else:
+        # r - log(1+r+r^2/3), through degree 8.
+        loss[small] = t*t * (1.0/6.0 + t*t*(-1.0/36.0 + t*(1.0/45.0 + t*(-1.0/81.0 + t*(1.0/189.0 - t/648.0)))))
+        t = r[~small]
+        # Evaluate log(1+t+t^2/3) without forming t^2.
+        log_poly = np.logaddexp(np.log1p(t), 2.0*np.log(t) - np.log(3.0),)
+        loss[~small] = t - log_poly
+    else:
+      raise ValueError(f"Unsupported kernel: {kernel_spec}")
+  if not np.all(np.isfinite(loss)):
+    raise FloatingPointError("Nonfinite coordinate loss")
+  return np.maximum(loss, 0.0)
+
+def unit_expsec_gap(width):
+  """Maximum gap between exp(-t) and its secant on [0, width].
+
+  Returns the normalized gap. Multiply by exp(-qL) to obtain the corresponding gap in k.
+  """
+  width = np.asarray(width, dtype=float)
+
+  if not np.all(np.isfinite(width)) or np.any(width < 0.0):
+    raise ValueError("Widths must be finite and nonnegative")
+
+  result = np.empty_like(width)
+  small = width < 1.0e-3
+
+  t = width[small]
+  result[small] = t*t * (1.0/8.0 + t*(-1.0/16.0 + t*(11.0/576.0 + t*(-5.0/1152.0 + t*41.0/51840.0))))
+
+  t = width[~small]
+  a = -np.expm1(-t) / t
+  result[~small] = 1.0 - a + a*np.log(a)
+
+  return np.maximum(result, 0.0)
+
+def build_mode6_pair_candidates(owner, nneighbors=3, include_mst=False):
+  """
+  Returns candidate pairs and their kernel dissimilarities.
+
+  Includes closest 'nneighbors' and, optionally, edges of the minimum spanning tree.
+  The closest neighbors capture close kernels (within local clusters), while MST 
+  captures additional non-local connections between kernels.
+  """
+  X = np.asarray(owner.x, dtype=float)
+  if X.ndim != 2 or not np.all(np.isfinite(X)):
+    raise ValueError("Training inputs must be a finite 2-D array")
+  if not isinstance(nneighbors, (int, np.integer)) or nneighbors < 0:
+    raise ValueError("nneighbors must be a nonnegative integer")
+
+  n, dim = X.shape
+  if n < 2:
+    return np.empty((0, 2), dtype=np.int64), {}
+
+  scale = np.broadcast_to(np.asarray(owner.X_scale, float).ravel(), (dim,))
+  theta = np.broadcast_to(np.asarray(owner.theta, float).ravel(), (dim,))
+  if not np.all(np.isfinite(scale)) or np.any(scale <= 0.0):
+    raise ValueError("Invalid input normalization scales")
+
+  p = getattr(owner, "p", 2.0)
+
+  # D[i,r] = -log K(x_i,x_r).
+  # Construct once per training-set/kernel update, not once per BnB node.
+  # Keep zero distances: coincident samples are legitimate candidates.
+  D = np.full((n, n), np.inf)
+  for i in range(n - 1):
+    dx = np.abs(X[i + 1:] - X[i]) / scale
+    values = gp_coordinate_loss(dx, theta, owner.kernel_spec, p).sum(axis=1)
+    if not np.all(np.isfinite(values)):
+      raise FloatingPointError("Nonfinite kernel dissimilarities")
+    D[i, i + 1:] = values
+    D[i + 1:, i] = values
+
+  edges = set()
+  m = min(nneighbors, n - 1)
+  for i in range(n):
+    for r in np.argsort(D[i], kind="stable")[:m]:
+      edges.add((min(i, int(r)), max(i, int(r))))
+
+  if include_mst:
+    # Prim algorithm - also handles zero-weight edges.
+    used = np.zeros(n, dtype=bool)
+    best = np.full(n, np.inf)
+    parent = np.full(n, -1, dtype=int)
+    best[0] = 0.0
+
+    for _ in range(n):
+      v = int(np.argmin(np.where(used, np.inf, best)))
+      if parent[v] >= 0:
+        r = int(parent[v])
+        edges.add((min(v, r), max(v, r)))
+
+      used[v] = True
+      improve = (~used) & (D[v] < best)
+      best[improve] = D[v, improve]
+      parent[improve] = v
+
+  pairs = np.asarray(sorted(edges), dtype=np.int64).reshape(-1, 2)
+  distances = {(int(i), int(r)): float(D[i, r]) for i, r in pairs}
+  return pairs, distances
+
+def mode6_scaled_logratio_bounds(owner, l, u, pairs, scale_shift):
+  """Endpoint bounds on log(zeta_i/zeta_r), for all four kernels."""
+  X = np.asarray(owner.x, dtype=float)
+  n, dim = X.shape
+  l = np.asarray(l, float).ravel()
+  u = np.asarray(u, float).ravel()
+  pairs = np.asarray(pairs, dtype=np.int64).reshape(-1, 2)
+  shift = np.asarray(scale_shift, float).reshape(n)
+
+  scale = np.broadcast_to(np.asarray(owner.X_scale, float).ravel(), (dim,))
+  theta = np.broadcast_to(np.asarray(owner.theta, float).ravel(), (dim,))
+  if(l.shape != (dim,) or u.shape != (dim,) or np.any(l > u)
+     or np.any(scale <= 0.0) or not np.all(np.isfinite(shift))):
+    raise ValueError("Invalid box, scales, or scaling shift")
+
+  p = getattr(owner, "p", 2.0)
+  at_l = gp_coordinate_loss(np.abs(l - X) / scale, theta, owner.kernel_spec, p)
+  at_u = gp_coordinate_loss(np.abs(u - X) / scale, theta, owner.kernel_spec, p)
+
+  i, r = pairs.T
+
+  # lambda_i - lambda_r = loss_r - loss_i.
+  dl = at_l[r] - at_l[i]
+  du = at_u[r] - at_u[i]
+  lo = np.minimum(dl, du).sum(axis=1) + shift[i] - shift[r]
+  hi = np.maximum(dl, du).sum(axis=1) + shift[i] - shift[r]
+
+  # Practical outward padding, including losses that cancel in differences.
+  # This is not an interval-arithmetic certificate for kernel evaluation.
+  magnitude = (at_l[i] + at_l[r] + at_u[i] + at_u[r]).sum(axis=1)
+  magnitude += np.abs(shift[i]) + np.abs(shift[r])
+  pad = (64.0 * np.finfo(float).eps * max(1, dim) * (1.0 + magnitude))
+
+  return (np.nextafter(lo - pad, -np.inf), np.nextafter(hi + pad, np.inf))
+
+def select_mode6_ratio_rows(pairs, deltaL, deltaU, zetaL, zetaU, importance,
+                            max_pairs, log_tol=1.e-10, path_screen=True):
+  """Return (src, dst, a, b) rows: a*zeta[dst] <= b*zeta[src]. 
+
+  Ratio constraints are one-sided for easier processing.
+
+  Only retained rows enter the implication graph. No connectivity,
+  acyclicity, or degree restriction is imposed on the selected pairs.
+  """
+  pairs = np.asarray(pairs, dtype=np.int64).reshape(-1, 2)
+  # deltas are lower and upper bounds on the scaled log ratio log(zeta_i/zeta_r)
+  deltaL = np.asarray(deltaL, float)
+  deltaU = np.asarray(deltaU, float)
+  L, U, A = [np.asarray(v, float).ravel() for v in (zetaL, zetaU, importance)]
+  n, m = A.size, len(pairs)
+
+  if (L.size != n or U.size != n
+      or deltaL.shape != (m,) or deltaU.shape != (m,)
+      or not np.all(np.isfinite(np.r_[L, U, A]))
+      or np.any(L < 0.0) or np.any(U <= 0.0)
+      or np.any(L > U) or np.any(A < 0.0)
+      or np.any(pairs < 0) or np.any(pairs >= n)
+      or np.any(pairs[:, 0] >= pairs[:, 1])):
+    raise ValueError("Invalid mode-6 selection data")
+
+  if (not isinstance(max_pairs, (int, np.integer))
+      or max_pairs < 0
+      or not np.isfinite(log_tol) or log_tol < 0.0):
+    raise ValueError("Invalid pair budget or log tolerance")
+
+  stats = dict(candidates=m, tested_pairs=0, kept_pairs=0, kept_rows=0,
+               box_skips=0, path_skips=0, numeric_skips=0, cycle_skips=0)
+  rows = []
+  if m == 0 or max_pairs == 0:
+    return rows, stats
+
+  logL = np.full(n, -np.inf)
+  positive = L > 0.0
+  logL[positive] = np.nextafter(np.log(L[positive]), -np.inf)
+  logU = np.nextafter(np.log(U), np.inf)
+
+  P = None
+  if path_screen:
+    # Fixed reference vertex n represents zeta[n] = 1.
+    # P[a,b] bounds log(zeta[b]/zeta[a]).
+    # Infinity denotes an unavailable bound.
+    lo = np.r_[logL, 0.0]
+    hi = np.r_[logU, 0.0]
+    P = np.nextafter(hi[None, :] - lo[:, None], np.inf)
+    np.fill_diagonal(P, 0.0)
+
+  # Additive importance score; deterministic index-based tie breaking.
+  scores = A[pairs[:, 0]] + A[pairs[:, 1]]
+  order = np.lexsort((pairs[:, 1], pairs[:, 0], -scores))
+
+  for index in order:
+    if stats["kept_pairs"] >= max_pairs:
+      break
+    stats["tested_pairs"] += 1
+
+    i, r = map(int, pairs[index])
+    dL, dU = float(deltaL[index]), float(deltaU[index])
+    if not np.isfinite(dL) or not np.isfinite(dU) or dL > dU:
+      stats["numeric_skips"] += 2
+      continue
+
+    before = len(rows)
+
+    # Lower ratio: zeta_r <= exp(-dL)*zeta_i.
+    # Upper ratio: zeta_i <= exp( dU)*zeta_r.
+    for src, dst, w in ((i, r, -dL), (r, i, dU)):
+
+      # avoid constructing exp(w) as it may become very large
+      # construct coeffs a and b to be at most one 
+      with np.errstate(under="ignore"):
+        small = float(np.exp(-abs(w)))
+
+      if small < np.finfo(float).tiny:
+        # do not let underflow enable a zero-forcing inequality
+        #
+        # skips zeta_i <= e^w \zeta_r for large w since it would
+        # numerically become zeta_i<=0 and would exclude positive
+        # kernels
+        stats["numeric_skips"] += 1
+        continue
+
+      # Normalize and round float/double toward a weaker inequality and
+      # have a and b be at most 1 by rescaling
+      if w >= 0.0:
+        a = float(np.nextafter(small, 0.0))
+        b = 1.0
+      else:
+        a = 1.0
+        b = min(1.0, float(np.nextafter(small, np.inf)))
+
+      if min(a, b) < np.finfo(float).tiny:
+        # similar as for the other numeric skip
+        stats["numeric_skips"] += 1
+        continue
+
+      # Graph weight uses the emitted coefficients, rather than
+      # the unrounded input bound.
+      #   weight = log(b/a) + padding
+      weight = float(np.log(b) - np.log(a))
+      weight += (8.0 * np.finfo(float).eps * (1.0 + abs(weight)))
+      tol = log_tol * max(1.0, abs(weight))
+
+      # Individual bounds imply:
+      # zeta_dst / zeta_src <= U[dst] / L[src].
+      independent = np.nextafter(logU[dst] - logL[src], np.inf)
+      if independent <= weight + tol:
+        # the inequality is implied by the variable bounds
+        stats["box_skips"] += 1
+        continue
+
+      # Here the matrix P stores the implied ratio bounds:
+      #  P_{uv} records bound \zeta_v\leq P_{uv}\zeta_u
+      if P is not None and P[src, dst] <= weight + tol:
+        stats["path_skips"] += 1
+        continue
+
+      if P is not None and P[dst, src] + weight < 0.0:
+        # A negative cycle signals inconsistent numerical bounds.
+        # Omit this optional cut; do not propagate the inconsistency.
+        stats["cycle_skips"] += 1
+        continue
+      rows.append((src, dst, a, b))
+      # update all implied bounds after retaining a row
+      if P is not None:
+        # Incremental all-pairs closure, O(n^2) per retained row.
+        left = np.nextafter(P[:, src] + weight, np.inf)
+        via = np.nextafter(left[:, None] + P[dst, :][None, :], np.inf,)
+        np.minimum(P, via, out=P)
+
+    stats["kept_pairs"] += int(len(rows) > before)
+
+  stats["kept_rows"] = len(rows)
+  return rows, stats
+#################################################################################
+### Wrapper for "convex_relaxation" code
+#################################################################################
+
+class GPBoundComputationCommon:
+  """Common GP bound computations used by the driver and worker classes.
+ 
+  Subclasses retain responsibility for initializing the attributes used
+  here. This class deliberately has no __init__.
+  """
+
+  _convex_relaxation_verbose = False
+
+  def save_expsec_weights(self, cons, lamvar, lamL, lamU):
+    """Optional post-solve hook; branching_wrapper overrides this."""
+    return None
+
+  def convex_relaxation(self, l, u, kL, kU, opt_mode=2, mode=0):
+    """
+    mode: 0 --> convex relaxation for minimum of LCB acquisition function
+    mode: 1 --> convex relaxation for maximum of variance        
+    """
+    assert mode in [0, 1], "mode can only be in 0, 1"
+    assert opt_mode in [0, 1, 2, 3, 4, 5, 6], "opt mode can only be 0, 1, 2, 3, 4, or 5"
+    assert not (opt_mode in [0, 1, 2, 3, 4] and self.kernel_spec != "pow_exp"), "opt mode 0,1,2,3, and 4 limited to pow_exp kernel"
+    # opt_mode = 0 (previous baseline w ratio constraints)
+    # opt_mode = 1 (Convex relaxation w no ratio constraints on k and no affine constraints)
+    # opt_mode = 2 (Most recent relaxation w ratio constraints and affine constraints)
+    # opt_mode = 3 (Relaxation in w)
+    # opt_mode = 4 (opt_mode 3 but with alternative to ratio constraints on k)
+    cons = [self.cons2 >= 0, self.en1 @ self.X >= 0]
+
+    diagnostics_output = ""
+
+    # opt_mode 5 and 6 enforce these as self.C2 @ self.X == kvec, with kvec being a scaling of the new
+    # 'scaled' kernel variables zetavar  
+    if opt_mode not in (5, 6):
+      cons.append(self.C2 @ self.X >= kL)
+      cons.append(self.C2 @ self.X <= kU)
+    if opt_mode != 0 and opt_mode != 5 and opt_mode != 6:
+      # add x optimization variable constrained to box: l <= x <= u
+      xvar = cp.Variable(self.x.shape[1])
+      cons.append(l <= xvar)
+      cons.append(xvar <= u)
+      # add rho_i = \sum_j \theta_j |(x_j - x_j^(i)) / X_scale|^p variable
+      ntrain = self.x.shape[0]
+      rhovar = cp.Variable(ntrain) 
+      # determine bounds for rho
+      dmin = np.maximum(0.0, np.maximum((l - self.x) / self.X_scale, (self.x - u)/ self.X_scale))        # (nt,d)
+      dmax = np.maximum(np.abs((l - self.x) / self.X_scale), np.abs((u - self.x) / self.X_scale))         # (nt,d)
+      th  = self.theta.ravel()     # (d,)
+      rhomin = (th * (dmin**self.p)).sum(axis=1)
+      rhomax = (th * (dmax**self.p)).sum(axis=1) 
+      assert len(rhomin) == ntrain
+      # \rho_i = max_{x in box} { \rho_i(x) }
+      # no need to include these constraints with equality constraint rho_i = ...
+      cons.append(rhovar <= rhomax) # pre w-relaxation bounds
+      #cons.append(rhomin <= rhovar)    
+      # --- constraints coupling k and rho ---
+      # k_i => exp(-\rho_i)
+      for i in range(ntrain):
+        cons.append((self.C2 @ self.X)[i] >= cp.atoms.exp(-rhovar[i]))
+      kMax = np.exp(-rhomin)
+      kMin = np.exp(-rhomax)
+      #cons.append(kMin <= self.C2 @ self.X) implied by rhovar <= rhomax
+      cons.append(self.C2 @ self.X <= kMax) # pre-secant relaxation
+      # k_i <= secant of k_i(x) over kMin, kMax
+      # //!: I suggest we check and handle small |rhomax-rhomin| 
+      cons.append(self.C2 @ self.X <= kMax + cp.atoms.multiply((kMin - kMax) / (rhomax - rhomin),  (rhovar  - rhomin)))
+      # ---
+
+
+      # \sum_j theta_j * |(x_j - x_j^(i)) / X_scale|^p <= rho_i
+      # for p = 1 or 2 is convex
+      if opt_mode < 3:
+        for i in range(ntrain):
+          # Note that this is redundant when opt_mode is 3, being implied by the eq. constraint on rhovar
+          cons.append(cp.atoms.norm((xvar-self.x[i]) / ((th**(-1./self.p)) * self.X_scale), p = self.p)**self.p <= rhovar[i])
+      if opt_mode >= 3:
+        assert self.p == 2.0, "opt_mode 3 only supports squared exponential kernel"
+        wvar = cp.Variable(self.x.shape[1])
+        for i in range(self.x.shape[1]):
+          cons.append(wvar[i] >= xvar[i]**2.0)
+          cons.append(wvar[i] <= (l[i] + u[i]) * xvar[i] - l[i] * u[i])
+        for i in range(ntrain):
+          cons.append(rhovar[i] == cp.atoms.sum(cp.atoms.multiply(th / self.X_scale**self.p, wvar - 2.0 * cp.atoms.multiply(self.x[i], xvar) + self.x[i] * self.x[i]))) 
+
+
+      # --- constraints ---
+      # affine constraints on \rho_i via reverse triangle inequality
+      # no need for additional bound constraints when we have equality constraint
+      if opt_mode >= 2:
+        if self.p == 1.0:
+          for i in range(ntrain):
+            for j in range(i+1, ntrain):
+              rhoij_bound = np.linalg.norm(th**(1./self.p) * (self.x[i] - self.x[j]) / self.X_scale, ord=self.p)**self.p
+              cons.append(rhovar[i] - rhovar[j] <= rhoij_bound)
+              cons.append(rhovar[i] - rhovar[j] >= -1.0 * rhoij_bound)
+        elif self.p == 2.0:
+          if opt_mode<3:
+            for i in range(ntrain):
+              for j in range(i+1, ntrain):
+                dxji = self.x[j] - self.x[i]
+                mult = 2. * th * dxji / (self.X_scale ** 2.0)
+                shift = np.inner(self.x[i] / self.X_scale, th * self.x[i] / self.X_scale) - np.inner(self.x[j] / self.X_scale, th * self.x[j] / self.X_scale)
+                assert opt_mode!=3, " constraint is redundant when opt_mode==3, being implied by the eq. constraint on rhovar"
+                cons.append(rhovar[i] - rhovar[j] == mult.T @ xvar + shift)
+          elif opt_mode == 3:
+            for i in range(ntrain):
+              for j in range(i+1, ntrain):
+                dxji = self.x[j] - self.x[i]
+                lo = np.where(dxji >= 0., l, u)
+                hi = np.where(dxji >= 0., u, l)
+                # rhoij_lbound <= rho_i - rho_j <= rhoij_ubound
+                # k_i <= k_j * exp(-1 * rhoij_lbound)
+                # k_i >= k_j * exp(-1 * rhoij_ubound)
+                rhoij_ubound = 2. * np.inner((hi / self.X_scale), th * dxji / self.X_scale) + np.inner(self.x[i] / self.X_scale, th * self.x[i] / self.X_scale) - np.inner(self.x[j] / self.X_scale, th * self.x[j] / self.X_scale)
+                rhoij_lbound = 2. * np.inner((lo / self.X_scale), th * dxji / self.X_scale) + np.inner(self.x[i] / self.X_scale, th * self.x[i] / self.X_scale) - np.inner(self.x[j] / self.X_scale, th * self.x[j] / self.X_scale)
+                kij_ubound = np.exp(-1. * rhoij_lbound)
+                kij_lbound = np.exp(-1. * rhoij_ubound)
+                if not ((kij_ubound <= 1.e3 and kij_ubound >= 1.e-3) and (kij_lbound <= 1.e3 and kij_lbound >= 1.e-3)):
+                  continue
+                # it is more important that we place bounds on k than rho
+                cons.append((self.C2 @ self.X)[i] <= (self.C2 @ self.X)[j] * kij_ubound)
+                cons.append((self.C2 @ self.X)[i] >= (self.C2 @ self.X)[j] * kij_lbound)
+        else: # opt_mode 4
+          qvar = cp.Variable(int((ntrain * (ntrain -1) ) /2))
+          dvar = cp.Variable(int((ntrain * (ntrain -1) ) /2))
+          k = 0
+          for i in range(ntrain):
+            for j in range(i+1, ntrain):
+              # d = 2 x^\top \Theta (x^{(j)} - x^{(i)}) + ||x^{(i)}||_{\Theta}^2 - ||x^{(j)}||_{\Theta}^2 
+              cons.append(dvar[k] == cp.atoms.sum(cp.atoms.multiply(th / self.X_scale**self.p, 2.0 * cp.atoms.multiply(xvar, self.x[j] - self.x[i]) + self.x[i] * self.x[i] - self.x[j] * self.x[j]))) 
+              # q >= exp(d)
+              cons.append(qvar[k] >= cp.atoms.exp(-1.0 * dvar[k]))
+              # --- begin d secant constraint ---
+
+              dxji = self.x[j] - self.x[i]
+              lo = np.where(dxji >= 0., l, u)
+              hi = np.where(dxji >= 0., u, l)
+              # rhoij_lbound <= rho_i - rho_j <= rhoij_ubound
+              # k_i <= k_j * exp(-1 * rhoij_lbound)
+              # k_i >= k_j * exp(-1 * rhoij_ubound)
+              d_ubound = 2. * np.inner((hi / self.X_scale), th * dxji / self.X_scale) + np.inner(self.x[i] / self.X_scale, th * self.x[i] / self.X_scale) - np.inner(self.x[j] / self.X_scale, th * self.x[j] / self.X_scale)
+              d_lbound = 2. * np.inner((lo / self.X_scale), th * dxji / self.X_scale) + np.inner(self.x[i] / self.X_scale, th * self.x[i] / self.X_scale) - np.inner(self.x[j] / self.X_scale, th * self.x[j] / self.X_scale)
+              q_ubound = np.exp(-1.0 * d_lbound)
+              q_lbound = np.exp(-1.0 * d_ubound)       
+              cons.append(qvar[k] <= q_ubound + ((q_lbound - q_ubound) / (d_ubound - d_lbound)) * (dvar[k] - d_lbound))
+              # --- end d secant constraint ---
+
+              # McCormick relaxation on product k_i = q_k * k_j
+              # z = x * y
+              # z >= x_l y + x * y_l - x_l * y_l
+              # z >= x_u y + x * y_u - x_u * y_u
+              # z <= x_u y + x * y_l - x_u * y_l
+              # z <= x_l * y + x * y_u - x_l * y_u
+              cons.append((self.C2 @ self.X)[i] >= q_lbound * (self.C2 @ self.X)[j] + qvar[k] * kMin[j] - q_lbound * kMin[j])
+              cons.append((self.C2 @ self.X)[i] >= q_ubound * (self.C2 @ self.X)[j] + qvar[k] * kMax[j] - q_ubound * kMax[j])
+              cons.append((self.C2 @ self.X)[i] <= q_ubound * (self.C2 @ self.X)[j] + qvar[k] * kMin[j] - q_ubound * kMin[j])
+              cons.append((self.C2 @ self.X)[i] <= q_lbound * (self.C2 @ self.X)[j] + qvar[k] * kMax[j] - q_lbound * kMax[j])
+              # ---- end McCormick relaxation on product k_i = q_k * k_j
+
+              # add additional bound constraints on on d
+              cons.append(dvar[k] <= d_ubound)
+              cons.append(d_lbound <= dvar[k])
+              k = k + 1
+    elif opt_mode == 5 or opt_mode == 6:
+      training_x = np.asarray(self.x, dtype=float)
+      ntrain, dimx = training_x.shape
+
+      l = np.asarray(l, dtype=float).ravel()
+      u = np.asarray(u, dtype=float).ravel()
+
+      scale = np.broadcast_to(np.asarray(self.X_scale, dtype=float).ravel(), (dimx,))
+      th = np.broadcast_to(np.asarray(self.theta, dtype=float).ravel(), (dimx,))
+
+      xvar = cp.Variable(dimx, name="xvar")
+      cons += [xvar >= l, xvar <= u, cp.norm(self.X[:-1], 2) <= 1.0]
+
+      # Positive loss bounds and kernel scaling.
+      qL, qU = self.kernel_loss_bounds(l, u)
+      loss_width = qU - qL
+
+      # Cap the scaling shift, NOT the actual kernel loss.
+      # Usually scale_shift == qL and loss_offset == 0.
+      scale_shift = np.minimum(qL, 700.0)
+      kscale = np.exp(-scale_shift)
+      loss_offset = qL - scale_shift
+
+      with np.errstate(under="ignore"):
+        zetaU_raw = np.exp(-loss_offset)
+        zetaL_raw = np.exp(-(qU - scale_shift))
+
+      zetaL = np.nextafter(zetaL_raw, 0.0)
+      zetaU = np.minimum(1.0, np.nextafter(np.maximum(zetaU_raw, np.finfo(float).tiny), np.inf,))
+
+      # replacement with the positive loss formulation
+      #   loss_parts replaces the old etavar;
+      #   zetavar replaces the old  lamvar.
+      #
+      # qvar or loss_shift_var below are not variable, but expressions
+      loss_parts = cp.Variable((ntrain, dimx), name="coordinate_loss")
+      zetavar = cp.Variable(ntrain, name="scaled_kernel")
+
+      # Affine expressions only.
+      qvar = cp.sum(loss_parts, axis=1)
+      loss_shift_var = qvar - qL
+      kvec = cp.multiply(kscale, zetavar)
+
+      # Compatibility expressions/aliases for diagnostics and existing hooks.
+      lamvar, etavar = -qvar, -loss_parts
+      lamL, lamU = -qU, -qL
+
+      # Used by the existing variance-mode post-solve bound check.
+      rhovar, rhomin, rhomax = qvar, qL, qU
+
+      cons += [loss_shift_var >= 0.0, loss_shift_var <= loss_width,
+               zetavar >= zetaL, zetavar <= zetaU,
+               self.C2 @ self.X == kvec,  #single coupling to the  GP kernel variables.
+      ]
+
+      # Scaled exponential envelope.
+      #
+      # h = q - qL, o = qL - scale_shift:
+      #
+      #   exp(-h-o) <= zeta
+      #   zeta <= exp(-o) * (1 - a*h)
+      #
+      # a = (1-exp(-width))/width, with a(0)=1.
+      a = np.ones_like(loss_width)
+      np.divide(-np.expm1(-loss_width), loss_width, out=a, where=loss_width > 0.0)
+
+      # Round downward because this coefficient is subtracted in the secant upper bound.
+      secant_slope = np.nextafter(zetaU_raw * a, 0.0)
+
+      # the smallest normal Python-float or double
+      normal = zetaU_raw >= np.finfo(float).tiny
+      active = np.flatnonzero(normal & (loss_width > 0.0))
+      fixed = np.flatnonzero(normal & (loss_width == 0.0))
+
+      # For small upper bounds on zeta, keep interval bounds but omit the exponential
+      # and secant cuts. Weaker relaxation at the benefit of maintaining a positive correlation k
+      if active.size > 0:
+        cons += [ cp.ExpCone(-loss_shift_var[active] - loss_offset[active], np.ones(active.size), zetavar[active]),
+                  zetavar[active] <= zetaU[active] - cp.multiply(secant_slope[active], loss_shift_var[active])]
+
+      if fixed.size > 0:
+        # Avoid a degenerate exponential cone.
+        cons.append(zetavar[fixed] == zetaU_raw[fixed])
+        printf(f"INFO: Scaled positive loss: got {fixed.size} zetas")
+
+      # ------------------------------------------------------------
+      # SE coordinate hull.
+      # ------------------------------------------------------------
+      if self.kernel_spec == "pow_exp" and float(self.p) == 2.0:
+        # Preserve one shared square variable per input coordinate.
+        wvar = cp.Variable(dimx, name="shared_squared_w")
+
+        cons += [cp.square(xvar) <= wvar, wvar <= cp.multiply(l + u, xvar) - l*u,]
+
+        for j in range(dimx):
+          centers = training_x[:, j]
+          cons.append(loss_parts[:, j] == (th[j] / scale[j]**2) * (wvar[j] - 2.0*cp.multiply(centers, xvar[j]) + centers**2))
+
+      # ------------------------------------------------------------
+      # Matern 1/2 coordinate hull.
+      # ------------------------------------------------------------
+      elif self.kernel_spec == "pow_exp" and float(self.p) == 1.0:
+        # Joint breakpoint hull: weights are shared across samples.
+        taus, alphavars = [], []
+
+        for j in range(dimx):
+          lj, uj = float(l[j]), float(u[j])
+          centers = training_x[:, j]
+
+          interior = centers[(centers > lj) & (centers < uj)]
+          knots = np.unique(np.concatenate(([lj], interior, [uj])))
+
+          alpha = cp.Variable(knots.size, nonneg=True, name=f"matern12_alpha_{j}",)
+
+          loss_at_knots = (th[j] / scale[j]) * np.abs(centers[:, None] - knots[None, :])
+
+          cons += [ cp.sum(alpha) == 1.0,
+                    xvar[j] - lj == (knots - lj) @ alpha,            # Center the knot coordinates without changing the hull.
+                    loss_parts[:, j] == loss_at_knots @ alpha]
+
+          taus.append(knots)
+          alphavars.append(alpha)
+
+      # ------------------------------------------------------------
+      # Matern 3/2 and Matern 5/2 coordinate hulls.
+      # ------------------------------------------------------------
+      elif self.kernel_spec in ("matern32", "matern52"):
+        nu = 1.5 if self.kernel_spec == "matern32" else 2.5
+
+        for j in range(dimx):
+          lj, uj = float(l[j]), float(u[j])
+          centers = training_x[:, j]
+
+          # Avoid support generation for a fixed coordinate or
+          # a coordinate with zero kernel weight.
+          if lj == uj or th[j] == 0.0:
+            fixed_loss = gp_coordinate_loss(np.abs(lj - centers) / scale[j], th[j], self.kernel_spec)
+            cons.append(loss_parts[:, j] == fixed_loss)
+            continue
+
+          # The existing helper incorporates sqrt(3) or sqrt(5).
+          component_phi = matern_phi(centers.tolist(), float(th[j] / scale[j]), nu)
+          support_rows = component_phi.generate_alpha_beta_r(lj, uj)
+
+          if support_rows:
+            alphas = np.asarray([row[0] for row in support_rows], dtype=float)
+            rhs = np.asarray([row[2] for row in support_rows], dtype=float)
+            beta_mat = sparse.csr_matrix(np.asarray([row[1] for row in support_rows], dtype=float))
+
+            if not np.all(np.isfinite(alphas)) or not np.all(np.isfinite(rhs)) or not np.all(np.isfinite(beta_mat.data)):
+              raise FloatingPointError("Nonfinite Matern support row")
+
+            # Vectorized support rows:
+            #   alphas*x_j + beta_mat @ eta[:,j] <= rhs
+            #
+            # Substitute eta = -loss_parts.
+            cons.append(cp.multiply(alphas, xvar[j]) - beta_mat @ loss_parts[:, j] <= rhs)
+            
+          # for alpha, beta, rhs in support_rows:
+          #   alpha, rhs = float(alpha), float(rhs)
+          #   beta = np.asarray(beta, dtype=float).reshape(ntrain)
+
+          #   if (not np.isfinite(alpha) or not np.isfinite(rhs) or not np.all(np.isfinite(beta))):
+          #     raise FloatingPointError("Nonfinite Matern support row")
+
+          #   # Old support row:
+          #   #   alpha*x_j + beta @ eta[:,j] <= rhs
+          #   #
+          #   # Substitute eta = -loss_parts.
+          #   cons.append(alpha*xvar[j] - beta @ loss_parts[:, j] <= rhs)
+      else:
+        raise ValueError(f"Unsupported kernel: {self.kernel_spec}")
+
+      # add constraints based on downselected nearest neighbor pairs
+      # downselect on available pairs
+      if opt_mode == 6:
+        pairs = np.asarray(self.nearest_neighbor_pairs, dtype=np.int64).reshape(-1, 2)
+
+        self._mode6_ratio_stats = None
+
+        if len(pairs):
+          # Preserve full LCB importance weights in physical k units.
+          reference = l + 0.5 * (u - l)
+          gradient = lcb_gradient_at_single_reference(self, reference)[0]
+          magnitude = np.abs(np.asarray(gradient, float).ravel())
+          sensitivity = magnitude / max(float(magnitude.max()), np.finfo(float).eps)
+
+          with np.errstate(under="ignore"):
+            Ai = (np.exp(-qL) * unit_expsec_gap(loss_width) * (0.05 + 0.95 * sensitivity))
+
+          deltaL, deltaU = mode6_scaled_logratio_bounds(self, l, u, pairs, scale_shift)
+
+          c1 = 1
+          rows, self._mode6_ratio_stats = select_mode6_ratio_rows(pairs=pairs, deltaL=deltaL, deltaU=deltaU,
+                                                                  zetaL=zetaL, zetaU=zetaU, importance=Ai,
+                                                                  max_pairs=int(c1 * ntrain), log_tol=1.e-10,
+                                                                  path_screen=True)
+          if rows:
+            src, dst, a, b = zip(*rows)
+            src = np.asarray(src, dtype=np.int64)
+            dst = np.asarray(dst, dtype=np.int64)
+            a = np.asarray(a, dtype=float)
+            b = np.asarray(b, dtype=float)
+
+            # One vector constraint containing the selected two-nonzero rows.
+            cons.append(cp.multiply(a, zetavar[dst]) <= cp.multiply(b, zetavar[src]))
+            
+    opt_tol = 1.e-8
+    opt_rel_tol = 1.e-8
+    for i in range(3):
+      verbose = False
+      if i > 0:
+        max_iters = 1000
+        verbose = False
+      else:
+        max_iters = 300
+      if i == 2:
+        opt_rel_tol = 1.e-4
+        verbose = False
+
+      try:
+        if mode == 0:
+          prob = cp.Problem(cp.Minimize(self.obj2), cons)
+
+          # model debugging 
+          #data, _, _ = prob.get_problem_data(cp.CLARABEL)
+          #A = data["A"]
+          #dims = data["dims"]
+          #print(f"Clarabel model: variables={A.shape[1]} rows={A.shape[0]} equalities={dims.zero} linear_inequalities={dims.nonneg} exp_cones={dims.exp} soc_sizes={dims.soc} nnz_A={A.nnz}")
+  
+          if not prob.is_dcp():
+            print("is not DCP")
+            raise RuntimeError("LCB relaxation is not DCP")
+
+          acqf_L = prob.solve(solver=cp.CLARABEL, canon_backend=cp.CPP_CANON_BACKEND, verbose=verbose, tol_gap_abs=opt_tol, tol_gap_rel=opt_rel_tol, max_iter=max_iters)
+          #acqf_L = cp.Problem(cp.Minimize(self.obj2), cons).solve(solver=cp.SCS, verbose=verbose, eps_abs=opt_tol, max_iters=max_iters)
+
+          if prob.status != cp.OPTIMAL:
+            if prob.status == cp.OPTIMAL_INACCURATE:
+              # be conservative
+              acqf_L -= 10*opt_tol
+            else:
+              raise RuntimeError("LCB relaxation solver did not return an optimal solution")
+
+          if self.diagnostics and opt_mode==6:
+            diagnostics_output = ""
+            if (self.kernel_spec == "pow_exp" and float(self.p) == 2.0):
+              diagnostics_output = stats_common_se_point(owner=self, l=l, u=u, xvar=xvar, wvar=wvar, lamvar=lamvar)
+            
+            diagnostics_output = stats_lcb_relaxation_gap(owner=self, xvar=xvar, relaxation_value=acqf_L) + diagnostics_output
+
+            ratio_stats = getattr(self, "_mode6_ratio_stats", None)
+            if ratio_stats is not None:
+              diagnostics_output += f"Mode-6 ratio selection: {ratio_stats}\n"
+              
+          if opt_mode in (5,6):
+            assert mode == 0
+            self.save_expsec_weights(cons, lamvar, lamL, lamU)
+
+        else:
+          sig_U = cp.Problem(cp.Maximize(self.obj3), cons).solve(solver=cp.CLARABEL, verbose=verbose, tol_gap_abs=opt_tol, tol_gap_rel=opt_rel_tol, max_iter=max_iters)
+          if not (np.all(rhovar.value >= rhomin) and np.all(rhovar.value <= rhomax)):
+            print("optimal rho not within rho bounds")
+            pass
+      except Exception as e:
+        pass
+        print(f"WARNING: convex solver at attempt {i+1} returned error: {e}", flush=True)
+        if i == 0:
+          opt_tol *= 1.e4
+        if i == 1:
+          opt_tol *= 1.e2
+        print("WARNING: Loosening convex opt tolerance to ", opt_tol, flush=True)
+
+        if mode == 0:
+          acqf_L = -np.inf
+        else:
+          sig_U = np.inf
+        continue
+      else:
+        break # exit loop acqf_L successfully computed :)
+    if mode == 0:
+      return acqf_L, diagnostics_output
+    else:
+      return sig_U, diagnostics_output
+
+  def kernel_loss_bounds(self, l, u):
+    """Direct bounds on q_i(x)=-log(k_i(x)) over [l,u]."""
+    training_x = np.asarray(self.x, dtype=float)
+    l = np.asarray(l, dtype=float).ravel()
+    u = np.asarray(u, dtype=float).ravel()
+
+    if training_x.ndim != 2 or training_x.shape[0] == 0:
+      raise ValueError("Training inputs must be a nonempty matrix")
+
+    dimx = training_x.shape[1]
+    if l.size != dimx or u.size != dimx:
+      raise ValueError("Box dimension does not match training inputs")
+
+    scale = np.broadcast_to(np.asarray(self.X_scale, dtype=float).ravel(), (dimx,))
+    theta = np.broadcast_to(np.asarray(self.theta, dtype=float).ravel(), (dimx,))
+
+    if (not all(np.all(np.isfinite(a)) for a in (training_x, l, u, scale, theta))
+        or np.any(l > u) or np.any(scale <= 0.0) or np.any(theta < 0.0)):
+      raise ValueError("Invalid box, training data, or kernel parameters")
+
+    self.dmin = np.maximum(0.0, np.maximum(l - training_x, training_x - u)) / scale
+    self.dmax = np.maximum(np.abs(l - training_x), np.abs(u - training_x)) / scale
+
+    p = float(self.p) if self.kernel_spec == "pow_exp" else 2.0
+
+    qL = gp_coordinate_loss(self.dmin, theta, self.kernel_spec, p).sum(axis=1)
+    qU = gp_coordinate_loss(self.dmax, theta, self.kernel_spec, p).sum(axis=1)
+
+    if not np.all(np.isfinite(qL)) or not np.all(np.isfinite(qU)):
+      raise FloatingPointError("Nonfinite kernel-loss bounds")
+
+    return qL, np.maximum(qU, qL)
+
+  def ker_bounds(self, l, u):
+    """ 
+    Monotone bounds for k(x, X_i) over box [l,u] (original units), without taking logaritms,
+    which is problematic as some of relaxation k-variables may get zero or even negative due
+    to solve and roundoff errors.
+ 
+    Returns kL, kU of shape (nt,), consistent with SMT’s kernels.
+    """
+    qL, qU = self.kernel_loss_bounds(l, u)
+
+    #with np.errstate(under="ignore"):
+    lower, upper = np.exp(-qU), np.exp(-qL)
+
+    # Move the elementary endpoint evaluations outward.
+    kL = np.nextafter(lower, 0.0)
+    kU = np.minimum(1.0, np.nextafter(np.maximum(upper, np.finfo(float).tiny), np.inf))
+
+    return kL, kU
+  def ker_bounds_old(self, l, u):
+   
+    """
+    Tight monotone bounds for k(x, X_i) over box [l,u] (original units).
+    Returns kL, kU of shape (nt,), consistent with SMT’s kernels.
+    """
+    
+    # normalize the box
+    l_c = self._normalize(l).ravel()
+    u_c = self._normalize(u).ravel()
+
+    Xc  = self.Xc                # (nt, d)
+    th  = self.theta.ravel()     # (d,)
+    spec = self.kernel_spec
+
+    # per-point, per-dimension distance extremes (normalized space)
+    dmin = np.maximum(0.0, np.maximum(l_c - Xc, Xc - u_c))        # (nt,d)
+    dmax = np.maximum(np.abs(l_c - Xc), np.abs(u_c - Xc))         # (nt,d)
+    self.dmin = dmin
+    self.dmax = dmax
+
+    if spec == "pow_exp":
+      # power-exponential: k = exp(-sum_j θ_j |dx_j|^p)
+      p = getattr(self, "p", 2.0)
+      s_min = (th * (dmin ** p)).sum(axis=1)
+      s_max = (th * (dmax ** p)).sum(axis=1)
+      kU = np.exp(-s_min)                                  # max on box
+      kL = np.exp(-s_max)                                  # min on box
+    elif spec == "matern32":
+      # SMT separable form: ∏_j (1 + √3 θ_j |dx_j|) exp(-√3 θ_j |dx_j|)
+      a = np.sqrt(3.0) * th
+      gmin = (1 + a * dmin) * np.exp(-a * dmin)
+      gmax = (1 + a * dmax) * np.exp(-a * dmax)
+      kU = np.prod(gmin, axis=1)
+      kL = np.prod(gmax, axis=1)
+    elif spec == "matern52":
+      # SMT separable form: ∏_j (1 + √5 θ_j |dx_j| + (5/3) θ_j^2 dx_j^2) exp(-√5 θ_j |dx_j|)
+      b = np.sqrt(5.0) * th
+      btmin, btmax = b * dmin, b * dmax
+      gmin = (1 + btmin + (btmin**2)/3.0) * np.exp(-btmin)
+      gmax = (1 + btmax + (btmax**2)/3.0) * np.exp(-btmax)
+      kU = np.prod(gmin, axis=1)
+      kL = np.prod(gmax, axis=1)
+    else:
+      raise ValueError(f"Unsupported kernel_spec: {spec}")
+    return kL, kU
+
+  def mu_bounds(self, kL, kU):
+    # compute in normalized y-space
+    lo = np.where(self.gamma >= 0.0, kL, kU)
+    hi = np.where(self.gamma >= 0.0, kU, kL)
+    mu_L_n = self.beta0 + float(np.dot(self.gamma, lo))  # normalized
+    mu_U_n = self.beta0 + float(np.dot(self.gamma, hi))  # normalized
+
+    # de-normalize like SMT
+    mu_L = self.y_mean + self.y_std * mu_L_n
+    mu_U = self.y_mean + self.y_std * mu_U_n
+    return mu_L, mu_U
+    
+  def sigma2_bounds(self, kL, kU, l = None, u = None):
+    """
+    Variance bounds over r ∈ [kL,kU] for SMT KRG (poly='constant'),
+    returned in ORIGINAL y-units (σ^2 * y_std^2).
+    """
+    
+    kL = np.asarray(kL, float).ravel()
+    kU = np.asarray(kU, float).ravel()
+    n  = kL.size
+
+    # lower-bound
+    if l is None or u is None:
+      s2_L = 0.0
+    else:
+      x = np.atleast_2d( (l + u) / 2. )
+      S2 = self.gpsurrogate.variance(x)
+      s2_L = min(S2.flatten())
+
+    # variance upper-bound (in terms of kernel k) defined by convex QP
+    if len(B) == 0:
+      cons = [self.C @ self.z >= kL, self.C @ self.z <= kU]
+    else:
+      Bcon = B.dot(self.C)
+      cons = [self.C @ self.z >= kL, self.C @ self.z <= kU, Bcon @ self.z >= 0]
+
+    s2_U_n = cp.Problem(cp.Maximize(self.obj), cons).solve(solver="OSQP",verbose=False,eps_abs=1.e-14, eps_rel=1.e-10)
+
+    assert np.isfinite(s2_U_n), "convex optimizer did not converge"
+    
+    # re-scale
+    s2_U = s2_U_n * self.sigma2 
+    return s2_L, s2_U
+
+  def LCB_LB(self, l, u, kL, kU, opt_mode=2):
+    return self.convex_relaxation(l, u, kL, kU, opt_mode=opt_mode)
+  def sig_UB(self, l, u, kL, kU, opt_mode=2):
+    return self.convex_relaxation(l, u, kL, kU, opt_mode=opt_mode, mode=1)
+  def sig_LB(self, kL, kU, l = None, u =None):
+    # lower-bound
+    if l is None or u is None:
+      s2_L = 0.0
+    else:
+      # TODO: replace with local minimizer routine
+      x = np.atleast_2d( (l + u) / 2.)
+      S2 = self.gpsurrogate.variance(x)
+      s2_L = min(S2.flatten())
+    return np.sqrt(s2_L)
+  
+
+  def compute_acqf_bounds(self, l, u, skip_LB=False, skip_UB=False):
+    diagnostics_str = ""
+    # kernel bounds
+    kL, kU = self.ker_bounds(l, u)
+    if self.kernel_spec == "pow_exp":
+      assert self.p == 1.0 or self.p == 2.0, "not supporting p not equal to 1 or 2"
+
+    self.expsec_weights = np.ones(np.asarray(self.gamma).size)
+      
+    failed_LB_opt = False
+    if isinstance(self.acqf, LCBacquisition):
+      # opt_mode = 0 (previous baseline w ratio constraints)
+      # opt_mode = 1 (Convex relaxation w no ratio constraints on k and no affine constraints)
+      # opt_mode = 2 (Most recent relaxation w ratio constraints and affine constraints
+      opt_mode = self.opt_mode
+      
+      if not skip_LB:
+        with warnings.catch_warnings():
+          warnings.simplefilter("ignore", category=UserWarning)
+          #
+          # Lower bound
+          #
+          acqf_L, d_str = self.LCB_LB(l, u, kL, kU, opt_mode=opt_mode)
+          diagnostics_str += f"{d_str}"
+        for i in range(self.opt_mode):
+          if not np.isfinite(acqf_L):
+            failed_LB_opt = True
+            print("Warning: was not able to determine lower-bound in previous mode ", opt_mode, "... switching", flush=True)
+            opt_mode -= 1
+            with warnings.catch_warnings():
+              warnings.simplefilter("ignore", category=UserWarning)
+              acqf_L, d_str = self.LCB_LB(l, u, kL, kU, opt_mode=opt_mode)
+              diagnostics_str += f"{d_str}"
+              print(f"finished in mode {opt_mode}!!!!!!!!!!!!!!!!!!")
+          else:
+            failed_LB_opt = False
+      else:
+        acqf_L = -np.inf 
+        failed_LB_opt = False
+    if not isinstance(self.acqf, LCBacquisition) or failed_LB_opt:
+      # mean bounds
+      mu_L, mu_U = self.mu_bounds(kL, kU)
+      sig_L = self.sig_LB(kL, kU, l=l, u=u)
+      with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=UserWarning)
+        sig_U = self.sig_UB(l, u, kL, kU)
+      if np.isfinite(sig_U):
+        var_L = sig_L ** 2.
+        var_U = sig_U ** 2.
+      else:
+        var_L, var_U = self.sigma2_bounds(kL, kU, l=l, u=u)
+      # evaluate acquisition at (mu_L, var_U) and (mu_U, var_L)
+      mu  = np.array([mu_L, mu_U])
+      var = np.array([var_U, var_L])
+      acqf_bounds = self.acqf.evaluate_meansig2(mu, var)
+      acqf_L = acqf_bounds[0]
+
+    if skip_UB:
+      return float(np.asarray(acqf_L).reshape(-1)[0]), np.inf, None, diagnostics_str
+    
+    acqf_solve_success = False 
+    if not self.acqf_UB_solver == "MINEVAL": # local gradient-based optimization method
+      constraints = []
+      box_bounds = np.array([l, u]).T
+      acqf_callback = {'obj' : self.acqf.scalar_evaluate}
+      if self.acqf.has_gradient:
+        acqf_callback['grad'] = self.acqf.scalar_eval_g
+      opt_evaluator = Evaluator()
+
+      # We need to be carefull here since the errors in the gradient (compared to FD) are in the 1e-4 range
+      # Relax tolerance for dual infeasibility/norm of gradient of the Lagrangian
+      if self.acqf_UB_solver == "IPOPT": 
+        opt_solver_options = {
+          'max_iter': 20,
+          'tol': 1.e-3,
+          'honor_original_bounds': 'yes',
+          'print_level': 0,
+          'sb': 'yes',
+          'acceptable_iter': 5,
+          'acceptable_tol': 1e-2,
+        }
+      else: #SLSQP
+        opt_solver_options = {'maxiter' : 100, 'tol' : 1.e-5}
+
+      acqf_minimizer = minimizer_wrapper(acqf_callback, self.acqf_UB_solver, box_bounds, constraints, opt_solver_options)
+      alpha = 0.5 #0.05 + 0.9 * self.rng.random(len(u)) # rand numbers in [0.05, 0.95)
+      x0 = [alpha * l + (1. - alpha) * u]
+      opt_sol = opt_evaluator.run(acqf_minimizer.minimizer_callback, x0)[0]
+
+      # Retain the retry for other optimizers, but not IPOPT.
+      if self.acqf_UB_solver != "IPOPT" and not opt_sol[2]:
+        print(f"{self.acqf_UB_solver} did not converge: {opt_sol[3]}", flush=True)
+        opt_solver_options = {'maxiter': 200, 'tol': 1.e-3, 'disp': True}
+        acqf_minimizer = minimizer_wrapper(acqf_callback, self.acqf_UB_solver, box_bounds, constraints, opt_solver_options)
+        opt_sol = opt_evaluator.run(acqf_minimizer.minimizer_callback, x0)[0]
+
+      # Check primal feasibility with respect to the original box - need to be computed since it is not returned by cyipopt
+      xopt = np.asarray(opt_sol[0], dtype=float).ravel()
+      box_inf_pr = np.inf
+      if xopt.size == l.size and np.all(np.isfinite(xopt)):
+        box_inf_pr = float(np.max(np.maximum(np.maximum(l - xopt, xopt - u), 0.0)))
+
+      ub_feas_tol = 1.e-6
+      acqf_solve_success = box_inf_pr <= ub_feas_tol
+      if self.acqf_UB_solver != "IPOPT":
+        acqf_solve_success &= bool(opt_sol[2])
+
+      # An IPOPT iterate is acceptable regardless of optimality status.
+      if acqf_solve_success:
+        acqf_U_x = np.clip(xopt, l, u)
+        try:
+          acqf_U = float(np.asarray(self.acqf.evaluate(acqf_U_x[None, :])).ravel()[0])
+          acqf_solve_success = np.isfinite(acqf_U)
+        except (FloatingPointError, ValueError, RuntimeError):
+          acqf_solve_success = False
+
+      if not acqf_solve_success:
+        print(f"{self.acqf_UB_solver} UB rejected (box_inf_pr={box_inf_pr:.2e}): "
+              f"{opt_sol[3]}; using MINEVAL", flush=True)
+
+
+      # if not (np.all(opt_sol[0] >= l) and np.all(opt_sol[0] <= u)):
+      #   print(f"optimizer {opt_sol[0]} not within prescribed bounds: {l}, {u}")
+      # assert (np.all(opt_sol[0] >= l) and np.all(opt_sol[0] <= u)), f"acqf minimizer not within bounds"
+      # msg = opt_sol[3]
+      # acqf_solve_success = opt_sol[2]
+      # if not acqf_solve_success:
+      #   print(self.acqf_UB_solver + " did not converge on BOX ... trying again with more verbosity and at another initial point", flush=True)
+      #   print(self.acqf_UB_solver + " message: ", msg, flush=True)
+      #   if self.acqf_UB_solver == "IPOPT":
+      #     opt_solver_options = {
+      #       'max_iter': 200,
+      #       'tol': 1.e-3,
+      #       'honor_original_bounds': 'yes',
+      #       'print_level': 0,
+      #       'sb': 'yes',
+      #       'acceptable_iter': 5,
+      #       'acceptable_tol': 1e-2
+      #     }
+      #   else: # SLSQP
+      #     opt_solver_options = {'maxiter' : 200, 'tol' : 1.e-3, 'disp' : True}
+      #   acqf_minimizer = minimizer_wrapper(acqf_callback, self.acqf_UB_solver, box_bounds, constraints, opt_solver_options)
+      #   alpha = 0.5# 0.05 + 0.9 * self.rng.random(len(u)) # rand numbers in [0.05, 0.95)
+      #   x0 = [alpha * l + (1. - alpha) * u]
+      #   opt_sol = opt_evaluator.run(acqf_minimizer.minimizer_callback, x0)[0]
+      #   acqf_solve_success = opt_sol[2]
+      #   if not acqf_solve_success:
+      #     print(self.acqf_UB_solver + " failed a second time. Will take the minimum of a small number of acqf function evaluations", flush=True)
+      # if acqf_solve_success:
+      #   acqf_U = self.acqf.evaluate(np.atleast_2d(opt_sol[0])).flatten()[0]
+      #   acqf_U_x = opt_sol[0]
+
+
+    # evaluate the acquisition over a skeleton of the box
+    # and choose the smallest value as the upper bound
+    # of the minimum over the box
+    if (not acqf_solve_success) or (self.acqf_UB_solver == "MINEVAL"):
+      s_per_dim = 3
+      n_points = s_per_dim ** self.gpsurrogate.ndim
+      x_points = np.zeros((n_points, self.gpsurrogate.ndim))
+      for i in range(n_points):
+        for j in range(self.gpsurrogate.ndim):
+          x_points[i, j] = l[j] + (u[j] - l[j]) / (s_per_dim - 1.) * float(int(i / s_per_dim**j) % s_per_dim)
+      acqf_eval = self.acqf.evaluate(x_points)
+      min_arg = np.argmin(acqf_eval.flatten())
+      acqf_U_x = x_points[min_arg]
+      acqf_U = acqf_eval[min_arg]
+    if acqf_L > acqf_U:
+      if abs(acqf_U - acqf_L) / abs(acqf_U) < 1.e-4:
+        acqf_L = acqf_U - 1.e-8
+      else:
+        print("issue with upper and lower-bound computations...", flush=True)
+        print("acqf_L = {0:1.12e}, acqf_U = {1:1.12e}".format(acqf_L, acqf_U), flush=True)
+    #make sure output is flush out to get all the info in case code asserts
+    sys.stdout.flush()
+    sys.stderr.flush()
+    assert acqf_L <= acqf_U, "error: computed acquisition function bounds: acqf_U < acqf_L"
+    if isinstance(acqf_L, (list, np.ndarray)):
+      acqf_L = acqf_L[0]
+    if isinstance(acqf_U, (list, np.ndarray)):
+      acqf_U = acqf_U[0]
+    return acqf_L, acqf_U, acqf_U_x, diagnostics_str
+ 
+#################################################################################
+#################################################################################
+class BnBAlgorithmBase:
+  def __init__(self, x = None, y = None):
+    # Kernel info for bounds
+    self.kernel_spec = None
+    self.y_min = None
+
+    # Evaluation parameters
+    self.theta = None
+
+    # Test
+    self.enable_debug_checks = False  
+
+    # BnB search state
+    self.best_l = None
+    self.best_u = None
+    self.upper_bound = np.inf
+    self.final_gap = None
+    self.final_diameter = None
+    self.verbose = False
+
+    # Training data
+    self.x = x
+    self.y = y
+    self.ntrain = self.x.shape[0]
+
+    self.log = Logger()
+
+    self.restart = False
+    self.restart_partition_size = 1
+    self.diagnostics = False
+    
+  def sync_from_smt(self):
+    sm = self.gpsurrogate.surrogatesmt
+    par = sm.optimal_par
+
+    # --- kernel / corr selection ---
+    corr = sm.options["corr"]  # e.g., 'squar_exp', 'pow_exp', 'abs_exp', 'matern12', 'matern32', 'matern52'
+    if corr == "pow_exp":
+      # OptionsDictionary -> use membership + indexing (no .get)
+      p = float(sm.options["pow_exp_power"]) if "pow_exp_power" in sm.options else 2.0
+      if p not in (1.0, 2.0):
+        # tighten if your 1D bound code only supports p in {1,2}
+        raise ValueError("Single-d bounds support pow_exp only for p=1 or p=2")
+      self.kernel_spec = "pow_exp"
+      self.p = p
+    elif corr == "squar_exp":
+      # Gaussian is pow_exp with p=2
+      self.kernel_spec = "pow_exp"
+      self.p = 2.0
+    elif corr == "abs_exp":
+      # Exponential is pow_exp with p=1
+      self.kernel_spec = "pow_exp"
+      self.p = 1.0
+    elif corr == "matern12":
+      self.kernel_spec = "pow_exp"
+      self.p = 1.0
+    elif corr == "matern32":
+      self.kernel_spec = "matern32"
+    elif corr == "matern52":
+      self.kernel_spec = "matern52"
+    else:
+      raise ValueError(f"Unsupported SMT corr '{corr}'")
+
+    # --- hyperparameters / scaling ---
+    theta = getattr(sm, "optimal_theta", None)
+    if theta is None:
+      theta = sm.corr.theta
+    self.theta = np.asarray(theta, float).ravel()
+ 
+    self.X_offset, self.X_scale = sm.X_offset, sm.X_scale
+    self.Xc = (self.x - self.X_offset) / self.X_scale
+    self._normalize = lambda x: (np.asarray(x, float) - self.X_offset) / self.X_scale
+    
+    ell = 1.0 / np.sqrt(2.0 * self.theta)
+    print("SMT theta =", theta, flush=True)
+    #print("equivalent conventional ell =", ell, flush=True)
+    
+    y_mean = getattr(sm, "y_mean", None)
+    y_std  = getattr(sm, "y_std",  None)
+    if y_mean is None or y_std is None:
+      # fall back to training y if available
+      if self.y is not None:
+        y_mean = float(np.mean(self.y))
+        y_std  = float(np.std(self.y))
+      else:
+        y_mean, y_std = 0.0, 1.0
+    if not np.isfinite(y_std) or abs(y_std) < 1e-15:
+      y_std = 1.0  # avoid degenerate scaling
+    assert len(y_mean) == 1, "expecting one entry"
+    assert len(y_std) == 1, "expecting one entry"
+    self.y_mean = float(y_mean[0])
+    self.y_std  = float(y_std[0])
+    
+    # SMT uses a regression trend option ('poly'); enforce constant mean for your μ-bounds
+    poly = sm.options["poly"] if "poly" in sm.options else "constant"
+    if poly != "constant":
+      raise NotImplementedError("μ-bounds assume poly='constant'")
+
+    # params from training
+    self.beta0 = float(np.asarray(par["beta"]).ravel()[0])
+    self.gamma = np.asarray(par["gamma"], float).ravel()
+
+    self.C = par["C"]
+    self.sigma2 = np.asarray(par.get("sigma2", 1.0), float).reshape(()).item()
+    self.sigma2_ri = float(par["sigma2_ri"] if "sigma2_ri" in par else self.sigma2)
+
+    x_regression = np.array([np.mean(self.gpsurrogate.xlimits[i]) for i in range(self.gpsurrogate.ndim)])
+    regression = (sm._regression_types['constant'](x_regression).T)
+    regression = np.atleast_2d([regression[0][0]])
+    w = linalg.solve_triangular(par["G"].T, regression)
+    
+    ntrain = sm.nt
+    self.A_obj = 2.0 * (-1.0 * np.identity(ntrain) + par["Q"].dot(par["Q"].T))
+    self.b_obj = -2.0 * par["Q"].dot(w)
+    self.c_obj = 1. + np.inner(w[0], w[0])
+    self.z = cp.Variable(ntrain)
+    self.obj = 0.5 * cp.quad_form(self.z, self.A_obj) + self.b_obj.T @ self.z + self.c_obj
+    
+
+  def distance_bounds(self, l, u):
+    # normalize the box
+    l_c = self._normalize(l).ravel()
+    u_c = self._normalize(u).ravel()
+
+    Xc  = self.Xc                # (nt, d)
+
+    # per-point, per-dimension distance extremes (normalized space)
+    dmin = np.maximum(0.0, np.maximum(l_c - Xc, Xc - u_c))        # (nt,d)
+    dmax = np.maximum(np.abs(l_c - Xc), np.abs(u_c - Xc))         # (nt,d)
+    return dmin, dmax   
+
+  def mu_bounds(self, kL, kU):
+    # compute in normalized y-space
+    lo = np.where(self.gamma >= 0.0, kL, kU)
+    hi = np.where(self.gamma >= 0.0, kU, kL)
+    mu_L_n = self.beta0 + float(np.dot(self.gamma, lo))  # normalized
+    mu_U_n = self.beta0 + float(np.dot(self.gamma, hi))  # normalized
+
+    # de-normalize like SMT
+    mu_L = self.y_mean + self.y_std * mu_L_n
+    mu_U = self.y_mean + self.y_std * mu_U_n
+
+
+    return mu_L, mu_U
+
+  def sigma2_bounds(self, kL, kU, l = None, u = None):
+    """
+    Variance bounds over r ∈ [kL,kU] for SMT KRG (poly='constant'),
+    returned in ORIGINAL y-units (σ^2 * y_std^2).
+    """
+    
+    kL = np.asarray(kL, float).ravel()
+    kU = np.asarray(kU, float).ravel()
+    n  = kL.size
+    assert hasattr(self, "C") and hasattr(self, "sigma2"), "Call sync_from_smt() first"
+    assert kL.shape == kU.shape == (n,) and np.all(kL <= kU), "kL/kU corrupted"
+
+    # lower-bound
+    if l is None or u is None:
+      s2_L = 0.0
+    else:
+      x = np.atleast_2d( (l + u) / 2.)
+      S2 = self.gpsurrogate.variance(x)
+      s2_L = min(S2.flatten())
+
+    # variance upper-bound (in terms of kernel k) defined by convex QP
+    B = getattr(self, "B", np.array([]))
+    if len(B) == 0:
+      cons = [self.C @ self.z >= kL, self.C @ self.z <= kU]
+    else:
+      Bcon = B.dot(self.C)
+      cons = [self.C @ self.z >= kL, self.C @ self.z <= kU, Bcon @ self.z >= 0]
+
+    #TODO: update me, embed in try loop... some other strategy for when the maximization does not work!!!
+
+    s2_U_n = cp.Problem(cp.Maximize(self.obj), cons).solve(solver="OSQP", verbose=bool(getattr(self, "verbose_cvx_solver", False)),
+                                                           eps_abs=1.e-14, eps_rel=1.e-10)
+    assert np.isfinite(s2_U_n), "convex optimizer did not converge"
+    
+    # re-scale
+    s2_U = s2_U_n * self.sigma2 
+    return s2_L, s2_U
+
+
+# diagnostics statistics related to the "common" x to all k kernels
+def stats_common_se_point(owner, l, u, xvar, wvar, lamvar) -> str:
+  output = ""
+  k_sol = np.asarray((owner.C2 @ owner.X).value, dtype=float).ravel()
+  common = fit_common_se_point_from_ratios(owner=owner, k_values=k_sol, l=l, u=u)
+  output += f" l:      {np.array2string(l, max_line_width=100000, formatter={'float_kind': lambda x: f'{x:.3e}'})}\n"
+  output += f" x_lsq:  {np.array2string(common['x_common'], max_line_width=100000, formatter={'float_kind': lambda x: f'{x:.3e}'})}\n"
+  output += f" x_conv: {np.array2string(np.asarray(xvar.value, dtype=float).ravel(), max_line_width=100000, formatter={'float_kind': lambda x: f'{x:.3e}'})}\n"
+  output += f" u:      {np.array2string(u, max_line_width=100000, formatter={'float_kind': lambda x: f'{x:.3e}'})}\n"
+  output += (
+    f'Ratio resid: RMS {common["pair_rms"]:10.3e}  '
+    f'max={common["pair_max"]:10.3e}     '
+  )
+  output += (
+    f'Abs log-kernel resid:  RMS {common["absolute_rms"]:10.3e}  '
+    f'max={common["absolute_max"]:10.3e}  '
+    f'mean={common["absolute_mean"]:10.3e}  '
+    f'std={common["absolute_std"]:10.3e}\n'
+  )
+
+  x_opt = np.asarray(xvar.value).ravel()
+  w_opt = np.asarray(wvar.value).ravel()
+  lam_opt = np.asarray(lamvar.value).ravel()
+  k_opt = np.asarray((owner.C2 @ owner.X).value).ravel()
+
+  vals = w_opt - x_opt**2
+  output += (
+    "w-x^2= "
+    f"{np.array2string(vals, max_line_width=100000, formatter={'float_kind': lambda x: f'{x:.3e}'})}\n"
+  )
+
+  vals = np.log(np.maximum(k_opt, np.finfo(float).tiny)) - lam_opt
+  output += (
+    "log(k) - lambda: "
+    f"{np.array2string(vals,  max_line_width=100000, formatter={'float_kind': lambda x: f'{x:.3e}'})}\n"
+  )
+  return output
+
+def stats_lcb_relaxation_gap(owner, xvar, relaxation_value) -> str:
+  """
+  Decompose the feasible-at-x_conv gap
+
+      LCB(x_conv) - relaxation_value,
+
+  where x_conv = xvar.value and relaxation_value is the objective
+  returned by the conic solver.
+
+  The top-level decomposition is
+
+      LCB(x_conv) - L_rel
+        = [mu(x_conv) - mu(k_rel)]
+        + beta * [s_rel - sigma(x_conv)]
+        + [(mu(k_rel) - beta*s_rel) - L_rel].
+
+  The variance contribution is further decomposed as
+
+      beta * [s_rel - sigma(x_conv)]
+        = beta * [s_rel - sigma_model(k_rel)]
+        + beta * [sigma_model(k_rel) - sigma_exact(k_rel)]
+        + beta * [sigma_exact(k_rel) - sigma(x_conv)].
+
+  Here:
+    sigma_model(k_rel)
+      uses the variance quadratic actually present in the conic
+      constraint after the NSD eigenvalue modification;
+
+    sigma_exact(k_rel)
+      uses the original, unmodified SMT variance quadratic.
+
+  This diagnostic is intended for the squared-exponential relaxation:
+      owner.kernel_spec == "pow_exp" and owner.p == 2.
+  """
+  unavailable = "LCB relaxation gap decomposition unavailable: "
+
+  try:
+    if not isinstance(owner.acqf, LCBacquisition):
+      return unavailable + "acquisition is not LCB\n"
+
+    if owner.kernel_spec != "pow_exp" or float(owner.p) != 2.0:
+      return unavailable + "diagnostic currently supports only the SE kernel\n"
+
+    if owner.X.value is None or xvar.value is None:
+      return unavailable + "missing conic primal values\n"
+
+    X_opt = np.asarray(owner.X.value, dtype=float,).ravel()
+
+    gamma = np.asarray(owner.gamma, dtype=float,).ravel()
+
+    ntrain = gamma.size
+
+    if X_opt.size != ntrain + 1:
+      return unavailable + f"expected X to have length {ntrain + 1}, " + f"got {X_opt.size}\n"
+
+    # X = (z,s), with k = C z.
+    z_rel = X_opt[:ntrain]
+    s_rel = float(X_opt[-1])
+
+    x_rel = np.asarray(xvar.value, dtype=float,).ravel()
+
+    k_rel = np.asarray(owner.C2 @ X_opt, dtype=float,).ravel()
+
+    # Exact SE kernel vector generated by the shared spatial point xvar.
+    theta = np.asarray(owner.theta, dtype=float,).ravel()
+
+    x_scale = np.asarray(owner.X_scale, dtype=float,).ravel()
+
+    training_x = np.asarray(owner.x, dtype=float,)
+
+    dx = (x_rel[None, :] - training_x) / x_scale[None, :]
+
+    k_at_x = np.exp(-np.sum(theta[None, :] * dx**2, axis=1,))
+
+    beta = float(owner.acqf.beta)
+
+    # Relaxed mean represented by k_rel.
+    mu_rel = float(owner.y_mean + owner.y_std * (owner.beta0 + np.dot(gamma, k_rel)))
+
+    # Actual GP mean and variance at the feasible point x_rel.
+    x_row = np.atleast_2d(x_rel)
+
+    mu_at_x = float(np.asarray(owner.gpsurrogate.mean(x_row), dtype=float,).reshape(-1)[0])
+
+    var_at_x_raw = float(np.asarray(owner.gpsurrogate.variance(x_row), dtype=float,).reshape(-1)[0])
+
+    sigma_at_x = float(np.sqrt(max(0.0, var_at_x_raw)))
+
+    # Exact, unmodified SMT variance quadratic at the relaxed k.
+    #
+    # owner.A_obj, owner.b_obj, and owner.c_obj define
+    #
+    #   variance(k_rel)
+    #     = owner.sigma2 *
+    #       (0.5*z^T*A_obj*z + b_obj^T*z + c_obj).
+    A_obj = np.asarray(owner.A_obj, dtype=float,)
+
+    b_obj = np.asarray(owner.b_obj, dtype=float,).ravel()
+
+    c_obj = float(np.asarray(owner.c_obj, dtype=float,).reshape(()))
+
+    var_exact_k_raw = float(owner.sigma2 * (0.5 * np.dot(z_rel, A_obj @ z_rel,) + np.dot(b_obj, z_rel,) + c_obj))
+
+    sigma_exact_k = float(np.sqrt(max(0.0, var_exact_k_raw)))
+
+    # Variance quadratic actually used in the conic constraint after
+    # modifying A_constraint2 to be numerically negative definite.
+    #
+    # owner.cons2 is:
+    #
+    #   variance_model(k_rel) - s_rel^2.
+    #
+    # Hence:
+    #
+    #   variance_model(k_rel) = owner.cons2.value + s_rel^2.
+    cons2_value = getattr(owner.cons2, "value", None,)
+
+    if cons2_value is not None:
+      var_model_k_raw = float(np.asarray(cons2_value, dtype=float,).reshape(()) + s_rel**2)
+    else:
+      # Fallback that evaluates the same conic quadratic directly.
+      A_con = np.asarray(owner.A_constraint2, dtype=float,)
+
+      b_con = np.asarray(owner.b_constraint2, dtype=float,).ravel()
+
+      c_con = float(np.asarray(owner.c_constraint2, dtype=float,).reshape(()))
+
+      var_model_k_raw = float(0.5 * np.dot(X_opt, A_con @ X_opt,) + np.dot(b_con, X_opt,) + c_con + s_rel**2)
+
+    sigma_model_k = float(np.sqrt(max(0.0, var_model_k_raw)))
+
+    relaxation_value = float(np.asarray(relaxation_value, dtype=float,).reshape(()))
+
+    # Reconstruct the conic objective directly from the primal variables.
+    relax_obj_from_X = float(mu_rel - beta * s_rel)
+
+    # Feasible LCB at xvar.value.
+    lcb_at_x = float(mu_at_x - beta * sigma_at_x)
+
+    gap_at_x = float(lcb_at_x - relaxation_value)
+
+    # ---------------------------------------------------------------
+    # Top-level decomposition
+    # ---------------------------------------------------------------
+
+    mean_part = float(mu_at_x - mu_rel)
+
+    variance_part = float(beta * (s_rel - sigma_at_x))
+
+    # This is normally close to zero. It measures the discrepancy
+    # between the value returned by the solver and the objective
+    # reconstructed from its primal solution.
+    objective_value_part = float(relax_obj_from_X - relaxation_value)
+
+    total_closure = float(gap_at_x - (mean_part + variance_part + objective_value_part))
+
+    # ---------------------------------------------------------------
+    # Variance-part decomposition
+    # ---------------------------------------------------------------
+
+    # Activity/slack of the conic variance inequality.
+    # This should normally be close to zero and nonpositive:
+    #
+    #     s_rel <= sigma_model(k_rel).
+    variance_cone_part = float(beta * (s_rel - sigma_model_k))
+
+    # Effect of the numerical NSD eigenvalue modification made in
+    # owner.A_constraint2.
+    variance_projection_part = float(
+      beta * (sigma_model_k - sigma_exact_k))
+
+    # Effect of replacing the kernel vector generated by x_rel with
+    # the relaxed kernel vector.
+    variance_kernel_part = float(beta * (sigma_exact_k - sigma_at_x))
+
+    variance_closure = float(variance_part - (variance_cone_part + variance_projection_part + variance_kernel_part))
+
+    # ---------------------------------------------------------------
+    # Componentwise mean sensitivity
+    # ---------------------------------------------------------------
+
+    delta_k = k_at_x - k_rel
+
+    mean_terms = (owner.y_std * gamma * delta_k)
+
+    mean_terms_sum = float(np.sum(mean_terms))
+
+    mean_terms_l1 = float(np.sum(np.abs(mean_terms)))
+
+    # This should be close to zero if the manually formed SE kernel
+    # and the SMT posterior-mean formula agree.
+    mean_formula_residual = float(mean_part - mean_terms_sum)
+
+    if mean_terms.size:
+      top_mean_idx = int(np.argmax(np.abs(mean_terms)))
+
+      top_mean_term = float(mean_terms[top_mean_idx])
+
+      max_mean_term = float(np.max(np.abs(mean_terms)))
+    else:
+      top_mean_idx = -1
+      top_mean_term = 0.0
+      max_mean_term = 0.0
+
+    if mean_terms_l1 == 0.0:
+      cancellation_ratio = 1.0
+    elif abs(mean_terms_sum) <= np.finfo(float).tiny:
+      cancellation_ratio = np.inf
+    else:
+      cancellation_ratio = float(mean_terms_l1 / abs(mean_terms_sum))
+
+    # ---------------------------------------------------------------
+    # Output
+    # ---------------------------------------------------------------
+
+    output = (
+      "LCB relaxation-gap decomposition at x_conv:\n"
+    )
+
+    output += (
+      f"  L_rel={relaxation_value: .6e}  "
+      f"obj(X)={relax_obj_from_X: .6e}  "
+      f"LCB(x_conv)={lcb_at_x: .6e}  "
+      f"gap={gap_at_x: .6e}\n"
+    )
+
+    output += (
+      f"  gap parts: "
+      f"mean={mean_part: .6e}  "
+      f"variance={variance_part: .6e}  "
+      f"obj-value={objective_value_part: .3e}  "
+      f"closure={total_closure: .3e}\n"
+    )
+
+    output += (
+      f"  variance parts: "
+      f"cone={variance_cone_part: .6e}  "
+      f"NSD-proj={variance_projection_part: .6e}  "
+      f"k-decoupling={variance_kernel_part: .6e}  "
+      f"closure={variance_closure: .3e}\n"
+    )
+
+    output += (
+      f"  states: "
+      f"mu_rel={mu_rel: .6e}  "
+      f"mu(x_conv)={mu_at_x: .6e}  "
+      f"s={s_rel: .6e}  "
+      f"sigma_model(k)={sigma_model_k: .6e}  "
+      f"sigma_exact(k)={sigma_exact_k: .6e}  "
+      f"sigma(x_conv)={sigma_at_x: .6e}\n"
+    )
+
+    output += (
+      f"  mean k-terms: "
+      f"sum={mean_terms_sum: .6e}  "
+      f"L1={mean_terms_l1: .6e}  "
+      f"maxabs={max_mean_term: .6e}  "
+      f"top=({top_mean_idx},{top_mean_term: .6e})  "
+      f"cancel={cancellation_ratio: .3e}  "
+      f"formula-resid={mean_formula_residual: .3e}\n"
+    )
+
+    output += (
+      f"  kernel mismatch: "
+      f"||k(x_conv)-k_rel||_inf="
+      f"{np.linalg.norm(delta_k, ord=np.inf): .6e}  "
+      f"||.||_2={np.linalg.norm(delta_k): .6e};  "
+      f"raw variances: "
+      f"model={var_model_k_raw: .6e}  "
+      f"exact-k={var_exact_k_raw: .6e}  "
+      f"x_conv={var_at_x_raw: .6e}\n"
+    )
+
+    return output
+
+  except Exception as exc:
+    # This function is currently called inside the conic-solver retry
+    # try-block. A diagnostics failure should not cause a successful
+    # conic solve to be retried with looser tolerances.
+    return (
+      unavailable
+      + f"{type(exc).__name__}: {exc}\n"
+    )
+
+class BnBAlgorithm(GPBoundComputationCommon, BnBAlgorithmBase):
+  _convex_relaxation_verbose = True
+  def __init__(self, acqf, options = {}, BOit=0):
+    self.acqf = acqf
+    self.gpsurrogate = acqf.gpsurrogate
+    super().__init__(x = self.gpsurrogate.training_x, y = self.gpsurrogate.training_y)
+    if not (isinstance(self.acqf, LCBacquisition) or isinstance(self.acqf, EIacquisition)):
+      raise NotImplementedError("Unrecognized acquisition function type")
+    self.sync_from_smt()
+    
+    # Stopping criteria parameters (default)    
+    self.epsilon_gap = 1e-4
+    self.epsilon_diam = 1e-2
+    self.epsilon_rel_gap = 1.e-4
+    self.min_diam = 0.125
+    self.epsilon_prune = 1.e-14
+    self.epsilon_node = self.epsilon_gap/100
+    self.inflight_factor = 1.
+    self.poll_interval = 0.01
+    self.max_task_retries = 1
+    self.bound_consistency_tol = 1.e-4
+    self.max_bnbiter = 2000
+    self.nodes_per_batch = 1
+    self.max_bnbtime = 12 * 60 # 12 minutes
+    self.BOit = BOit
+    self.saveData = False #saveData
+    self.saveDataDir = ""
+    self.pure_BBS = False  # pure BBS search or hybrid BBS/BFS search
+    self.synchronous = False # synchronous or asynchronous evaluations
+    self.verbose_cvx_solver = False # verbose convex optimizer solves
+    self.opt_mode = 3
+
+    self.acqf_UB_solver = "SLSQP"
+
+    # Set options form command 
+    self.epsilon_gap = options.get('abs_tol', self.epsilon_gap)
+    self.epsilon_node = self.epsilon_gap/100
+    self.epsilon_node = options.get('node_tol', self.epsilon_node)
+    self.epsilon_rel_gap = options.get('rel_tol', self.epsilon_rel_gap)
+    self.epsilon_diam = options.get('epsilon_diam', self.epsilon_diam)
+    self.epsilon_prune = options.get('epsilon_prune', self.epsilon_prune)
+    self.max_bnbiter = options.get('max_iter', self.max_bnbiter)
+    self.max_bnbtime = options.get('max_bnbtime', self.max_bnbtime)
+    self.nodes_per_batch = options.get('nodes_per_batch', self.nodes_per_batch)
+    self.acqf_UB_solver = options.get('acqf_ub_solver', self.acqf_UB_solver)
+    self.pure_BBS = options.get('pure_BBS', self.pure_BBS)
+    self.synchronous =  options.get('synchronous', self.synchronous)
+    self.verbose_cvx_solver = options.get('verbose_cvx_solver', self.verbose_cvx_solver)
+    self.opt_mode = options.get('opt_mode', self.opt_mode)
+    self.saveDataDir = options.get('save_data_dir', self.saveDataDir)
+    self.saveData = options.get('save_data', self.saveData)
+    self.min_diam = options.get('min_diameter', self.min_diam)
+    self.inflight_factor = options.get('inflight_factor', self.inflight_factor)
+    self.poll_interval = options.get('poll_interval', self.poll_interval)
+    self.max_task_retries = options.get('max_task_retries', self.max_task_retries)
+    self.bound_consistency_tol = options.get('bound_consistency_tol', self.bound_consistency_tol)
+    self.random_seed = options.get("random_seed", None)
+    if self.random_seed is None:
+      self.rng = np.random.default_rng()
+    else:
+      # Different deterministic stream for each BO iteration
+      self.rng = np.random.default_rng(int(self.random_seed) + 1000003 * int(self.BOit))
+    
+    assert self.opt_mode in [0, 1, 2, 3, 4, 5, 6], "unknown opt_mode"
+    assert self.acqf_UB_solver in ["SLSQP", "trust-constr", "IPOPT", "MINEVAL"], "invalid acqf ub solver"
+    assert isinstance(self.saveData, bool), "save_data is not of type bool"
+    assert isinstance(self.saveDataDir, str), "save_data_dir is not of type string"
+
+    supplied_evaluator = options.get("node_evaluator", None)
+    if supplied_evaluator is None:
+      self.node_evaluator = MPIEvaluator(
+        function_mode=False,
+        executor=options.get("executor", None),
+        task_name="BNB",
+        profiling=False,
+      )
+    else:
+      self.node_evaluator = supplied_evaluator
+
+    self.restart = options.get('bnb_warmstart', self.restart)
+    self.restart_partition_size = options.get('bnb_warmstart_nodes', self.restart_partition_size)
+                                                
+    self.diagnostics = options.get('diagnostics',  self.diagnostics)
+      
+    # improved optimization problem to determine LCB lower bound
+    ntrain = len(self.gamma)
+    self.b_obj2 = np.zeros(ntrain + 1)
+    if isinstance(self.acqf, LCBacquisition):
+      self.b_obj2[-1] = -1.0 * self.acqf.beta
+    else:
+      self.b_obj2[-1] = -3.0 # -\beta
+    self.b_obj2[:ntrain] = self.y_std * np.dot(self.gamma, self.C)
+    self.c_obj2 = self.y_mean + self.y_std * self.beta0
+    self.C2 = np.zeros((ntrain, ntrain+1))
+    self.C2[:,:ntrain] = self.C[:,:]
+    self.A_constraint2 = np.zeros((ntrain + 1, ntrain+1))
+
+    self.A_constraint2[:ntrain, :ntrain] = self.sigma2 * self.A_obj
+    self.A_constraint2[ntrain, ntrain] = -2.
+    self.b_constraint2 = np.zeros(ntrain + 1)
+    self.b_constraint2[:ntrain] = self.sigma2 * self.b_obj[:, 0]
+    self.c_constraint2 = self.sigma2 * self.c_obj
+    self.en1 = np.zeros(ntrain+1)
+    self.en1[ntrain] = 1.
+    self.X = cp.Variable(ntrain+1) # (z, s), z = C * k
+    self.obj2 = self.b_obj2.T @ self.X + self.c_obj2
+    # ensure that the matrix is negative semi-definite
+    # //!
+    lam, U = np.linalg.eigh(self.A_constraint2)
+    lam_neg = np.minimum(lam, -1.e-16 * np.ones(len(lam)))
+    self.A_constraint2[:,:] = U.dot(np.diag(lam_neg)).dot(U.T)
+    
+    self.cons2 = 0.5 * cp.quad_form(self.X, self.A_constraint2) + self.b_constraint2 @ self.X + self.c_constraint2
+
+    # set up a third objective function whose value is s wherein we will include a constraint s^2 <= \sig^2(k) 
+    # also in which we will maximize s making s = max sig
+    self.b_obj3 = np.zeros(ntrain + 1)
+    self.c_obj3 = 0.0 # no shift necessary
+    self.b_obj3[-1] = 1.0
+    self.obj3 = self.b_obj3.T @ self.X + self.c_obj3
+
+
+    # # constants for choosing number of "k ratio" constraints
+    # # first constraints are determined via nearest neighbor search
+    # # the kernel distances will be based on the forms of the kernels
+    # # for SE th * ((x - x^(i)) / X_scale))^2 is used
+    # # for all other kenels th * |(x - x^(i)) / X_scale| is used
+    # # for this reason the distance metric will be
+    # # || \sqrt(th) / X_scale * (x^(i) - x^(r))||_2 for SE
+    # # and || th / X_scale * (x^(i) - x^(r)||_1 for all other kernels
+    # distance_mat = np.zeros((ntrain,ntrain))
+    # theta = self.theta.ravel()
+    # # only go over the upper triangle
+    # self.pairs_dist = []
+    # for i in range(ntrain):
+    #   for j in range(i+1, ntrain):
+    #     if self.kernel_spec == "pow_exp" and self.p == 2.0:
+    #       self.pairs_dist.append((np.linalg.norm(np.sqrt(theta) * (self.x[i] - self.x[j]) / self.X_scale), i, j))
+    #     else:
+    #       self.pairs_dist.append((np.linalg.norm(theta * (self.x[i] - self.x[j]) / self.X_scale, ord=1), i, j))
+    # # now extract smallest-distance pairs
+    # ##print("pairs     :" + " ".join(f"({i:2d},{j:2d},{val:12.5e})" for val, i, j in self.pairs_dist))
+    # self.pairs_dist.sort(key=lambda entry: entry[0])
+    # ##print("pairs sort:" + " ".join(f"({i:2d},{j:2d},{val:12.5e})" for val, i, j in self.pairs_dist))
+    # self.c0 = 2
+    # npairs = min(self.c0 * ntrain, len(self.pairs_dist))
+    # ##print("pairs slct:" + " ".join(f"({i:2d},{j:2d},{val:12.5e})" for val, i, j in self.pairs_dist[:npairs]))
+    # self.nearest_neighbor_pairs = np.asarray([(i, r) for _, i, r in self.pairs_dist[:npairs]], dtype=np.int64).reshape(-1, 2)
+
+    # # repurpose pairs_dist
+    # pairs = self.pairs_dist
+    # self.pairs_dist = {(i, j): dist for dist, i, j in pairs}
+    self.nearest_neighbor_pairs, self.pairs_dist = build_mode6_pair_candidates(self, nneighbors=3, include_mst=True)
+
+    self.collect_batch_candidates = options.get("collect_batch_candidates", False)
+    self._batch_candidates = {}
+
+  # For minimization, we find a feasible function value as the upper bound on the minimum value of the acquisition function.
+  def compute_acqf_upper_bound(self, l, u):
+    # We compute the upper bound of the acquisition function based on bounds of the kernel, mu and sigma.
+    # Compute the kernel bounds with given x
+    kL, kU = self.ker_bounds(l, u)
+    # Compute the mean bounds
+    mu_L, mu_U = self.mu_bounds(kL, kU)
+    var_L, var_U = self.sigma2_bounds(kL, kU, l=l, u=u)
+    return self.acqf.evaluate_meansig2(np.atleast_1d(mu_U), np.atleast_1d(var_L))[0]
+  # For minimization, we compute the lower bound explicitly using the acquisition function over mu, sigma.
+  def compute_acqf_lower_bound(self, l, u):
+    # We compute the upper bound of the acquisition function based on bounds of the kernel, mu and sigma.
+    # Compute the kernel bounds with given x
+    kL, kU = self.ker_bounds(l, u)
+    # Compute the mean bounds
+    mu_L, mu_U = self.mu_bounds(kL, kU)
+    var_L,var_U = self.sigma2_bounds(kL, kU, l=l, u=u)
+    return self.acqf.evaluate_meansig2(np.atleast_1d(mu_L), np.atleast_1d(var_U))[0]
+
+  def _refresh_legacy_views(self):
+    """Expose compatibility views without duplicating authoritative records."""
+    store = self.leaf_partition
+    ready_nodes = sorted(
+      store.ready_nodes(),
+      key=lambda node: (node.aq_L, -node.depth, node.node_id),
+    )
+    self.queue = [(node.aq_L, int(node.node_id), node) for node in ready_nodes]
+    heapq.heapify(self.queue)
+    self.all_nonpruned_nodes = store.candidate_nodes()
+    self.all_prunednodes = [
+      node for node in store.leaves.values()
+      if node.close_reason == CloseReason.PRUNED.value
+    ]
+
+  def export_partition(self):
+    """Return every ready, in-flight, and closed leaf for BO warm start."""
+    return self.leaf_partition.export_partition()
+
+  def get_candidate_nodes(self):
+    """Return leaves useful for batching, excluding only pruned leaves."""
+    return self.leaf_partition.candidate_nodes()
+
+  def _remember_batch_candidates(self, nodes):
+    """Store points only; acquisition values are recomputed later."""
+    if not self.collect_batch_candidates:
+      return
+
+    for node in nodes:
+      if node.aq_U_x is None or not np.isfinite(node.aq_U):
+        continue
+      x = np.asarray(node.aq_U_x, dtype=float).reshape(-1)
+      if np.all(np.isfinite(x)):
+        self._batch_candidates[tuple(x)] = x.copy()
+
+  def select_batch_condvar(self, q, *, delta=None, noise_variance=0.0, duplicate_tol=1.e-8,
+                           variance_rtol=1.e-10, exclude_training=True, is_feasible=None,
+                           exclude_points=None, require_full=False):
+    """Return (X_batch, diagnostics) after a completed LCB BnB search.
+
+    Out of the BnB candidates within some BnB optimality gap (see delta), namely, 
+      Cdelta = { x | x in a BnB box with at most delta optimality gap}
+    selects q candidates z1, z2, ..., zq that maximize conditional posterior variance:
+      zj = argmax \sigma_{t|Zj}(x) s.t. x in Cdeltat \ {z1, z2, \ldots, zj-1}.
+    Here t represents the BO iteration number.
+
+    Arguments: 
+    delta:
+        Allowed LCB excess above the incumbent, in objective units.
+        None uses the final absolute BnB gap.
+    noise_variance:
+        Prospective observation variance, in original y-units squared.
+        Use zero for deterministic evaluations.
+    duplicate_tol:
+        Infinity-norm tolerance in domain-normalized coordinates.
+    require_full:
+        Raise rather than return fewer than q eligible points.
+    """
+    if not isinstance(self.acqf, LCBacquisition):
+      raise TypeError("Conditional-variance batching requires LCB")
+    if (isinstance(q, bool) or not isinstance(q, (int, np.integer)) or q < 1):
+      raise ValueError("q must be a positive integer")
+    if any(not np.isfinite(v) or v < 0.0 for v in (noise_variance, duplicate_tol, variance_rtol)):
+      raise ValueError("Noise and tolerances must be finite and nonnegative")
+
+    store = self.leaf_partition
+    if store.inflight:
+      raise RuntimeError("Finish/drain BnB before selecting the BO batch")
+    if store.incumbent_x is None:
+      raise RuntimeError("BnB has no feasible incumbent")
+
+    # Include stored parents and every final leaf, including pruned leaves.
+    points = [np.asarray(store.incumbent_x, dtype=float).reshape(-1)]
+    points += list(getattr(self, "_batch_candidates", {}).values())
+    points += [np.asarray(n.aq_U_x, dtype=float).reshape(-1) for n in store.leaves.values() if n.aq_U_x is not None and np.isfinite(n.aq_U)]
+    X = np.vstack(points)
+
+    # Remove exact duplicates, retaining incumbent at index zero.
+    _, ii = np.unique(X, axis=0, return_index=True)
+    X = X[np.sort(ii)]
+
+    bounds = np.asarray(self.gpsurrogate.xlimits, dtype=float)
+    lo, hi = bounds[:, 0], bounds[:, 1]
+    valid = np.all(np.isfinite(X) & (X >= lo) & (X <= hi), axis=1)
+    if not valid[0]:
+      raise RuntimeError("Invalid BnB incumbent")
+    X = X[valid]
+
+    # Chunk SMT predictions to limit temporary storage.
+    # LCB acquisition is evaluated 
+    values = np.concatenate([np.asarray(self.acqf.evaluate(X[k:k+512]), dtype=float).reshape(-1) for k in range(0, len(X), 512)])
+    U = float(values[0])
+    L = float(store.global_lower_bound())
+    if not np.isfinite(U):
+      raise RuntimeError("Nonfinite incumbent LCB")
+
+    if delta is None:
+      if not np.isfinite(L) or L > U:
+        raise ValueError("Set delta explicitly; no consistent finite BnB gap")
+      delta = U - L
+    delta = float(delta)
+    if not np.isfinite(delta) or delta < 0.0:
+      raise ValueError("delta must be finite and nonnegative")
+
+    keep = np.isfinite(values) & (values <= U + delta)
+    if is_feasible is not None:
+      feasible = np.asarray(is_feasible(X), dtype=bool).reshape(-1)
+      if feasible.size != len(X):
+        raise ValueError("is_feasible must return one Boolean per point")
+      keep &= feasible
+
+    # Domain-normalized coordinates are used only for duplicate checks.
+    width = np.where(hi > lo, hi - lo, 1.0)
+    Xunit = (X - lo) / width
+    #if exclude_training:
+    #  # exclude anything within duplicate_tol from a training point
+    #  old = np.asarray(self.gpsurrogate.training_x, dtype=float)
+    #  distance, _ = cKDTree((old - lo) / width).query(Xunit, p=np.inf)
+    #  keep &= distance > duplicate_tol
+    if exclude_training:
+      old = np.asarray(self.gpsurrogate.training_x, dtype=float)
+
+      # Exclude points that were evaluated previously but were deliberately
+      # not assimilated into the active GP.
+      if exclude_points is not None:
+        extra = np.atleast_2d(np.asarray(exclude_points, dtype=float))
+        if extra.shape[1] != X.shape[1]:
+          raise ValueError("exclude_points has incompatible dimension")
+        old = np.vstack([old, extra])
+
+      distance, _ = cKDTree((old - lo) / width).query(Xunit, p=np.inf)
+      keep &= distance > duplicate_tol
+      # The BnB incumbent is the LCB BO decision and must always remain in the batch.
+      keep[0] = True
+      
+    # Prefer incumbent; otherwise start with the best eligible LCB.
+    order = np.flatnonzero(keep)
+    order = order[np.argsort(values[order], kind="stable")]
+    if keep[0]:
+      order = np.r_[0, order[order != 0]]
+    if order.size == 0:
+      raise RuntimeError("No eligible near-optimal points; increase delta")
+
+    # Remove near-duplicates, preferring incumbent, then lower LCB.
+    tree = cKDTree(Xunit[order])
+    blocked = np.zeros(len(order), dtype=bool)
+    unique = []
+    for i in range(len(order)):
+      if not blocked[i]:
+        unique.append(int(order[i]))
+        neighbors = tree.query_ball_point(Xunit[order[i]], duplicate_tol, p=np.inf)
+        blocked[neighbors] = True
+
+    pool = np.asarray(unique, dtype=int)
+    cov = _BatchKrigingCovariance(self, X[pool])
+    selected, conditional_var = _greedy_condvar(cov, q, noise_variance, variance_rtol)
+    chosen = pool[selected]
+
+    if require_full and len(chosen) < q:
+      raise RuntimeError(f"Only {len(chosen)} nonredundant points "
+                         f"for requested q={q}; increase delta")
+
+    # These certificates rely on validity of the existing BnB bound.
+    bounds_valid = (np.isfinite(L) and L <= np.min(values[np.isfinite(values)]))
+    info = dict(candidate_count=len(X), pool_size=len(pool), requested=q, returned=len(chosen),
+                delta=delta, incumbent_lcb=U, lower_bound=L, incumbent_in_batch=bool(keep[0]),
+                lcb=values[chosen].copy(), conditional_variance=conditional_var,
+                lcb_suboptimality_bound=(values[chosen] - L if bounds_valid else np.full(len(chosen), np.nan)))
+    return X[chosen].copy(), info
+  
+  def optimize(self):
+    opt = self.bnboptimize(self.gpsurrogate.xlimits[:,0], self.gpsurrogate.xlimits[:,1])
+    lopt = opt[0]
+    uopt = opt[1]
+    aq_U_x = opt[-1]
+    if aq_U_x is None:
+      midpoint_opt = np.mean(np.array([lopt, uopt]), axis=0)
+      return midpoint_opt
+    else:
+      return aq_U_x
+  def initialize(self, l0=None, u0=None, queue=None, partition=None, transfer_lower_bound=None):
+    """Initialize a root or reclassify a full leaf partition from previous iteration."""
+    restart_worker = None
+    # reset batch candidates as well
+    self._batch_candidates = {}
+    if partition is not None:
+      restart_worker = branching_wrapper(self.acqf, LUB=np.inf, epsilon_prune=self.epsilon_prune,
+                                         acqf_UB_solver=self.acqf_UB_solver, random_seed=self.random_seed,
+                                         opt_mode=self.opt_mode, nearest_neighbor_pairs=self.nearest_neighbor_pairs,
+                                         diagnostics=self.diagnostics, restart_lower_bound=transfer_lower_bound,
+                                         pairs_dist=self.pairs_dist)
+    ret =  initialize_async_search(self, l0=l0, u0=u0, queue=queue, partition=partition,
+                                   transfer_lower_bound=transfer_lower_bound, restart_worker=restart_worker)
+    self._remember_batch_candidates(self.leaf_partition.leaves.values())
+    return ret
+  def bnboptimize(self, l_init, u_init):
+    """Run the certified asynchronous leaf-partition event loop."""
+    return run_async_search(self, branching_wrapper, l_init, u_init)
+
+########################################################################
+
+class AffordableLCBTransfer:
+  """
+  Lower-bound transfer for one new LCB observation.
+
+  For an old certified lower bound L_t(B), returns
+
+      L_t(B) - |y_+ - mu_t(x_+)| / v_t(x_+) * C_B,
+
+  where C_B bounds |cov_t(x, x_+)| over x in B.  The posterior
+  standard-deviation reduction is favorable for LCB minimization and
+  therefore need not be subtracted.
+  """
+
+  def __init__(self, old_bnb, x_plus, y_plus):
+    if not isinstance(old_bnb.acqf, LCBacquisition):
+      raise TypeError("AffordableLCBTransfer requires an LCB acquisition")
+
+    sm = old_bnb.gpsurrogate.surrogatesmt
+    self._check_model(sm)
+    self.kernel_spec, self.p = self._kernel_description(sm)
+    self.coordinate_power = self.p if self.kernel_spec == "pow_exp" else 1.0
+
+    # Copy everything needed before smtKRG is refitted in place.
+    self.beta = float(old_bnb.acqf.beta)
+    self.x_plus = np.asarray(x_plus, dtype=float).reshape(-1)
+    self.y_plus = np.asarray(y_plus, dtype=float).reshape(()).item()
+
+    self.x_offset = np.asarray(old_bnb.X_offset, dtype=float).reshape(-1).copy()
+    self.x_scale = np.asarray(old_bnb.X_scale, dtype=float).reshape(-1).copy()
+    self.Xc = np.asarray(old_bnb.Xc, dtype=float).copy()
+
+    self.n_old, self.dimension = self.Xc.shape
+    if self.x_plus.size != self.dimension:
+      raise ValueError("x_plus has the wrong dimension")
+    if np.any(self.x_scale <= 0.0):
+      raise ValueError("Invalid SMT input scaling")
+
+    theta = np.asarray(old_bnb.theta, dtype=float).reshape(-1)
+    self.theta = np.broadcast_to(theta, (self.dimension,)).copy()
+
+    # Physical-coordinate kernel coefficients. These must remain fixed.
+    self.raw_theta = self.theta / self.x_scale**self.coordinate_power
+    self.x_plus_c = (self.x_plus - self.x_offset) / self.x_scale
+
+    self.C = np.asarray(old_bnb.C, dtype=float).copy()
+    self.A = np.asarray(old_bnb.A_obj, dtype=float).copy()
+    self.b = np.asarray(old_bnb.b_obj, dtype=float).reshape(-1).copy()
+    self.c = np.asarray(old_bnb.c_obj, dtype=float).reshape(()).item()
+
+    self.sigma2 = float(old_bnb.sigma2)
+    self.nugget = float(self._option(sm, "nugget", 0.0))
+
+    if not np.isfinite(self.sigma2) or self.sigma2 <= 0.0:
+      raise ValueError("The old GP process variance must be positive")
+
+    # k_+ = k(X_t, x_+), z_+ = C_t^{-1} k_+.
+    k_plus = self._kernel_values(np.abs(self.Xc - self.x_plus_c))
+    z_plus = linalg.solve_triangular(self.C, k_plus, lower=True, check_finite=False)
+
+    # For ordinary Kriging,
+    #
+    # cov_t(x,x_+)/sigma_f^2 = k(x,x_+) + covariance_shift + covariance_weights @ k(x,X_t).
+    rhs = 0.5 * (self.A @ z_plus + self.b)
+    self.covariance_weights = linalg.solve_triangular(self.C.T, rhs, lower=False, check_finite=False)
+    self.covariance_shift = self.c - 1.0 + 0.5 * self.b @ z_plus
+
+    scaled_latent_variance = 0.5 * z_plus @ self.A @ z_plus + self.b @ z_plus + self.c
+
+    roundoff = 100.0 * np.finfo(float).eps * max(1.0, abs(self.c))
+    if scaled_latent_variance < -roundoff:
+      raise RuntimeError("Negative predictive variance in transfer snapshot")
+
+    latent_variance = self.sigma2 * max(0.0, scaled_latent_variance)
+
+    # SMT adds nugget to an observation's covariance diagonal.
+    # With nugget=0 this is the literal noiseless case in the paper's proposition
+    observation_variance = latent_variance + self.sigma2 * self.nugget
+    if not np.isfinite(observation_variance) or observation_variance <= 0.0:
+      raise RuntimeError("Cannot transfer through a zero-variance observation")
+
+    mean_plus = old_bnb.y_mean + old_bnb.y_std * (old_bnb.beta0 + k_plus @ np.asarray(old_bnb.gamma).reshape(-1))
+    self.residual_factor = abs(self.y_plus - mean_plus) / observation_variance
+
+  @staticmethod
+  def _option(sm, name, default=None):
+    return sm.options[name] if name in sm.options else default
+
+  @classmethod
+  def _kernel_description(cls, sm):
+    corr = str(cls._option(sm, "corr")).lower()
+
+    if corr == "pow_exp":
+      return "pow_exp", float(cls._option(sm, "pow_exp_power", 2.0))
+    if corr == "squar_exp":
+      return "pow_exp", 2.0
+    if corr in ("abs_exp", "matern12"):
+      return "pow_exp", 1.0
+    if corr in ("matern32", "matern52"):
+      return corr, 1.0
+
+    raise NotImplementedError(f"Unsupported SMT correlation: {corr}")
+
+  @classmethod
+  def _check_model(cls, sm):
+    if cls._option(sm, "poly", "constant") != "constant":
+      raise NotImplementedError("Affordable transfer requires poly='constant'")
+    if cls._option(sm, "eval_noise", False):
+      raise NotImplementedError("Estimated observation noise is unsupported")
+    if cls._option(sm, "use_het_noise", False):
+      raise NotImplementedError("Heteroscedastic noise is unsupported")
+    if cls._option(sm, "is_ri", False):
+      raise NotImplementedError("Reinterpolating KRG is unsupported")
+
+    noise0 = np.asarray(cls._option(sm, "noise0", [0.0]), dtype=float)
+    if np.any(noise0 != 0.0):
+      raise NotImplementedError("Affordable transfer currently requires noise0=0")
+
+  def _kernel_values(self, distances):
+    """Evaluate the old correlation kernel from distances in SMT units."""
+    distances = np.asarray(distances, dtype=float)
+
+    if self.kernel_spec == "pow_exp":
+      exponent = np.sum(self.theta * distances**self.p, axis=1)
+      return np.exp(-exponent)
+
+    root = np.sqrt(3.0 if self.kernel_spec == "matern32" else 5.0)
+    t = root * self.theta * distances
+    polynomial = 1.0 + t
+
+    if self.kernel_spec == "matern52":
+      polynomial = polynomial + t*t/3.0
+
+    return np.prod(polynomial * np.exp(-t), axis=1)
+
+  def _kernel_bounds(self, lower, upper, centers_c):
+    """Bounds on k(x,center) for x in [lower,upper]."""
+    lower_c = (np.asarray(lower, dtype=float).reshape(-1) - self.x_offset) / self.x_scale
+    upper_c = (np.asarray(upper, dtype=float).reshape(-1) - self.x_offset) / self.x_scale
+
+    centers_c = np.atleast_2d(np.asarray(centers_c, dtype=float))
+
+    d_min = np.maximum(0.0, np.maximum(lower_c - centers_c, centers_c - upper_c))
+    d_max = np.maximum(np.abs(lower_c - centers_c), np.abs(upper_c - centers_c))
+
+    kernel_lower = self._kernel_values(d_max)
+    kernel_upper = self._kernel_values(d_min)
+
+    # Conservative floating-point enclosure.
+    kernel_lower = np.maximum(0.0, np.nextafter(kernel_lower, -np.inf))
+    kernel_upper = np.minimum(1.0, np.nextafter(kernel_upper, np.inf))
+    return kernel_lower, kernel_upper
+
+  def __call__(self, old_leaf):
+    kernel_lower, kernel_upper = self._kernel_bounds(old_leaf.l, old_leaf.u, self.Xc)
+    plus_lower, plus_upper = self._kernel_bounds(old_leaf.l, old_leaf.u, self.x_plus_c)
+
+    weights = self.covariance_weights
+    affine_lower = np.sum(np.where(weights >= 0.0, weights * kernel_lower, weights * kernel_upper))
+    affine_upper = np.sum(np.where(weights >= 0.0, weights * kernel_upper, weights * kernel_lower))
+
+    covariance_lower = self.sigma2 * (plus_lower.item() + self.covariance_shift + affine_lower)
+    covariance_upper = self.sigma2 * (plus_upper.item() + self.covariance_shift + affine_upper)
+    covariance_lower = np.nextafter(covariance_lower, -np.inf)
+    covariance_upper = np.nextafter(covariance_upper, np.inf)
+    covariance_bound = max(abs(covariance_lower), abs(covariance_upper),)
+
+    transferred = float(old_leaf.aq_L) - self.residual_factor * covariance_bound
+    return float(np.nextafter(transferred, -np.inf))
+
+  def validate_new_model(self, gpsurrogate, beta):
+    """
+    Verify that the actual refit satisfied the assumptions used above.
+
+    A failure should disable transfer; it should not abort BnB.
+    """
+    sm = gpsurrogate.surrogatesmt
+    self._check_model(sm)
+
+    kernel_spec, p = self._kernel_description(sm)
+    if kernel_spec != self.kernel_spec or p != self.p:
+      raise RuntimeError("The kernel family changed during GP refitting")
+    if float(beta) != self.beta:
+      raise RuntimeError("LCB beta changed during GP refitting")
+
+    scale = np.asarray(sm.X_scale, dtype=float).reshape(-1)
+    theta = np.broadcast_to(np.asarray(sm.optimal_theta, dtype=float).reshape(-1), (self.dimension,),)
+    raw_theta = (theta / scale**self.coordinate_power)
+
+    sigma2 = np.asarray(sm.optimal_par["sigma2"], dtype=float).reshape(()).item()
+    nugget = float(self._option(sm, "nugget", 0.0))
+
+    if not np.allclose(raw_theta, self.raw_theta, rtol=2e-12, atol=0.0,):
+      raise RuntimeError("The raw-coordinate kernel changed during GP refitting")
+    if not np.isclose(sigma2, self.sigma2, rtol=2e-12, atol=0.0,):
+      raise RuntimeError("The GP process variance changed during GP refitting")
+    if nugget != self.nugget:
+      raise RuntimeError("The GP nugget changed during GP refitting")
+
+    training_x = np.asarray(gpsurrogate.training_x, dtype=float)
+    if training_x.shape != (self.n_old + 1, self.dimension,):
+      raise RuntimeError("Proposition 3 requires exactly one new point")
+    if not np.allclose(training_x[-1], self.x_plus, rtol=1e-13, atol=1e-14,):
+      raise RuntimeError("The appended training point is not x_plus")
+
+class branching_wrapper(GPBoundComputationCommon):
+  _convex_relaxation_verbose = False
+  def __init__(self, acqf, LUB=np.inf, epsilon_prune=1.e-14, acqf_UB_solver="SLSQP", random_seed=None,
+               opt_mode=3, nearest_neighbor_pairs=None, pairs_dist=None, diagnostics=False, restart_lower_bound=None):
+    self.LUB = LUB # least upper bound
+    self.epsilon_prune = epsilon_prune
+    self.acqf = acqf
+    self.gpsurrogate = acqf.gpsurrogate
+    self.x = self.gpsurrogate.training_x
+    self.y = self.gpsurrogate.training_y
+    self.acqf_UB_solver = acqf_UB_solver
+
+    if nearest_neighbor_pairs is None:
+      self.nearest_neighbor_pairs = np.empty((0, 2), dtype=np.int64)
+      assert pairs_dist is None
+    else:
+      self.nearest_neighbor_pairs = nearest_neighbor_pairs
+      assert pairs_dist is not None
+
+    if pairs_dist is None:
+      self.pairs_dist = {}
+    else:
+      self.pairs_dist = pairs_dist
+
+    self.random_seed = random_seed
+    if random_seed is None:
+      self.rng = np.random.default_rng()
+    else:
+      self.rng = np.random.default_rng(int(random_seed))
+    
+    if not (isinstance(self.acqf, LCBacquisition) or isinstance(self.acqf, EIacquisition)):
+      raise NotImplementedError("Unrecognized acquisition function type")
+
+    self.sync_from_smt()
+    self.cvxpy_problem = None
+
+    self.opt_mode = opt_mode
+    self.diagnostics = diagnostics
+    self.restart_lower_bound = restart_lower_bound
+  
+  def sync_from_smt(self):
+    sm = self.gpsurrogate.surrogatesmt
+    par = sm.optimal_par
+
+    # --- kernel / corr selection ---
+    corr = sm.options["corr"]  # e.g., 'squar_exp', 'pow_exp', 'abs_exp', 'matern12', 'matern32', 'matern52'
+    if corr == "pow_exp":
+      # OptionsDictionary -> use membership + indexing (no .get)
+      p = float(sm.options["pow_exp_power"]) if "pow_exp_power" in sm.options else 2.0
+      if p not in (1.0, 2.0):
+        # tighten if your 1D bound code only supports p in {1,2}
+        raise ValueError("Single-d bounds support pow_exp only for p=1 or p=2")
+      self.kernel_spec = "pow_exp"
+      self.p = p
+    elif corr == "squar_exp":
+      # Gaussian is pow_exp with p=2
+      self.kernel_spec = "pow_exp"
+      self.p = 2.0
+    elif corr == "abs_exp":
+      # Exponential is pow_exp with p=1
+      self.kernel_spec = "pow_exp"
+      self.p = 1.0
+    elif corr == "matern12":
+      self.kernel_spec = "pow_exp"
+      self.p = 1.0
+    elif corr == "matern32":
+      self.kernel_spec = "matern32"
+    elif corr == "matern52":
+      self.kernel_spec = "matern52"
+    else:
+      raise ValueError(f"Unsupported SMT corr '{corr}'")
+
+    # --- hyperparameters / scaling ---
+    theta = getattr(sm, "optimal_theta", None)
+    if theta is None:
+      theta = sm.corr.theta
+    self.theta = np.asarray(theta, float).ravel()
+    
+    self.X_offset, self.X_scale = sm.X_offset, sm.X_scale
+    self.Xc = (self.x - self.X_offset) / self.X_scale
+
+    y_mean = getattr(sm, "y_mean", None)
+    y_std  = getattr(sm, "y_std",  None)
+    if y_mean is None or y_std is None:
+      # fall back to training y if available
+      if self.y is not None:
+        y_mean = float(np.mean(self.y))
+        y_std  = float(np.std(self.y))
+      else:
+        y_mean, y_std = 0.0, 1.0
+    if not np.isfinite(y_std) or abs(y_std) < 1e-15:
+      y_std = 1.0  # avoid degenerate scaling
+    assert len(y_mean) == 1, "expecting one entry"
+    assert len(y_std) == 1, "expecting one entry"
+    self.y_mean = float(y_mean[0])
+    self.y_std  = float(y_std[0])
+    
+    # SMT uses a regression trend option ('poly'); enforce constant mean for your μ-bounds
+    poly = sm.options["poly"] if "poly" in sm.options else "constant"
+    if poly != "constant":
+      raise NotImplementedError("μ-bounds assume poly='constant'")
+
+    # params from training
+    self.beta0 = float(np.asarray(par["beta"]).ravel()[0])
+    self.gamma = np.asarray(par["gamma"], float).ravel()
+
+    self.C = par["C"]
+    self.sigma2 = np.asarray(par.get("sigma2", 1.0), float).reshape(()).item()
+    self.sigma2_ri = float(par["sigma2_ri"] if "sigma2_ri" in par else self.sigma2)
+
+    x_regression = np.array([np.mean(self.gpsurrogate.xlimits[i]) for i in range(self.gpsurrogate.ndim)])
+    regression = (sm._regression_types['constant'](x_regression).T)
+    regression = np.atleast_2d([regression[0][0]])
+    w = linalg.solve_triangular(par["G"].T, regression)
+
+    ntrain = sm.nt
+    self.A_obj = 2.0 * (-1.0 * np.identity(ntrain) + par["Q"].dot(par["Q"].T))
+    self.b_obj = -2.0 * par["Q"].dot(w)
+    self.c_obj = 1. + np.inner(w[0], w[0])
+    self.z = cp.Variable(ntrain)
+    self.obj = 0.5 * cp.quad_form(self.z, self.A_obj) + self.b_obj.T @ self.z + self.c_obj
+    self.b_obj2 = np.zeros(ntrain + 1)
+    if isinstance(self.acqf, LCBacquisition):
+      self.b_obj2[-1] = -1.0 * self.acqf.beta
+    else:
+      self.b_obj2[-1] = -3.0 # -\beta
+    self.b_obj2[:ntrain] = self.y_std * np.dot(self.gamma, self.C)
+    self.c_obj2 = self.y_mean + self.y_std * self.beta0
+    self.C2 = np.zeros((ntrain, ntrain+1))
+    self.C2[:,:ntrain] = self.C[:,:]
+    self.A_constraint2 = np.zeros((ntrain + 1, ntrain+1))
+    # regularize A_obj
+    #U, s, Vh = np.linalg.svd(self.A_obj)
+    #sreg = [min(si, -1.e-15) for si in s]
+    #Areg = U @ np.diag(sreg) @ Vh
+
+
+    #self.A_constraint2[:ntrain, :ntrain] = self.sigma2 * Areg #self.A_obj
+    self.A_constraint2[:ntrain, :ntrain] = self.sigma2 * self.A_obj
+    self.A_constraint2[ntrain, ntrain] = -2.
+    self.b_constraint2 = np.zeros(ntrain + 1)
+    self.b_constraint2[:ntrain] = self.sigma2 * self.b_obj[:, 0]
+    self.c_constraint2 = self.sigma2 * self.c_obj
+    self.en1 = np.zeros(ntrain+1)
+    self.en1[ntrain] = 1.
+    self.X = cp.Variable(ntrain+1) # (z, s), z = C * k
+    self.obj2 = self.b_obj2.T @ self.X + self.c_obj2
+    # ensure that the matrix is negative semi-definite
+    # //! 
+    lam, U = np.linalg.eigh(self.A_constraint2)
+    lam_neg = np.minimum(lam, -1.e-16 * np.ones(len(lam)))
+    self.A_constraint2[:,:] = U.dot(np.diag(lam_neg)).dot(U.T)
+
+    self.cons2 = 0.5 * cp.quad_form(self.X, self.A_constraint2) + self.b_constraint2 @ self.X + self.c_constraint2
+
+    # set up a third objective function whose value is s wherein we will include a constraint s^2 <= \sig^2(k) 
+    # also in which we will maximize s making s = max sig
+    self.b_obj3 = np.zeros(ntrain + 1)
+    self.c_obj3 = 0.0 # no shift necessary
+    self.b_obj3[-1] = 1.0
+    self.obj3 = self.b_obj3.T @ self.X + self.c_obj3
+  
+  def _normalize(self, x):
+    return (np.asarray(x, float) - self.X_offset) / self.X_scale
+
+  def save_expsec_weights(self, cons, lamvar, lamL, lamU, of=.05, rf=.05, eps=1e-12):
+    X = np.asarray(self.X.value,float).ravel()
+    gam = np.asarray(self.gamma,float).ravel()
+    n = gam.size
+    C = np.asarray(self.C,float)
+    A = np.asarray(self.A_constraint2,float)
+    b = np.asarray(self.b_constraint2,float).ravel()
+    z,s = X[:-1],X[-1]
+    k = C@z
+    lam = np.asarray(lamvar.value,float).ravel()
+    dv = cons[0].dual_value
+    nu = float(np.asarray(dv).squeeze()) if dv is not None else np.nan
+    if not np.isfinite(nu) or nu<0:
+      nu = float(self.acqf.beta)/(2*max(abs(s),np.sqrt(eps)))
+    qz = A[:n]@X+b[:n]
+    g = float(np.asarray(self.y_std).ravel()[0])*gam-nu*np.linalg.solve(C.T,qz)
+    #a = np.abs(g)
+    a = np.maximum(-g,0.)
+    a = np.abs(g) if a.max()<=eps else a
+    m = a.max()
+    omega = np.ones(n) if m<=eps else of+(1-of)*a/m
+    #lo,up = np.asarray(lamL,float).ravel(),np.asarray(lamU,float).ravel()
+    #d = np.maximum(up-lo,0.)
+    #h = np.divide(-np.expm1(-d),d,out=np.ones_like(d),where=d>1e-6)
+    #E = np.where(d>1e-6,np.exp(up)*(1-h+h*np.log(h)),np.exp((lo+up)/2)*d*d/8)
+    lo = np.asarray(lamL, dtype=float).ravel()
+    up = np.asarray(lamU, dtype=float).ravel()
+    d = np.maximum(up - lo, 0.0)
+    with np.errstate(under="ignore"):
+      E = np.exp(up) * unit_expsec_gap(d)
+    r = np.maximum(k-np.exp(lam),0.)
+    rho = rf+(1-rf)*np.minimum(1,r/(E+eps))
+    self.expsec_omega, self.expsec_rho, self.expsec_weights = omega, rho, omega*rho
+    self.expsec_lcb_gradient, self.expsec_residual, self.expsec_maxgap = g, r, E
+
+  def restart_callback(self, nodes):
+    nodes = np.asarray(nodes, dtype=object).reshape(-1)
+    if nodes.size != 1:
+      raise ValueError(f"restart_callback expects exactly one leaf, received {nodes.size}")
+
+    old_leaf = nodes[0]
+    node_id = int(old_leaf.node_id)
+
+    try:
+      if self.restart_lower_bound is None:
+        aq_L, _, _, _ = self.compute_acqf_bounds(old_leaf.l, old_leaf.u, skip_UB=True)
+      else:
+        aq_L = float(self.restart_lower_bound(old_leaf))
+
+      l = np.asarray(old_leaf.l, dtype=float).reshape(-1)
+      u = np.asarray(old_leaf.u, dtype=float).reshape(-1)
+      point = old_leaf.aq_U_x
+
+      if point is not None:
+        point = np.asarray(point, dtype=float).reshape(-1)
+
+      if (point is None or point.size != l.size or not np.all(np.isfinite(point)) or np.any(point < l-1.e-12) or np.any(point > u+1.e-12)):
+        point = 0.5*(l+u)
+
+      point = point.copy()
+      aq_U = float(np.asarray(self.acqf.evaluate(np.atleast_2d(point))).reshape(-1)[0])
+
+      return [RestartResult(node_id=node_id, aq_L=float(aq_L), aq_U=aq_U, aq_U_x=point)]
+
+    except Exception as exc:
+      return [RestartResult(node_id=node_id, error=f"{type(exc).__name__}: {exc}")]
+  
+  def callback(self, nodes):
+    parents = list(nodes.flatten())
+    if len(parents) != 1:
+      raise ValueError("Each asynchronous BnB task must contain exactly one parent")
+    parent = parents[0]
+    weights = (parent.metadata or {}).get("expsec_weights")
+    #weights = None
+    started = time.time()
+    try:
+      child_boxes = minmax_expsec_branch(parent.l, parent.u, self, weights)
+      #child_boxes = gradient_branch(parent.l, parent.u, self.acqf)
+      #child_boxes = branch(parent.l, parent.u)
+      if len(child_boxes) != 2:
+        raise RuntimeError("branch() did not return exactly two child boxes")
+      children = []
+      for child_l, child_u in child_boxes:
+        acqf_L, acqf_U, acqf_U_x, d_str = self.compute_acqf_bounds(child_l, child_u)
+
+        metadata={"diagnostics":d_str.rstrip("\n"),
+                  "expsec_weights":self.expsec_weights.copy()}
+        child = BnBNode(child_l, child_u, acqf_L, acqf_U, acqf_U_x, metadata=metadata)
+        children.append(child)
+      result = BranchResult(
+        parent_id=int(parent.node_id),
+        generation=int(parent.generation),
+        children=tuple(children),
+        worker_metadata={"elapsed": time.time() - started},
+      )
+    except Exception as exc:
+      result = BranchResult(
+        parent_id=int(parent.node_id),
+        generation=int(parent.generation),
+        error=f"{type(exc).__name__}: {exc}",
+        worker_metadata={"elapsed": time.time() - started},
+      )
+    # MPIEvaluator(function_mode=False) removes this one-element wrapper.
+    return [result]

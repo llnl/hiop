@@ -19,6 +19,10 @@ class acquisition(object):
   # Abstract method to evaluate the acquisition function at x.
   def evaluate(self, x: np.ndarray) -> np.ndarray:
     raise NotImplementedError("Child class of acquisition should implement method evaluate")
+  # Abstract method to evaluate the acquisition function in terms
+  # of known mean and variance
+  def evaluate_meansig2(self, mean : np.ndarray, sig2 : np.ndarray) -> np.ndarray:
+    raise NotImplementedError("Child class of acquisition should implement method evaluate_mean_sig")
   def scalar_evaluate(self, x: np.ndarray) -> float:
     assert len(x.shape) == 1, f"scalar_evaluate intended for use with vector inputs and not arrays of vector values x"
     return self.evaluate(np.atleast_2d(x))[0][0]  
@@ -41,7 +45,10 @@ class LCBacquisition(acquisition):
   def evaluate(self, x : np.ndarray) -> np.ndarray:
     mu = self.gpsurrogate.mean(x)
     sig2 = self.gpsurrogate.variance(x)
-    return mu - self.beta * np.sqrt(sig2)
+    return self.evaluate_meansig2(mu, sig2)
+  # Method to evaluate acquisition for known mean and standard deviation
+  def evaluate_meansig2(self, mean : np.ndarray, sig2 : np.ndarray) -> np.ndarray:
+    return mean - self.beta * np.sqrt(sig2) 
 
   def eval_g(self, x: np.ndarray) -> np.ndarray:
     mu = self.gpsurrogate.mean(x)
@@ -71,13 +78,30 @@ class EIacquisition(acquisition):
     elif sig.size == 1 and np.abs(sig) <= 1e-24:
       retval = 0.0
     elif sig.size > 1:
-      raise NotImplementedError("TODO --- Not implemented yet!")
+      retval = np.zeros((sig.size, 1))
+      for i in range(sig.size):
+        z = (y_min - pred[i]) / sig[i]
+        retval[i,:] = sig[i] * (z * norm.cdf(z) + norm.pdf(z))
+      retval = np.atleast_2d(retval)
 
     ## instead of maximize EI, we minimize -EI
     retval *= -1.
-
     return retval
+  
+  def evaluate_meansig2(self, mean : np.ndarray, sig2 : np.ndarray) -> np.ndarray:
+    y_data = self.gpsurrogate.training_y
+    y_min = y_data[np.argmin(y_data[:, 0])][0]
+    sig = np.sqrt(sig2)
+    retval = []
+    #if abs(sig) > 1e-24:
+    z = (y_min - mean) / sig
+    retval = (y_min - mean) * norm.cdf(z) + sig * norm.pdf(z)
+    #else:
+    #  retval = 0.0
 
+    ## instead of maximize EI, we minimize -EI
+    retval *= -1.
+    return retval
   def eval_g(self, x: np.ndarray) -> np.ndarray:
     y_data = self.gpsurrogate.training_y
     y_min = y_data[np.argmin(y_data[:, 0])]
