@@ -9,6 +9,7 @@
 
 import JuMP
 import Ipopt
+import HiGHS
 
 struct _PortfolioMasterContext
     model::JuMP.Model
@@ -17,13 +18,34 @@ struct _PortfolioMasterContext
     quadratic_base::JuMP.QuadExpr
 end
 
+
+function _check_petra_master_input(p::SparsePortfolioProblem, xc::AbstractVector, g::AbstractVector, D::AbstractVector{<:Real})
+    n = num_master(p)
+
+    length(xc) == n || throw(DimensionMismatch("master center"))
+    length(g) == n || throw(DimensionMismatch("proximal gradient"))
+    length(D) == n || throw(DimensionMismatch("diagonal stabilization"))
+
+    (all(isfinite, xc) && all(isfinite, g) && all(v -> isfinite(v) && v > 0, D)) ||
+        throw(ArgumentError("invalid portfolio master data"))
+
+    return nothing
+end
+
+
 function petra_master_context(p::SparsePortfolioProblem)
     n = p.n_assets
     model = JuMP.Model(Ipopt.Optimizer)
     JuMP.set_silent(model)
     JuMP.set_optimizer_attribute(model, "tol", 1.0e-10)
     JuMP.set_optimizer_attribute(model, "constr_viol_tol", 1.0e-10)
-    JuMP.set_optimizer_attribute(model, "max_iter", 1000)
+    JuMP.set_optimizer_attribute(model, "max_iter", 1000)#
+
+
+    #model = JuMP.Model(HiGHS.Optimizer)
+    #JuMP.set_silent(model)
+    #JuMP.set_optimizer_attribute(model, "primal_feasibility_tolerance", 1e-10)
+    #JuMP.set_optimizer_attribute(model, "dual_feasibility_tolerance", 1e-10)
 
     JuMP.@variable(model, a[1:n] >= 0)
     for j in 1:n
@@ -42,14 +64,20 @@ end
 # Convenience direct call for tests and external users. For repeated master
 # steps, solve_petra creates/reuses the context through the 5-argument method.
 function petra_master_step(p::SparsePortfolioProblem, xc::AbstractVector{<:Real},
-                           g::AbstractVector{<:Real}, alpha::Real)
+                           g::AbstractVector{<:Real}, alpha::Union{Real,AbstractVector{<:Real}})
     context = petra_master_context(p)
     return petra_master_step(p, xc, g, alpha, context)
 end
 
 function petra_master_step(p::SparsePortfolioProblem, xc::AbstractVector{<:Real},
-                           g::AbstractVector{<:Real}, alpha::Real, ctx::_PortfolioMasterContext)
+                           g::AbstractVector{<:Real}, alpha::Union{Real,AbstractVector{<:Real}},
+                           ctx::_PortfolioMasterContext)
     _check_petra_master_input(p, xc, g, alpha)
+
+
+    # Convert scalar alpha to a uniform diagonal representation.
+    D = alpha isa Real ? fill(Float64(alpha), num_master(p)) : alpha
+
     n = p.n_assets
     model = ctx.model
 
@@ -57,14 +85,22 @@ function petra_master_step(p::SparsePortfolioProblem, xc::AbstractVector{<:Real}
     # 0.5*a'Q*a + g'*(x-xc) + alpha*||x-xc||^2.
     # QP Hessian in asset variables is Q + 2*alpha*I.
     obj = copy(ctx.quadratic_base)
+
+    # Original absolute-variable QP, with diagonal stabilization.
+    obj = copy(ctx.quadratic_base)
+
     for j in 1:n
         v = ctx.assets[j]
-        JuMP.add_to_expression!(obj, alpha, v, v)
-        JuMP.add_to_expression!(obj, g[j] - 2*alpha*xc[j], v)
+        JuMP.add_to_expression!(obj, D[j], v, v)
+        JuMP.add_to_expression!(obj, g[j] - 2.0 * D[j] * xc[j], v)
         JuMP.set_start_value(v, xc[j])
     end
-    JuMP.add_to_expression!(obj, alpha, ctx.slack, ctx.slack)
-    JuMP.add_to_expression!(obj, g[end] - 2*alpha*xc[end], ctx.slack)
+    JuMP.add_to_expression!(obj, D[end], ctx.slack, ctx.slack)
+    JuMP.add_to_expression!(obj, g[end] - 2.0 * D[end] * xc[end], ctx.slack)
+    JuMP.set_start_value(ctx.slack, xc[end])
+    JuMP.set_objective_function(model, obj)
+
+
     JuMP.set_start_value(ctx.slack, xc[end])
     JuMP.set_objective_function(model, obj)
     JuMP.optimize!(model)
@@ -82,13 +118,14 @@ function petra_master_step(p::SparsePortfolioProblem, xc::AbstractVector{<:Real}
 end
 
 
-function _petra_master_optimality(p::SparsePortfolioProblem, xc, g, alpha, y,
-                                  ctx::_PortfolioMasterContext)
+function _petra_master_optimality(p::SparsePortfolioProblem, xc, g, alpha::Union{Real,AbstractVector{<:Real}},
+                                  y, ctx::_PortfolioMasterContext)
     JuMP.has_duals(ctx.model) || return NaN
 
     r = zeros(length(y))
     smooth_gradient!(r, p, y)
-    r .+= g .+ (2 * alpha) .* (y .- xc)
+    #r .+= g .+ (2 * alpha) .* (y .- xc)
+    r .+= g .+ (2.0 .* alpha) .* (y .- xc)
 
     # JuMP/MOI dual sign convention for minimization.
     multipliers = [

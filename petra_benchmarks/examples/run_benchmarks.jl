@@ -33,7 +33,7 @@ Base.@kwdef mutable struct Config
     maxit::Int = 150                 # ALS/ALPS outer iterations
     petra_schedule::Symbol = :smoke   # :smoke or :full
     petra_max_inner::Int = 0         # 0 means preset: smoke=300, full=3000
-    alpha_strategy::Symbol = :paper   # :paper or :affine_tight or :adaptive_scalar
+    alpha_strategy::Symbol = :paper   # :paper or :affine_tight or :adaptive_scalar or :portfolio_diagonal
     petra_alpha_start::Float64 = 1.0
     petra_alpha_min::Float64 = 1e-4
     verbose::Bool = false
@@ -97,11 +97,9 @@ function usage(io::IO=stdout)
                                     Full: [0.2,0.05,0.01,0.002],
                                           [1e-3,1e-4,1e-5,1e-6]
       --petra-max-inner INT        Max inner iterations per continuation stage
-      --alpha-strategy paper|affine_tight
-                                    
-      --alpha-strategy paper|affine_tight|adaptive_scalar
+      --alpha-strategy paper|affine_tight|adaptive_scalar|portfolio_diagonal
                                    Stabilization update stategy
-      --petra-alpha-start FLOAT   Initial alpha for adaptive mode (default 1)
+      --petra-alpha-start FLOAT   Initial alpha for adaptive mode or gamma for portfolio_diagonal)(default 1)
       --petra-alpha-min FLOAT     Adaptive lower bound (default 1e-4)
 
     Notes: Option `--petra-schedule smoke` is a single-stage implementation
@@ -225,8 +223,8 @@ function parse_cli(args::Vector{String})
         throw(ArgumentError("--equality must be linear or curved"))
     cfg.petra_schedule in (:smoke, :full) ||
         throw(ArgumentError("--petra-schedule must be smoke or full"))
-    cfg.alpha_strategy in (:paper, :affine_tight, :adaptive_scalar) ||
-        throw(ArgumentError("--alpha-strategy must be paper or affine_tight"))
+    cfg.alpha_strategy in (:paper, :affine_tight, :adaptive_scalar, :portfolio_diagonal) ||
+        throw(ArgumentError("unknown PETRA alpha strategy"))
     isfinite(cfg.petra_alpha_start) && cfg.petra_alpha_start > 0 ||
         throw(ArgumentError("--petra-alpha-start must be positive"))
     isfinite(cfg.petra_alpha_min) && cfg.petra_alpha_min > 0 ||
@@ -286,8 +284,8 @@ function petra_options(cfg::Config)
         maxinner = cfg.petra_max_inner == 0 ? 300 : cfg.petra_max_inner
     else
         # aaa
-        lambda = [0.2, 0.05, 0.01, 0.002]
-        eps = [1e-3, 1e-4, 1e-5, 1e-6]
+        lambda = [0.1, 0.01, 1e-3, 1e-4, 1e-5, 1e-6, 1e-7, 1e-8]
+        eps =   [1e-4, 9e-5, 8e-5, 1e-5, 1e-6, 1e-7, 5e-8, 1e-8]
         maxinner = cfg.petra_max_inner == 0 ? 3000 : cfg.petra_max_inner
     end
     return PetraBenchmarks.PetraOptions(lambda_schedule=lambda, epsilon_schedule=eps,

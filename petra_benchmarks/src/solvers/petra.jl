@@ -17,11 +17,11 @@ Base.@kwdef struct PetraOptions
     rho_bar::Float64 = 0.1
     sigma::Float64 = 0.1
     alpha_floor::Float64 = 1.0
-    alpha_strategy::Symbol = :paper # :paper or :affine_tight or :adaptive_scalar
+    alpha_strategy::Symbol = :paper # :paper or :affine_tight or :adaptive_scalar or :portfolio_diagonal
     #used only by :adaptive_scalar
     alpha_start::Float64 = 1.0
     alpha_min::Float64 = 1e-4
-    alpha_shrink::Float64 = 0.5
+    alpha_shrink::Float64 = 0.75
     alpha_grow::Float64 = 2.0
     rho_good::Float64 = 0.8
     max_inner::Int = 300
@@ -48,7 +48,7 @@ function _check_petra_options(o::PetraOptions)
         throw(ArgumentError("sigma must be positive"))
     isfinite(o.alpha_floor) && o.alpha_floor > 0 ||
         throw(ArgumentError("alpha_floor must be positive"))
-    o.alpha_strategy in (:paper, :affine_tight, :adaptive_scalar) ||
+    o.alpha_strategy in (:paper, :affine_tight, :adaptive_scalar, :portfolio_diagonal) ||
         throw(ArgumentError("alpha_strategy must be :paper or :affine_tight"))
     if o.alpha_strategy === :adaptive_scalar
         isfinite(o.alpha_start) && o.alpha_start > 0 ||
@@ -59,7 +59,11 @@ function _check_petra_options(o::PetraOptions)
         isfinite(o.alpha_grow) && o.alpha_grow > 1 || throw(ArgumentError("alpha_grow must exceed 1"))
         isfinite(o.rho_good) && o.rho_bar <= o.rho_good <= 1 ||
             throw(ArgumentError("rho_good must be in [rho_bar,1]"))
-    end        
+    end
+    if o.alpha_strategy === :portfolio_diagonal
+        isfinite(o.alpha_start) && o.alpha_start >= o.sigma ||
+            throw(ArgumentError("portfolio_diagonal requires alpha_start >= sigma"))
+    end
     o.max_inner > 0 || throw(ArgumentError("max_inner must be positive"))
     o.max_consecutive_rejections > 0 ||
         throw(ArgumentError("max_consecutive_rejections must be positive"))
@@ -120,6 +124,21 @@ function _petra_moreau_data(p::AbstractBenchmark,
     return (objective=Float64(value), g=grad,
             proximal_results=prox_results,
             max_displacement=max_displacement)
+end
+
+# Portfolio-specific diagonal quadratic majorizer.
+# The entries of D are quadratic coefficients, not Hessian entries.
+function _petra_portfolio_diagonal(p::SparsePortfolioProblem, data, lambda::Real, gamma::Real)
+    D = fill(Float64(gamma), num_master(p))
+
+    for j in 1:p.n_assets
+        if iszero(data.proximal_results[j].scalar_point)
+            D[j] += 0.5 / lambda
+        end
+    end
+
+    # D[end] = gamma for the return-slack variable.
+    return D
 end
 
 """
@@ -216,6 +235,11 @@ its stated stopping test; it is NOT a certificate of global optimality.
 """
 function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, options::PetraOptions=PetraOptions())
     _check_petra_options(options)
+
+    if options.alpha_strategy === :portfolio_diagonal && !(p isa SparsePortfolioProblem)
+        throw(ArgumentError("portfolio_diagonal is currently supported only for SparsePortfolioProblem"))
+    end
+
     n = num_master(p)
     length(x0) == n || throw(DimensionMismatch("initial point dimension"))
     x = Float64.(x0)
@@ -230,7 +254,15 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
     
     #majorization_factor = _petra_majorization_factor(p, options.alpha_strategy)
     # For adaptive mode, retain the paper's global bound, but do not impose it on alpha.
-    bound_strategy = options.alpha_strategy === :adaptive_scalar ? :paper : options.alpha_strategy
+    ##bound_strategy = options.alpha_strategy === :adaptive_scalar ? :paper : options.alpha_strategy
+    bound_strategy = if options.alpha_strategy === :adaptive_scalar
+         :paper
+    elseif options.alpha_strategy === :portfolio_diagonal
+        :affine_tight
+    else
+        options.alpha_strategy
+    end
+
     majorization_factor = _petra_majorization_factor(p, bound_strategy)
     # Carried between continuation stages for adaptive mode.
     alpha_warm = max(options.alpha_min, options.alpha_start)
@@ -249,26 +281,25 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
     for (stage, (lambda, epsilon)) in enumerate(zip(options.lambda_schedule, options.epsilon_schedule))
         last_lambda = lambda
         # :paper reproduces Algorithm 4.1 initialization;
+        # :adaptive_scalar uses the value from the last outer iteration (see alpha_warm) and is adaptive
+        #within the inner iterations, in the spirit of trust-region
         # :affine_tight  uses a valid tighter upper model for the present affine scenarios.
-        #alpha = max(options.alpha_floor, majorization_factor / (2.0 * lambda))
-        #alpha_initial = alpha
 
-        
-        alpha = if options.alpha_strategy === :adaptive_scalar
+        alpha = if options.alpha_strategy === :portfolio_diagonal
+            options.alpha_start  # This is gamma, not max(D).
+        elseif options.alpha_strategy === :adaptive_scalar
             alpha_warm
         else
             max(options.alpha_floor, majorization_factor / (2.0 * lambda))
         end
         alpha_initial = alpha
 
-
         data = _petra_moreau_data(p, x, lambda)
         nbatches += 1
         last_data = data
         last_lagged = Inf
         consecutive_rejections = 0
-        stage_accepted = 0
-        stage_rejected = 0
+        stage_accepted = 0; stage_rejected = 0
         stage_status = :max_inner
         stage_master_error = nothing
 
@@ -278,16 +309,22 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
             _petra_print_header()
         end
 
-
         for k in 1:options.max_inner
             ninner += 1
+            # Scalar alpha for existing strategies, vector D for portfolio diagonal.
+            stab = if options.alpha_strategy === :portfolio_diagonal
+                _petra_portfolio_diagonal(p, data, lambda, alpha)
+            else
+                 alpha
+            end
+
             xtrial = try
-                Float64.(petra_master_step(p, x, data.g, alpha,
-                                         master_context))
+                Float64.(petra_master_step(p, x, data.g, stab, master_context))
             catch err
                 if err isa PetraMasterFailure
                     stage_status = :master_failed
                     stage_master_error = sprint(showerror, err)
+                    println("Error solving master:", stage_master_error)
                     break
                 end
                 rethrow()
@@ -302,14 +339,17 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
             d = xtrial .- x
             sqstep = dot(d, d)
 
-
             # Master model at the trial point (constant omitted).
+            quad = dot(d, stab .* d)
             f_trial = smooth_value(p, xtrial)
-            m_trial = f_trial + dot(data.g, d) + alpha * sqstep
+            m_trial = f_trial + dot(data.g, d) + quad
 
             # Predicted decrease Pred = M(xcenter)-M(xtrial). Constant envelope terms cancel.
             pred = smooth_value(p, x) - m_trial
+
             if !isfinite(pred) || pred < -options.model_decrease_tol
+                println("Master gives no descent:  pred ", pred, "  m_trial ", m_trial,
+                        "  smooth_val ", smooth_value(p, x))
                 stage_status = :master_no_descent
                 break
             end
@@ -328,28 +368,41 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
 
             accepted = isfinite(ratio) && ratio >= options.rho_bar
 
-
-
             step_inf = norm(d, Inf)
-            opt_lag = 2.0 * alpha * step_inf
+            #opt_lag = 2.0 * alpha * step_inf
+            stab_grad = (2.0 .* stab) .* d
+            opt_lag = norm(stab_grad, Inf)
 
             # Diagnostics <-- verbose mode.
             if options.verbose
                 f_orig = original_objective(p, xtrial)
 
-                opt_master = _petra_master_optimality(p, x, data.g, alpha, xtrial, master_context)
+                opt_master = _petra_master_optimality(p, x, data.g, stab, xtrial, master_context)
 
                 # Non-lagged Moreau stationarity proxy.
-                opt_prox = norm(trial_data.g .- data.g .- (2.0 * alpha) .* d, Inf)
+                #opt_prox = norm(trial_data.g .- data.g .- (2.0 * alpha) .* d, Inf)
+                opt_prox = norm(trial_data.g .- data.g .- stab_grad, Inf)
+
             else
                 f_orig = NaN
                 opt_master = NaN
                 opt_prox = NaN
             end
 
+            # detects blocking/stiff coordinates for the Portfolio -> used for diagnostics 
+            #if options.verbose && p isa SparsePortfolioProblem
+            #    j = argmax(abs.(@view d[1:p.n_assets]))
+            #    qold = data.proximal_results[j]
+            #    qnew = trial_data.proximal_results[j]
+            #    if iszero(qold.scalar_point) && iszero(qnew.scalar_point)
+            #        mismatch = abs(1/lambda - 2alpha) * abs(d[j])
+            #        Printf.@printf("  stiff_coord=%d  x=%.3e  d=%.3e 2alpha*lambda=%.3f  mismatch=%.3e\n", j, x[j], d[j], 2alpha*lambda, mismatch)
+            #    end
+            #end
+            alpha_report = stab isa Real ? Float64(stab) : maximum(stab)
             entry = (iter=ninner, stage=stage, inner=k, f_orig=f_orig, f_lambda=trial_data.objective,
                      m_trial=m_trial, step_inf=step_inf, opt_master=opt_master, opt_lag=opt_lag,
-                     opt_prox=opt_prox, delta=trial_data.max_displacement, lambda=lambda, alpha=alpha,
+                     opt_prox=opt_prox, delta=trial_data.max_displacement, lambda=lambda, alpha=alpha_report,
                      rho=ratio, accepted=accepted, predicted=pred, actual=ared)
 
             push!(iteration_history, entry)
@@ -395,44 +448,38 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
                     break
                 end
             end
+        end # of for k in 1:options.max_inner <- inner loop
+ 
+        # Save stabilization even if a continuation stage stops because max_inner was reached, in case
+        # the :max_inner stopping criteria is disabled below
+        if options.alpha_strategy === :adaptive_scalar
+            alpha_warm = alpha
         end
-
         push!(stage_history, (stage=stage, lambda=lambda, epsilon=epsilon, status=stage_status, x=copy(x),
                               moreau_objective=data.objective, lagged_residual=last_lagged,
-                              max_prox_displacement=data.max_displacement, accepted=stage_accepted, rejected=stage_rejected,
-                              alpha_initial=alpha_initial, alpha_final=alpha, master_error=stage_master_error))
+                              max_prox_displacement=data.max_displacement, accepted=stage_accepted,
+                              rejected=stage_rejected, alpha_initial=alpha_initial, alpha_final=alpha,
+                              master_error=stage_master_error))
         if options.verbose
-            println("--- stage ", stage, ": ", stage_status, " (accepted=", stage_accepted, ", rejected=", stage_rejected, ")")
+            println("--- stage ", stage, ": ", stage_status, " (accepted=", stage_accepted,
+                    ", rejected=", stage_rejected, ")")
         end
         
         if stage_status != :converged
             status = stage_status
             break
         end
-    end
+    end # of for (stage, (lambda, epsilon)) <- outer loop
 
     elapsed_seconds = (time_ns() - start_ns) / 1.0e9
-    return (
-        method=:petra,
-        status=status,
-        x=copy(x),
-        objective=original_objective(p, x),
-        master_feasibility=master_feasibility(p, x),
-        bound_violation=bound_violation(p, x),
-        outer_iterations=length(stage_history),
-        inner_iterations=ninner,
-        accepted_steps=naccepted,
-        rejected_steps=nrejected,
-        oracle_batches=nbatches,
-        oracle_calls=nbatches * num_scenarios(p),
-        alpha_strategy=options.alpha_strategy,
-        majorization_factor=majorization_factor,
-        final_lambda=last_lambda,
-        final_moreau_objective=last_data.objective,
-        final_lagged_residual=last_lagged,
+    return (method=:petra, status=status, x=copy(x), objective=original_objective(p, x),
+        master_feasibility=master_feasibility(p, x), bound_violation=bound_violation(p, x),
+        outer_iterations=length(stage_history), inner_iterations=ninner,
+        accepted_steps=naccepted, rejected_steps=nrejected, oracle_batches=nbatches,
+        oracle_calls=nbatches * num_scenarios(p), alpha_strategy=options.alpha_strategy,
+        majorization_factor=majorization_factor, final_lambda=last_lambda,
+        final_moreau_objective=last_data.objective, final_lagged_residual=last_lagged,
         final_max_prox_displacement=last_data.max_displacement,
-        elapsed_seconds=elapsed_seconds,
-        stage_history=stage_history,
-        iteration_history=iteration_history,
-    )
+        elapsed_seconds=elapsed_seconds, stage_history=stage_history,
+        iteration_history=iteration_history)
 end
