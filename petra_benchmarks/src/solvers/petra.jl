@@ -16,12 +16,14 @@ Base.@kwdef struct PetraOptions
     epsilon_schedule::Vector{Float64} = [1e-3, 1e-4, 1e-5, 1e-6]
     rho_bar::Float64 = 0.1
     sigma::Float64 = 0.1
+    ratio_noise_factor::Float64 = 32.0
+    max_numerical_retries::Int = 6    
     alpha_floor::Float64 = 1.0
     alpha_strategy::Symbol = :paper # :paper or :affine_tight or :adaptive_scalar or :portfolio_diagonal
     #used only by :adaptive_scalar
     alpha_start::Float64 = 1.0
     alpha_min::Float64 = 1e-4
-    alpha_shrink::Float64 = 0.75
+    alpha_shrink::Float64 = 0.95
     alpha_grow::Float64 = 2.0
     rho_good::Float64 = 0.8
     max_inner::Int = 300
@@ -46,6 +48,10 @@ function _check_petra_options(o::PetraOptions)
         throw(ArgumentError("rho_bar must lie in (0,1]"))
     isfinite(o.sigma) && o.sigma > 0 ||
         throw(ArgumentError("sigma must be positive"))
+    isfinite(o.ratio_noise_factor) && o.ratio_noise_factor > 0 ||
+        throw(ArgumentError("ratio_noise_factor must be positive"))
+    o.max_numerical_retries >= 0 || throw(ArgumentError("max_numerical_retries must be nonnegative"))
+
     isfinite(o.alpha_floor) && o.alpha_floor > 0 ||
         throw(ArgumentError("alpha_floor must be positive"))
     o.alpha_strategy in (:paper, :affine_tight, :adaptive_scalar, :portfolio_diagonal) ||
@@ -110,20 +116,33 @@ end
 # Compute the objective and proximal vectors at one point.  This deliberately
 # calls each scenario oracle ONCE per batch and saves all results.  On a rejected
 # step, the center and all its proximal selections remain unchanged.
-function _petra_moreau_data(p::AbstractBenchmark,
-                            x::AbstractVector{<:Real}, lambda::Real)
+function _petra_moreau_data(p::AbstractBenchmark, x::AbstractVector{<:Real}, lambda::Real)
     grad = zeros(Float64, num_master(p))
     prox_results = map(s -> prox_scenario(s, x, lambda), p.scenarios)
-    value = smooth_value(p, x)
-    max_displacement = 0.0
+
+    f = Float64(smooth_value(p, x))
+    value = f; abs_terms = abs(f)
+    value_error_bound = 0.0; max_displacement = 0.0
+
     for q in prox_results
         value += q.envelope
+        abs_terms += abs(q.envelope)
         grad .+= q.subgrad
         max_displacement = max(max_displacement, norm(x .- q.w, Inf))
+
+        # Optional certified envelope-value accuracy.
+        # Absence means an exact oracle is assumed.
+        if hasproperty(q, :envelope_error_bound)
+            err = Float64(q.envelope_error_bound)
+            isfinite(err) && err >= 0 ||
+                throw(ArgumentError("Invalid oracle value error bound"))
+            value_error_bound += err
+        end
     end
-    return (objective=Float64(value), g=grad,
-            proximal_results=prox_results,
-            max_displacement=max_displacement)
+
+    return (objective=Float64(value), smooth=f, abs_terms=abs_terms,
+            value_error_bound=value_error_bound, g=grad,
+            proximal_results=prox_results, max_displacement=max_displacement)
 end
 
 # Portfolio-specific diagonal quadratic majorizer.
@@ -166,7 +185,8 @@ end
 function _petra_print_row(io::IO, r)
     Printf.@printf(io, "%5d %5d %12.5e %12.5e %12.5e %10.3e %10.3e %10.3e %10.3e %10.3e %10.3e %10.3e %10.3e %3s\n",
                    r.iter, r.stage, r.f_orig, r.f_lambda, r.m_trial, r.step_inf, r.opt_master, r.opt_lag, r.opt_prox,
-                   r.delta, r.lambda, r.alpha, r.rho, r.accepted ? "A" : "R")
+                   r.delta, r.lambda, r.alpha, r.rho, 
+                   r.decision === :inconclusive ? "?" : (r.accepted ? "A" : "R"))
 end
 
 # KKT residual after eliminating the box normal cone.
@@ -221,6 +241,51 @@ function _petra_master_optimality(p::AbstractBenchmark, xc, g, alpha, y, context
     return _petra_box_kkt(p, y, r)
 end
 
+# Ratio test classifier: accept, reject, master_no_descent reliably or inclusive
+# due to steps too close to zero and/or model and master values to close in
+# floating point arithmetic
+function _petra_ratio_decision(pred::Real, ared::Real, sqstep::Real, sigma::Real,
+                               rho_bar::Real, err_pred::Real, err_ared::Real)
+    den = pred + sigma * sqstep
+
+    if !all(isfinite, (pred, ared, den, sqstep, err_pred, err_ared)) ||
+       sqstep < 0 || err_pred < 0 || err_ared < 0
+        return (:invalid, NaN)
+    end
+
+    # Rounding uncertainty in forming the denominator.
+    err_den = err_pred + 8.0 * eps(Float64) * (abs(pred) + abs(sigma * sqstep))
+
+    # The master model has a reliably negative denominator.
+    if den < -err_den
+        return (:master_no_descent, NaN)
+    end
+
+    # Actual objective increase beyond the error bound.
+    if ared < -err_ared
+        rho = den > err_den ? ared / den : NaN
+        return (:reject, rho)
+    end
+
+    # Ratio cannot be evaluated reliably.
+    if den <= err_den
+        return (:inconclusive, NaN)
+    end
+
+    # Compare the acceptance inequality without division.
+    margin = ared - rho_bar * den
+    err_margin = err_ared + rho_bar * err_den + 8.0 * eps(Float64) * (abs(ared) +
+                 abs(rho_bar * den))
+
+    if margin > err_margin
+        return (:accept, ared / den)
+    elseif margin < -err_margin
+        return (:reject, ared / den)
+    end
+
+    return (:inconclusive, NaN)
+end
+
 
 """
     solve_petra(problem; x0=problem.x0, options=PetraOptions())
@@ -267,10 +332,9 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
     # Carried between continuation stages for adaptive mode.
     alpha_warm = max(options.alpha_min, options.alpha_start)
     
-    ninner = 0
-    naccepted = 0
-    nrejected = 0
-    nbatches = 0
+    ninner = 0; naccepted = 0; nrejected = 0; nbatches = 0
+    n_inconclusive = 0
+    
     iteration_history = NamedTuple[]
     stage_history = NamedTuple[]
     last_data = nothing
@@ -288,7 +352,7 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
         alpha = if options.alpha_strategy === :portfolio_diagonal
             options.alpha_start  # This is gamma, not max(D).
         elseif options.alpha_strategy === :adaptive_scalar
-            alpha_warm
+            min(alpha_warm, max(options.alpha_floor, majorization_factor / (2.0 * lambda)))
         else
             max(options.alpha_floor, majorization_factor / (2.0 * lambda))
         end
@@ -300,6 +364,7 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
         last_lagged = Inf
         consecutive_rejections = 0
         stage_accepted = 0; stage_rejected = 0
+        stage_inconclusive = 0; consecutive_inconclusive = 0
         stage_status = :max_inner
         stage_master_error = nothing
 
@@ -336,37 +401,91 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
                 break
             end
             # STEP
+            # d = xtrial .- x
+            # sqstep = dot(d, d)
+
+            # # Master model at the trial point (constant omitted).
+            # quad = dot(d, stab .* d)
+            # f_trial = smooth_value(p, xtrial)
+            # m_trial = f_trial + dot(data.g, d) + quad
+
+            # # Predicted decrease Pred = M(xcenter)-M(xtrial). Constant envelope terms cancel.
+            # pred = smooth_value(p, x) - m_trial
+
+            # if !isfinite(pred) || pred < -options.model_decrease_tol
+            #     println("Master gives no descent:  pred ", pred, "  m_trial ", m_trial,
+            #             "  smooth_val ", smooth_value(p, x))
+            #     stage_status = :master_no_descent
+            #     break
+            # end
+            # # ratio rho 
+            # if iszero(sqstep)
+            #     trial_data = data
+            #     ared = 0.0
+            #     ratio = 1.0             # Algorithm 4.1, line 11.
+            # else
+            #     trial_data = _petra_moreau_data(p, xtrial, lambda)
+            #     nbatches += 1
+            #     ared = data.objective - trial_data.objective
+            #     denominator = pred + options.sigma * sqstep
+            #     ratio = denominator > 0 ? ared / denominator : -Inf
+            # end
+            #accepted = isfinite(ratio) && ratio >= options.rho_bar
+
+            # STEP
             d = xtrial .- x
             sqstep = dot(d, d)
 
-            # Master model at the trial point (constant omitted).
-            quad = dot(d, stab .* d)
+            # Master model at the trial point.
+            f_center = data.smooth
             f_trial = smooth_value(p, xtrial)
-            m_trial = f_trial + dot(data.g, d) + quad
 
-            # Predicted decrease Pred = M(xcenter)-M(xtrial). Constant envelope terms cancel.
-            pred = smooth_value(p, x) - m_trial
+            linear_term = dot(data.g, d)
 
-            if !isfinite(pred) || pred < -options.model_decrease_tol
-                println("Master gives no descent:  pred ", pred, "  m_trial ", m_trial,
-                        "  smooth_val ", smooth_value(p, x))
+            # For scalar stabilization:
+            quadratic_term = alpha * sqstep
+
+            #  diagonal stabilization, use instead:
+            # quadratic_term = dot(d, stab .* d)
+
+            m_trial = f_trial + linear_term + quadratic_term
+            pred = f_center - m_trial
+
+            # Floating-point uncertainty in predicted reduction.
+            err_pred = options.ratio_noise_factor * eps(Float64) *
+                       (abs(f_center) + abs(f_trial) +
+                       abs(linear_term) + abs(quadratic_term))
+
+            if !isfinite(pred) || pred < -max(options.model_decrease_tol, err_pred)
                 stage_status = :master_no_descent
                 break
             end
-            # ratio rho 
+
+            # Actual reduction and acceptance classification.
             if iszero(sqstep)
+                # Existing theoretical zero-step rule, unchanged here. FIXME
                 trial_data = data
                 ared = 0.0
-                ratio = 1.0             # Algorithm 4.1, line 11.
+                ratio = 1.0
+                decision = :zero_step
             else
                 trial_data = _petra_moreau_data(p, xtrial, lambda)
                 nbatches += 1
+
                 ared = data.objective - trial_data.objective
-                denominator = pred + options.sigma * sqstep
-                ratio = denominator > 0 ? ared / denominator : -Inf
+
+                # Floating-point uncertainty plus oracle value errors.
+                err_ared = options.ratio_noise_factor * eps(Float64) *
+                           (data.abs_terms + trial_data.abs_terms) +
+                           data.value_error_bound +
+                           trial_data.value_error_bound
+
+                decision, ratio = _petra_ratio_decision(pred, ared, sqstep,
+                                                        options.sigma, options.rho_bar,
+                                                        err_pred, err_ared)
             end
 
-            accepted = isfinite(ratio) && ratio >= options.rho_bar
+            accepted = decision in (:accept, :zero_step)
 
             step_inf = norm(d, Inf)
             #opt_lag = 2.0 * alpha * step_inf
@@ -403,15 +522,62 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
             entry = (iter=ninner, stage=stage, inner=k, f_orig=f_orig, f_lambda=trial_data.objective,
                      m_trial=m_trial, step_inf=step_inf, opt_master=opt_master, opt_lag=opt_lag,
                      opt_prox=opt_prox, delta=trial_data.max_displacement, lambda=lambda, alpha=alpha_report,
-                     rho=ratio, accepted=accepted, predicted=pred, actual=ared)
+                     rho=ratio, accepted=accepted, predicted=pred, actual=ared, decision=decision)
 
             push!(iteration_history, entry)
 
             if options.verbose
                 _petra_print_row(stdout, entry)
             end
-            
-            if accepted
+
+
+            if decision === :inconclusive
+
+                n_inconclusive += 1
+                stage_inconclusive += 1
+                consecutive_inconclusive += 1
+
+                # A tiny unresolved reduction is not evidence that
+                # the stabilization must increase.
+                #
+                # For adaptive scalar stabilization, try obtaining a
+                # larger, numerically resolvable step.
+                if (options.alpha_strategy === :adaptive_scalar || options.alpha_strategy === :portfolio_diagonal) &&
+                   consecutive_inconclusive <= options.max_numerical_retries   # &&
+                   #alpha >= options.alpha_min
+
+                    #alpha_new = max(options.alpha_min, options.alpha_shrink * alpha)
+                    alpha_new = max(options.alpha_min, alpha)
+
+                    if options.verbose
+                        Printf.@printf("  inconclusive reduction: alpha %.3e -> %.3e    sqstep=%g\n", alpha, alpha_new, sqstep)
+                    end
+                    
+                    alpha = alpha_new
+                    accepted = true
+                else
+                    
+                    # No reliable ratio -> check if the step is zero in floating point arithmetic
+                    if step_inf <= 1e-10 && opt_lag <= 1e-3
+                        Printf.@printf("  approximate stationarity\n")
+                        stage_status = :approx_stationarity
+                        accepted = true
+                    else
+                        Printf.@printf("  max retries reached\n")
+                        stage_status = :numerical_stagnation
+                        break
+                    end
+                   
+                end
+           elseif decision === :master_no_descent || decision === :invalid
+               stage_status = :master_no_descent
+               break
+           else
+               # A genuinely resolved ratio decision resets the counter.
+               consecutive_inconclusive = 0
+           end
+
+           if accepted
                 # Accept: reuse trial oracle data.
                 x = xtrial; data = trial_data; last_data = data
                 last_lagged = opt_lag #2.0 * alpha * norm(d, Inf)
@@ -425,9 +591,12 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
                 end
 
                 # IMPORTANT: convergence uses alpha from the step just solved, not alpha_next.
-                if last_lagged <= epsilon
-                    stage_status = :converged
-
+                if last_lagged <= epsilon || stage_status === :approx_stationarity
+                    if stage_status === :approx_stationarity
+                        
+                    else
+                        stage_status = :converged
+                    end
                     # Save the stabilization param to the next continuation stage.
                     if options.alpha_strategy === :adaptive_scalar
                         alpha_warm = alpha_next
@@ -436,7 +605,7 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
                 end
 
                 alpha = alpha_next
-            else
+           else
                 # Rejected: retain x and its proximal data.
                 growth = options.alpha_strategy === :adaptive_scalar ? options.alpha_grow : 2.0
                 alpha *= growth
@@ -447,7 +616,7 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
                     stage_status = :rejection_limit
                     break
                 end
-            end
+           end
         end # of for k in 1:options.max_inner <- inner loop
  
         # Save stabilization even if a continuation stage stops because max_inner was reached, in case
@@ -459,13 +628,13 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
                               moreau_objective=data.objective, lagged_residual=last_lagged,
                               max_prox_displacement=data.max_displacement, accepted=stage_accepted,
                               rejected=stage_rejected, alpha_initial=alpha_initial, alpha_final=alpha,
-                              master_error=stage_master_error))
+                              master_error=stage_master_error, inconclusive=stage_inconclusive))
         if options.verbose
             println("--- stage ", stage, ": ", stage_status, " (accepted=", stage_accepted,
                     ", rejected=", stage_rejected, ")")
         end
         
-        if stage_status != :converged
+        if stage_status != :converged && stage_status != :approx_stationarity
             status = stage_status
             break
         end
@@ -481,5 +650,5 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
         final_moreau_objective=last_data.objective, final_lagged_residual=last_lagged,
         final_max_prox_displacement=last_data.max_displacement,
         elapsed_seconds=elapsed_seconds, stage_history=stage_history,
-        iteration_history=iteration_history)
+        iteration_history=iteration_history, inconclusive_steps=n_inconclusive)
 end

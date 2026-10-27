@@ -286,6 +286,9 @@ function petra_options(cfg::Config)
         # aaa
         lambda = [0.1, 0.01, 1e-3, 1e-4, 1e-5, 1e-6, 1e-7, 1e-8]
         eps =   [1e-4, 9e-5, 8e-5, 1e-5, 1e-6, 1e-7, 5e-8, 1e-8]
+        #lambda = [1.0,  0.1,  0.01, 1e-3, 1e-4, 1e-5, 1e-6]
+        #eps =    [0.000016, 0.000015, 0.000014, 0.000013, 0.000012, 0.000001, 0.000001] 
+        
         maxinner = cfg.petra_max_inner == 0 ? 3000 : cfg.petra_max_inner
     end
     return PetraBenchmarks.PetraOptions(lambda_schedule=lambda, epsilon_schedule=eps,
