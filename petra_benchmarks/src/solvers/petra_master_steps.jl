@@ -19,16 +19,37 @@ function petra_master_step(::AbsoluteRecourseProblem,
     return [t, 1.0 - t]
 end
 
+function petra_master_step(p::AbsoluteRecourseProblem, xc, g, D::AbstractVector{<:Real})
+    _check_petra_master_input(p, xc, g, D)
+    numer = 0.6 - g[1] + g[2] + 2*D[1]*xc[1] + 2*D[2]*(1 - xc[2])
+    denom = 2.0 + 2.0*(D[1] + D[2])
+    t = clamp(numer / denom, 0.0, 1.0)
+    return [t, 1.0 - t]
+end
 
-function _check_petra_master_input(p::AbstractBenchmark,
-                                   xc::AbstractVector, g::AbstractVector,
-                                   alpha::Real)
+
+
+function _check_petra_master_input(p::AbstractBenchmark, xc::AbstractVector,
+                                   g::AbstractVector, alpha::Real)
     length(xc) == num_master(p) || throw(DimensionMismatch("master center"))
     length(g) == num_master(p) || throw(DimensionMismatch("proximal vector"))
     all(isfinite, xc) && all(isfinite, g) && isfinite(alpha) && alpha > 0 ||
         throw(ArgumentError("invalid Petra master data"))
     return nothing
 end
+
+function _check_petra_master_input(p::AbstractBenchmark, xc::AbstractVector,
+                                   g::AbstractVector, D::AbstractVector{<:Real})
+    n = num_master(p)
+    length(xc) == n || throw(DimensionMismatch("master center"))
+    length(g) == n || throw(DimensionMismatch("gradient"))
+    length(D) == n || throw(DimensionMismatch("stabilization"))
+
+    all(isfinite, xc) && all(isfinite, g) && all(v -> isfinite(v) && v > 0, D) ||
+        throw(ArgumentError("invalid diagonal stabilization"))
+    return nothing
+end
+
 
 # Example B: x=(t,1-t), 0<=t<=1.
 # f(x) = 4(t-0.4)^2. The model is a convex scalar quadratic.
@@ -39,6 +60,14 @@ function petra_master_step(p::CapacityRecourseProblem,
     numer = 3.2 - g[1] + g[2] + 2*alpha*(1 + xc[1] - xc[2])
     t = clamp(numer / (8 + 4*alpha), 0.0, 1.0)
     return [t, 1 - t]
+end
+
+function petra_master_step(p::CapacityRecourseProblem, xc, g, D::AbstractVector{<:Real})
+    _check_petra_master_input(p, xc, g, D)
+    numer = 3.2 - g[1] + g[2] + 2*D[1]*xc[1] + 2*D[2]*(1 - xc[2])
+    denom = 8.0 + 2.0*(D[1] + D[2])
+    t = clamp(numer / denom, 0.0, 1.0)
+    return [t, 1.0 - t]
 end
 
 # Example C: f(x) = 0.2*((x1-0.35)^2 + (x2+0.35)^2).
@@ -85,4 +114,55 @@ function petra_master_step(p::DoubleWellProblem,
     else
         throw(ArgumentError("Unknown double-well master equality $(p.equality)"))
     end
+end
+
+
+function petra_master_step(p::DoubleWellProblem, xc, g, D::AbstractVector{<:Real})
+    _check_petra_master_input(p, xc, g, D)
+
+    if p.equality === :linear
+        numer = 0.28 - g[1] + g[2] + 2*D[1]*xc[1] - 2*D[2]*xc[2]
+        denom = 0.8 + 2.0*(D[1] + D[2])
+        t = clamp(numer / denom, -1.0, 1.0)
+        return [t, -t]
+    end
+
+    p.equality === :curved ||
+        throw(ArgumentError("Unknown equality"))
+
+    # Feasible curve x = (t, c*t^2).
+    c = 0.3
+
+    # Model, ignoring constants:
+    # A*t^4 + B*t^2 + C*t
+    A = (0.2 + D[2]) * c^2
+    B = 0.2 + D[1] + c*(g[2] + 0.14 - 2*D[2]*xc[2])
+    C = g[1] - 0.14 - 2*D[1]*xc[1]
+
+    # Stationarity:
+    # 4*A*t^3 + 2*B*t + C = 0
+    roots = _real_depressed_cubic_roots(Float64(B / (2*A)), Float64(C / (4*A)))
+
+    candidates = Float64[-1.0, 1.0]
+
+    for t in roots
+        if isfinite(t) && -1.0-1e-10 <= t <= 1.0+1e-10
+            push!(candidates, clamp(t, -1.0, 1.0))
+        end
+    end
+
+    best_model = Inf
+    best_x = Float64[]
+
+    for t in candidates
+        xtrial = [t, c*t^2]
+        d = xtrial .- xc
+        model = smooth_value(p, xtrial) + dot(g, d) + dot(d, D .* d)
+
+        if model < best_model
+            best_model = model
+            best_x = xtrial
+        end
+    end
+    return best_x
 end

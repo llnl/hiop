@@ -33,7 +33,11 @@ Base.@kwdef mutable struct Config
     maxit::Int = 150                 # ALS/ALPS outer iterations
     petra_schedule::Symbol = :smoke   # :smoke or :full
     petra_max_inner::Int = 0         # 0 means preset: smoke=300, full=3000
-    alpha_strategy::Symbol = :paper   # :paper or :affine_tight or :adaptive_scalar or :portfolio_diagonal
+    # :paper or :affine_tight or :adaptive_scalar or :adaptive_diagonal or :portfolio_diagonal
+    alpha_strategy::Symbol = :paper   
+    petra_secant_memory::Int = 5
+    petra_secant_ridge::Float64 = 0.1
+    petra_secant_step_tol::Float64 = 1e-9
     petra_alpha_start::Float64 = 1.0
     petra_alpha_min::Float64 = 1e-4
     verbose::Bool = false
@@ -137,6 +141,7 @@ function _key_value!(values::Dict{String,String}, key::AbstractString, value::Ab
                "--alpha", "--seed", "--asset-upper", "--equality",
                "--tol", "--maxit", "--petra-schedule", "--petra-max-inner",
                "--alpha-strategy", "--petra-alpha-start", "--petra-alpha-min",
+               "--petra-secant-memory", "--petra-secant-ridge", "--petra-secant-step-tol",
                "--csv", "--q-file", "--returns-file", "--upper-file", "--target-return")
     key in allowed || throw(ArgumentError("unknown option $key; use --help"))
     isempty(value) && throw(ArgumentError("missing value for $key"))
@@ -196,6 +201,9 @@ function parse_cli(args::Vector{String})
     cfg.alpha_strategy = Symbol(_normalize(get(values, "--alpha-strategy", "paper")))
     cfg.petra_alpha_start = parse(Float64, get(values, "--petra-alpha-start", "1.0"))
     cfg.petra_alpha_min = parse(Float64, get(values, "--petra-alpha-min", "1e-4"))
+    cfg.petra_secant_memory = parse(Int, get(values, "--petra-secant-memory", "5"))
+    cfg.petra_secant_ridge = parse(Float64, get(values, "--petra-secant-ridge", "0.1"))
+    cfg.petra_secant_step_tol = parse(Float64, get(values, "--petra-secant-step-tol", "1e-9"))    
     cfg.verbose = "--verbose" in flags
     cfg.al_trace = "--al-trace" in flags
     cfg.strict = "--strict" in flags
@@ -223,13 +231,20 @@ function parse_cli(args::Vector{String})
         throw(ArgumentError("--equality must be linear or curved"))
     cfg.petra_schedule in (:smoke, :full) ||
         throw(ArgumentError("--petra-schedule must be smoke or full"))
-    cfg.alpha_strategy in (:paper, :affine_tight, :adaptive_scalar, :portfolio_diagonal) ||
+    cfg.alpha_strategy in (:paper, :affine_tight, :adaptive_scalar,
+                           :portfolio_diagonal, :adaptive_diagonal) ||
         throw(ArgumentError("unknown PETRA alpha strategy"))
     isfinite(cfg.petra_alpha_start) && cfg.petra_alpha_start > 0 ||
         throw(ArgumentError("--petra-alpha-start must be positive"))
     isfinite(cfg.petra_alpha_min) && cfg.petra_alpha_min > 0 ||
         throw(ArgumentError("--petra-alpha-min must be positive"))
         
+    cfg.petra_secant_memory >= 1 || throw(ArgumentError("--petra-secant-memory must be positive"))
+    isfinite(cfg.petra_secant_ridge) && cfg.petra_secant_ridge >= 0 ||
+        throw(ArgumentError("--petra-secant-ridge must be nonnegative"))
+    isfinite(cfg.petra_secant_step_tol) && cfg.petra_secant_step_tol > 0 ||
+        throw(ArgumentError("--petra-secant-step-tol must be positive"))
+
     # Reject partial or silently ignored published-data inputs.
     supplied = (cfg.q_file !== nothing, cfg.returns_file !== nothing,
                 cfg.upper_file !== nothing, cfg.target_return !== nothing)
@@ -277,7 +292,8 @@ end
 
 function petra_options(cfg::Config)
     isdefined(PetraBenchmarks, :PetraOptions) ||
-        error("PetraOptions is not defined. Include src/solvers/petra.jl in src/PetraBenchmarks.jl and export PetraOptions/solve_petra.")
+        error("PetraOptions is not defined. Include src/solvers/petra.jl in " *
+              "src/PetraBenchmarks.jl and export PetraOptions/solve_petra.")
     if cfg.petra_schedule === :smoke
         lambda = [0.2]
         eps = [1e-3]
@@ -293,8 +309,10 @@ function petra_options(cfg::Config)
     end
     return PetraBenchmarks.PetraOptions(lambda_schedule=lambda, epsilon_schedule=eps,
                                          max_inner=maxinner, alpha_strategy=cfg.alpha_strategy,
-                                         alpha_start=cfg.petra_alpha_start,
-                                         alpha_min=cfg.petra_alpha_min,
+                                         alpha_start=cfg.petra_alpha_start, alpha_min=cfg.petra_alpha_min,
+                                         secant_memory=cfg.petra_secant_memory,
+                                         secant_ridge=cfg.petra_secant_ridge,
+                                         secant_step_tol=cfg.petra_secant_step_tol,
                                          verbose=cfg.verbose)
 end
 

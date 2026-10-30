@@ -210,6 +210,34 @@ end
     end
 end
 
+@testset "Secant diagonal curvature and stabilization" begin
+    o = PetraOptions(alpha_strategy=:adaptive_diagonal, secant_memory=2, secant_ridge=0.1)
+    H = PetraBenchmarks._PetraSecantHistory(2)
+    PetraBenchmarks._petra_add_secant!(H, [0.0, 0.0], [1.0, 2.0], [0.0, 0.0], [3.0, 8.0],
+                                       o, 100.0)
+    @test isapprox(H.h[1], 3.0/1.1; atol=1e-12)
+    @test isapprox(H.h[2], 4.0/1.1; atol=1e-12)
+    # A negative secant curvature must be clipped.
+    H2 = PetraBenchmarks._PetraSecantHistory(1)
+    PetraBenchmarks._petra_add_secant!(H2, [0.0], [1.0], [2.0], [-1.0], o, 100.0)
+    @test H2.h[1] == 0.0
+end
+
+@testset "Master step  scalar-diagonal equivalence" begin
+    problems = (absolute_recourse(), capacity_recourse(), double_well(equality=:linear),
+                double_well(equality=:curved), synthetic_portfolio(n=10))
+    for p in problems
+        x = p.x0
+        g = fill(0.05, num_master(p))
+        alpha = 0.5
+
+        ys = petra_master_step(p, x, g, alpha)
+        yd = petra_master_step(p, x, g, fill(alpha, num_master(p)))
+
+        @test isapprox(ys, yd; atol=1e-6, rtol=1e-6)
+    end
+end
+
 # Keep the CLI parser tests in a separate file; include at top level because
 # test_runner.jl imports its BenchmarkRunner module with `using .BenchmarkRunner`.
 include(joinpath(@__DIR__, "test_runner.jl"))

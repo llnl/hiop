@@ -30,6 +30,12 @@ Base.@kwdef struct PetraOptions
     max_consecutive_rejections::Int = 20
     feasibility_tol::Float64 = 1e-8
     model_decrease_tol::Float64 = 1e-10
+
+    # Rolling "multi"-secant diagonal stabilization
+    secant_memory::Int = 5
+    secant_ridge::Float64 = 0.1
+    secant_step_tol::Float64 = 1e-9
+
     verbose::Bool = false
 end
 
@@ -54,9 +60,9 @@ function _check_petra_options(o::PetraOptions)
 
     isfinite(o.alpha_floor) && o.alpha_floor > 0 ||
         throw(ArgumentError("alpha_floor must be positive"))
-    o.alpha_strategy in (:paper, :affine_tight, :adaptive_scalar, :portfolio_diagonal) ||
-        throw(ArgumentError("alpha_strategy must be :paper or :affine_tight"))
-    if o.alpha_strategy === :adaptive_scalar
+    o.alpha_strategy in (:paper, :affine_tight, :adaptive_scalar, :portfolio_diagonal, :adaptive_diagonal) ||
+        throw(ArgumentError("Unknown alpha_strategy"))
+    if o.alpha_strategy in (:adaptive_scalar, :adaptive_diagonal)
         isfinite(o.alpha_start) && o.alpha_start > 0 ||
             throw(ArgumentError("alpha_start must be positive"))
         isfinite(o.alpha_min) && o.alpha_min > 0 || throw(ArgumentError("alpha_min must be positive"))
@@ -66,15 +72,24 @@ function _check_petra_options(o::PetraOptions)
         isfinite(o.rho_good) && o.rho_bar <= o.rho_good <= 1 ||
             throw(ArgumentError("rho_good must be in [rho_bar,1]"))
     end
-    if o.alpha_strategy === :portfolio_diagonal
+    if o.alpha_strategy in (:portfolio_diagonal, :adaptive_diagonal)
         isfinite(o.alpha_start) && o.alpha_start >= o.sigma ||
-            throw(ArgumentError("portfolio_diagonal requires alpha_start >= sigma"))
+            throw(ArgumentError("diagonal stabilization requires alpha_start >= sigma"))
     end
     o.max_inner > 0 || throw(ArgumentError("max_inner must be positive"))
     o.max_consecutive_rejections > 0 ||
         throw(ArgumentError("max_consecutive_rejections must be positive"))
     o.feasibility_tol > 0 || throw(ArgumentError("feasibility_tol must be positive"))
     o.model_decrease_tol >= 0 || throw(ArgumentError("model_decrease_tol must be nonnegative"))
+
+    if o.alpha_strategy === :adaptive_diagonal
+        o.secant_memory >= 1 || throw(ArgumentError("secant_memory must be positive"))
+        isfinite(o.secant_ridge) && o.secant_ridge >= 0 ||
+            throw(ArgumentError("secant_ridge must be nonnegative"))
+        isfinite(o.secant_step_tol) && o.secant_step_tol > 0 ||
+            throw(ArgumentError("secant_step_tol must be positive"))
+    end
+
     return nothing
 end
 
@@ -159,6 +174,64 @@ function _petra_portfolio_diagonal(p::SparsePortfolioProblem, data, lambda::Real
     # D[end] = gamma for the return-slack variable.
     return D
 end
+
+# The general secant diagonal stabilization
+
+mutable struct _PetraSecantHistory
+    s::Vector{Vector{Float64}}
+    y::Vector{Vector{Float64}}
+    h::Vector{Float64}
+end
+
+_PetraSecantHistory(n::Int) = _PetraSecantHistory(Vector{Float64}[], Vector{Float64}[], zeros(n))
+
+function _petra_add_secant!(H::_PetraSecantHistory, xold, xnew, gold, gnew, o::PetraOptions, hmax::Real)
+    s = Float64.(xnew .- xold)
+    y = Float64.(gnew .- gold)
+
+    # Ignore components with numerically insignificant steps.
+    for j in eachindex(s)
+        tol = o.secant_step_tol * max(1.0, abs(xold[j]), abs(xnew[j]))
+
+        if !isfinite(s[j]) || !isfinite(y[j]) || abs(s[j]) <= tol
+            s[j] = 0.0
+            y[j] = 0.0
+        end
+    end
+
+    all(iszero, s) && return nothing
+
+    push!(H.s, s)
+    push!(H.y, y)
+
+    # Keep only the last m reliable accepted steps.
+    if length(H.s) > o.secant_memory
+        popfirst!(H.s)
+        popfirst!(H.y)
+    end
+
+    # Componentwise regularized multi-secant fit.
+    for j in eachindex(H.h)
+        ss = 0.0; sy = 0.0
+
+        for (sk, yk) in zip(H.s, H.y)
+            ss += sk[j]^2
+            sy += sk[j] * yk[j]
+        end
+
+        if ss > 0
+            # Relative regularization: eta_j = theta * sum(s_j^2).
+            eta = o.secant_ridge * ss
+            hnew = (sy + eta * H.h[j]) / (ss + eta)
+            if isfinite(hnew)
+                H.h[j] = clamp(hnew, 0.0, hmax)
+            end
+        end
+    end
+
+    return nothing
+end
+
 
 """
     petra_master_step(problem, xcenter, g, alpha)
@@ -301,6 +374,11 @@ its stated stopping test; it is NOT a certificate of global optimality.
 function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, options::PetraOptions=PetraOptions())
     _check_petra_options(options)
 
+    if options.alpha_strategy === :adaptive_diagonal &&
+       !(p isa Union{AbsoluteRecourseProblem, CapacityRecourseProblem, DoubleWellProblem, SparsePortfolioProblem})
+        throw(ArgumentError("adaptive_diagonal requires a vector-capable PETRA master solver"))
+    end
+
     if options.alpha_strategy === :portfolio_diagonal && !(p isa SparsePortfolioProblem)
         throw(ArgumentError("portfolio_diagonal is currently supported only for SparsePortfolioProblem"))
     end
@@ -319,16 +397,17 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
     
     #majorization_factor = _petra_majorization_factor(p, options.alpha_strategy)
     # For adaptive mode, retain the paper's global bound, but do not impose it on alpha.
-    ##bound_strategy = options.alpha_strategy === :adaptive_scalar ? :paper : options.alpha_strategy
-    bound_strategy = if options.alpha_strategy === :adaptive_scalar
-         :paper
-    elseif options.alpha_strategy === :portfolio_diagonal
-        :affine_tight
-    else
-        options.alpha_strategy
-    end
-
+    bound_strategy = if options.alpha_strategy === :adaptive_diagonal
+                         p isa SparsePortfolioProblem ? :affine_tight : :paper
+                     elseif options.alpha_strategy === :adaptive_scalar
+                         :paper
+                     elseif options.alpha_strategy === :portfolio_diagonal
+                         :affine_tight
+                     else
+                         options.alpha_strategy
+                     end
     majorization_factor = _petra_majorization_factor(p, bound_strategy)
+
     # Carried between continuation stages for adaptive mode.
     alpha_warm = max(options.alpha_min, options.alpha_start)
     
@@ -351,12 +430,18 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
 
         alpha = if options.alpha_strategy === :portfolio_diagonal
             options.alpha_start  # This is gamma, not max(D).
+        elseif options.alpha_strategy === :adaptive_diagonal
+            max(options.sigma, min(alpha_warm, max(options.alpha_floor, majorization_factor / (2.0 * lambda))))
         elseif options.alpha_strategy === :adaptive_scalar
             min(alpha_warm, max(options.alpha_floor, majorization_factor / (2.0 * lambda)))
         else
             max(options.alpha_floor, majorization_factor / (2.0 * lambda))
         end
+
         alpha_initial = alpha
+
+        # Reset multi-secant information at each continuation stage/out iteration
+        secants = options.alpha_strategy === :adaptive_diagonal ? _PetraSecantHistory(n) : nothing
 
         data = _petra_moreau_data(p, x, lambda)
         nbatches += 1
@@ -379,10 +464,13 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
             # Scalar alpha for existing strategies, vector D for portfolio diagonal.
             stab = if options.alpha_strategy === :portfolio_diagonal
                 _petra_portfolio_diagonal(p, data, lambda, alpha)
+            elseif options.alpha_strategy === :adaptive_diagonal
+                alpha .+ 0.5 .* secants.h
             else
-                 alpha
+                alpha
             end
 
+            
             xtrial = try
                 Float64.(petra_master_step(p, x, data.g, stab, master_context))
             catch err
@@ -443,7 +531,7 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
             linear_term = dot(data.g, d)
 
             # For scalar stabilization:
-            quadratic_term = alpha * sqstep
+            quadratic_term = dot(d, stab .* d)
 
             #  diagonal stabilization, use instead:
             # quadratic_term = dot(d, stab .* d)
@@ -542,9 +630,8 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
                 #
                 # For adaptive scalar stabilization, try obtaining a
                 # larger, numerically resolvable step.
-                if (options.alpha_strategy === :adaptive_scalar || options.alpha_strategy === :portfolio_diagonal) &&
-                   consecutive_inconclusive <= options.max_numerical_retries   # &&
-                   #alpha >= options.alpha_min
+                if options.alpha_strategy in (:adaptive_scalar, :portfolio_diagonal, :adaptive_diagonal) &&
+                   consecutive_inconclusive <= options.max_numerical_retries   # && alpha >= options.alpha_min
 
                     #alpha_new = max(options.alpha_min, options.alpha_shrink * alpha)
                     alpha_new = max(options.alpha_min, alpha)
@@ -578,6 +665,11 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
            end
 
            if accepted
+                # Store secant vectors
+                if options.alpha_strategy === :adaptive_diagonal && decision === :accept
+                    _petra_add_secant!(secants, x, xtrial, data.g, trial_data.g, options, majorization_factor / lambda)
+                end
+
                 # Accept: reuse trial oracle data.
                 x = xtrial; data = trial_data; last_data = data
                 last_lagged = opt_lag #2.0 * alpha * norm(d, Inf)
@@ -586,8 +678,10 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
                 # Stabilization proposed for the next iteration.
                 alpha_next = alpha
 
-                if options.alpha_strategy === :adaptive_scalar && ratio >= options.rho_good
-                    alpha_next = max(options.alpha_min, options.alpha_shrink * alpha)
+                if options.alpha_strategy in (:adaptive_scalar, :adaptive_diagonal) &&
+                   isfinite(ratio) && ratio >= options.rho_good
+                    floor = options.alpha_strategy === :adaptive_diagonal ? max(options.alpha_min, options.sigma) : options.alpha_min
+                    alpha_next = max(floor, options.alpha_shrink * alpha)
                 end
 
                 # IMPORTANT: convergence uses alpha from the step just solved, not alpha_next.
@@ -598,7 +692,7 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
                         stage_status = :converged
                     end
                     # Save the stabilization param to the next continuation stage.
-                    if options.alpha_strategy === :adaptive_scalar
+                    if options.alpha_strategy in (:adaptive_scalar, :adaptive_diagonal)
                         alpha_warm = alpha_next
                     end
                     break
@@ -607,7 +701,7 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
                 alpha = alpha_next
            else
                 # Rejected: retain x and its proximal data.
-                growth = options.alpha_strategy === :adaptive_scalar ? options.alpha_grow : 2.0
+                growth = options.alpha_strategy in (:adaptive_scalar, :adaptive_diagonal) ? options.alpha_grow : 2.0
                 alpha *= growth
 
                 nrejected += 1; stage_rejected += 1; consecutive_rejections += 1
@@ -621,9 +715,11 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
  
         # Save stabilization even if a continuation stage stops because max_inner was reached, in case
         # the :max_inner stopping criteria is disabled below
-        if options.alpha_strategy === :adaptive_scalar
+        if options.alpha_strategy in (:adaptive_scalar, :adaptive_diagonal) &&
+           !(stage_status in (:converged, :approx_stationarity))
             alpha_warm = alpha
         end
+        
         push!(stage_history, (stage=stage, lambda=lambda, epsilon=epsilon, status=stage_status, x=copy(x),
                               moreau_objective=data.objective, lagged_residual=last_lagged,
                               max_prox_displacement=data.max_displacement, accepted=stage_accepted,
