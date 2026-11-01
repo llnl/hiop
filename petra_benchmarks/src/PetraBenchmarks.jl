@@ -22,6 +22,7 @@ include("solvers/petra_portfolio_jump.jl")
 
 include("problems/scacopf.jl")
 include("adapters/exajugo.jl")
+include("adapters/exajugo_petra.jl")
 
 export AbstractBenchmark, AbstractScalarOracle, WeightedAbsolute, AffineScenario
 export scalar_value, scalar_prox, scenario_value, prox_scenario
@@ -39,5 +40,9 @@ export portfolio_from_csv
 export portfolio_native_model, solve_portfolio_native
 export PetraOptions, petra_master_step, solve_petra
 
-export SCACOPFProblem, SCACOPFScenario, scacopf
+export SCACOPFBackend, SCACOPFProblem, SCACOPFScenario, scacopf
+export scacopf
+export scacopf_smooth_value, scacopf_base_solution
+export scacopf_fixed_contingency, scacopf_master_violation
+export scacopf_extensive_reference
 end # module

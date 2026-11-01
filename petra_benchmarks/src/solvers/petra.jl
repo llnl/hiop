@@ -99,11 +99,13 @@ struct PetraMasterFailure <: Exception
 end
 Base.showerror(io::IO, err::PetraMasterFailure) = print(io, err.message)
 
-# State of the master NLP used to solve the step. By default, it is stateless. Specialize this hook
+# State of the master NLP used to solve the step. Specialize this hook
 # to build a reusable solver/model once per complete solve_petra call.
 petra_master_context(::AbstractBenchmark) = nothing
-petra_master_step(p::AbstractBenchmark, xc, g, alpha, context) =
-    petra_master_step(p, xc, g, alpha)
+petra_master_step(p::AbstractBenchmark, xc, g, alpha, context) = petra_master_step(p, xc, g, alpha)
+
+# Optional hook for iteration-level original-objective logging.
+_petra_original_for_log(p, x) = original_objective(p, x)
 
 # The :paper value N is a general valid coefficient of the majorizing
 # quadratic N*||d||^2/(2lambda). For an affine scenario
@@ -589,7 +591,7 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
 
             # Diagnostics <-- verbose mode.
             if options.verbose
-                f_orig = original_objective(p, xtrial)
+                f_orig = _petra_original_for_log(p, xtrial)
 
                 opt_master = _petra_master_optimality(p, x, data.g, stab, xtrial, master_context)
 
