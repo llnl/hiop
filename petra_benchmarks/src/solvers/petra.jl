@@ -23,7 +23,7 @@ Base.@kwdef struct PetraOptions
     #used only by :adaptive_scalar
     alpha_start::Float64 = 1.0
     alpha_min::Float64 = 1e-4
-    alpha_shrink::Float64 = 0.95
+    alpha_shrink::Float64 = 0.5
     alpha_grow::Float64 = 2.0
     rho_good::Float64 = 0.8
     max_inner::Int = 300
@@ -331,6 +331,7 @@ function _petra_ratio_decision(pred::Real, ared::Real, sqstep::Real, sigma::Real
 
     # The master model has a reliably negative denominator.
     if den < -err_den
+        println("master_no_descent: den is negative.", den, "    err_den is ", err_den)
         return (:master_no_descent, NaN)
     end
 
@@ -461,7 +462,7 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
 
         for k in 1:options.max_inner
             ninner += 1
-            # Scalar alpha for existing strategies, vector D for portfolio diagonal.
+            # Scalar or diagonal alpha, based on alpha strategies
             stab = if options.alpha_strategy === :portfolio_diagonal
                 _petra_portfolio_diagonal(p, data, lambda, alpha)
             elseif options.alpha_strategy === :adaptive_diagonal
@@ -470,7 +471,6 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
                 alpha
             end
 
-            
             xtrial = try
                 Float64.(petra_master_step(p, x, data.g, stab, master_context))
             catch err
@@ -545,6 +545,7 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
                        abs(linear_term) + abs(quadratic_term))
 
             if !isfinite(pred) || pred < -max(options.model_decrease_tol, err_pred)
+                println("master_no_descent: pred is ", pred)
                 stage_status = :master_no_descent
                 break
             end
@@ -580,6 +581,12 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
             stab_grad = (2.0 .* stab) .* d
             opt_lag = norm(stab_grad, Inf)
 
+            if options.verbose && options.alpha_strategy === :adaptive_diagonal
+                j = argmax(abs.(stab_grad))
+                Printf.@printf("  lag_max: j=%d gamma=%.3e D_j=%.3e  d_j=%.3e lag_j=%.3e\n",
+                               j, alpha, stab[j], d[j], abs(stab_grad[j]))
+            end
+
             # Diagnostics <-- verbose mode.
             if options.verbose
                 f_orig = original_objective(p, xtrial)
@@ -596,16 +603,6 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
                 opt_prox = NaN
             end
 
-            # detects blocking/stiff coordinates for the Portfolio -> used for diagnostics 
-            #if options.verbose && p isa SparsePortfolioProblem
-            #    j = argmax(abs.(@view d[1:p.n_assets]))
-            #    qold = data.proximal_results[j]
-            #    qnew = trial_data.proximal_results[j]
-            #    if iszero(qold.scalar_point) && iszero(qnew.scalar_point)
-            #        mismatch = abs(1/lambda - 2alpha) * abs(d[j])
-            #        Printf.@printf("  stiff_coord=%d  x=%.3e  d=%.3e 2alpha*lambda=%.3f  mismatch=%.3e\n", j, x[j], d[j], 2alpha*lambda, mismatch)
-            #    end
-            #end
             alpha_report = stab isa Real ? Float64(stab) : maximum(stab)
             entry = (iter=ninner, stage=stage, inner=k, f_orig=f_orig, f_lambda=trial_data.objective,
                      m_trial=m_trial, step_inf=step_inf, opt_master=opt_master, opt_lag=opt_lag,
@@ -625,11 +622,8 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
                 stage_inconclusive += 1
                 consecutive_inconclusive += 1
 
-                # A tiny unresolved reduction is not evidence that
-                # the stabilization must increase.
-                #
-                # For adaptive scalar stabilization, try obtaining a
-                # larger, numerically resolvable step.
+                # A tiny unresolved reduction is not evidence that the stabilization must change.
+
                 if options.alpha_strategy in (:adaptive_scalar, :portfolio_diagonal, :adaptive_diagonal) &&
                    consecutive_inconclusive <= options.max_numerical_retries   # && alpha >= options.alpha_min
 
@@ -645,6 +639,7 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
                 else
                     
                     # No reliable ratio -> check if the step is zero in floating point arithmetic
+                    #fixme: need to introduce master KKT tolerance and fixed-lambda acceptable stationarity tolerance
                     if step_inf <= 1e-10 && opt_lag <= 1e-3
                         Printf.@printf("  approximate stationarity\n")
                         stage_status = :approx_stationarity
@@ -657,6 +652,7 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
                    
                 end
            elseif decision === :master_no_descent || decision === :invalid
+               println("master_no_descent: decision is ", decision)
                stage_status = :master_no_descent
                break
            else
@@ -700,6 +696,13 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
 
                 alpha = alpha_next
            else
+                @assert decision === :reject "check this: it may be worth to save secants for when decision is not :reject"
+                
+                # add secants even when the steps are rejections
+                if options.alpha_strategy === :adaptive_diagonal && decision === :reject
+                   _petra_add_secant!(secants, x, xtrial, data.g, trial_data.g, options, majorization_factor / lambda)
+                end
+                
                 # Rejected: retain x and its proximal data.
                 growth = options.alpha_strategy in (:adaptive_scalar, :adaptive_diagonal) ? options.alpha_grow : 2.0
                 alpha *= growth
