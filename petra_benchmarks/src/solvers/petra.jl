@@ -378,7 +378,8 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
     _check_petra_options(options)
 
     if options.alpha_strategy === :adaptive_diagonal &&
-       !(p isa Union{AbsoluteRecourseProblem, CapacityRecourseProblem, DoubleWellProblem, SparsePortfolioProblem})
+       !(p isa Union{AbsoluteRecourseProblem, CapacityRecourseProblem, DoubleWellProblem,
+                     SparsePortfolioProblem, SCACOPFProblem})
         throw(ArgumentError("adaptive_diagonal requires a vector-capable PETRA master solver"))
     end
 

@@ -1,4 +1,17 @@
 #!/usr/bin/env julia
+# Locate ExaJuGO before importing its module.
+exajugo_root = get(ENV, "EXAJUGO_ROOT", joinpath(homedir(), "exajugo"))
+
+isfile(joinpath(exajugo_root, "Project.toml")) ||
+    error("ExaJuGO Project.toml not found")
+
+isfile(joinpath(exajugo_root, "modules", "SCACOPFSubproblems.jl")) ||
+    error("Invalid EXAJUGO_ROOT: $exajugo_root")
+
+# Make ExaJuGO dependencies accessible.
+push!(LOAD_PATH, exajugo_root)
+# Make its standalone Julia module accessible.
+pushfirst!(LOAD_PATH, joinpath(exajugo_root, "modules"))
 
 using PetraBenchmarks
 using SCACOPFSubproblems
@@ -7,10 +20,7 @@ using JuMP, Ipopt, Printf
 const PB = PetraBenchmarks
 const EXA = SCACOPFSubproblems
 
-root = get(ENV, "EXAJUGO_ROOT", nothing)
-isnothing(root) && error("Set EXAJUGO_ROOT to your ExaJuGO checkout")
-
-case_dir = joinpath(root, "examples", "500bus")
+case_dir = joinpath(exajugo_root, "examples", "500bus")
 
 psd = EXA.SCACOPFdata(raw_filename=joinpath(case_dir, "case.raw"),
                       rop_filename=joinpath(case_dir, "case.rop"),
@@ -78,10 +88,12 @@ println("Proximal oracle: OK")
 # Short PETRA smoke test.
 # ---------------------------------------------------
 
-opts = PB.PetraOptions(lambda_schedule=[1e-3], epsilon_schedule=[1e-2], max_inner=5,
-                       alpha_strategy=:paper, alpha_floor=1.0,
-                       feasibility_tol=1e-5, verbose=true)
-
+opts = PB.PetraOptions(lambda_schedule = [1e-3, 1e-4], epsilon_schedule = [1e-2, 1e-3], max_inner = 10,
+                       alpha_strategy = :adaptive_diagonal, alpha_start = 0.2, alpha_min = 1e-6,
+                       alpha_shrink = 0.5, alpha_grow = 2.0,
+                       sigma = 0.1, rho_bar = 0.1, rho_good = 0.8,
+                       secant_memory = 1, secant_ridge = 0.1, secant_step_tol = 1e-9,
+                       feasibility_tol = 1e-5, verbose = true)
 println("\nRunning PETRA ...")
 
 petra_time = @elapsed result = PB.solve_petra(p; x0=p.x0, options=opts)

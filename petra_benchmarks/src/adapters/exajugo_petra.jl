@@ -1,10 +1,9 @@
-# PETRA-specific callbacks for SC-ACOPF.
+# ProxDec-specific callbacks for SC-ACOPF.
 # Shared ExaJuGO functionality is in exajugo.jl.
 
 petra_master_context(p::SCACOPFProblem) = p.backend.master
 
 function petra_master_step(p::SCACOPFProblem, xc, g, alpha, ctx)
-    alpha isa Real || throw(ArgumentError("SC-ACOPF currently supports scalar stabilization only"))
     try
         r = p.backend.exa.reoptimize_proxdec_master!(ctx, xc, g, alpha)
         return r.x
@@ -18,5 +17,5 @@ end
 _petra_master_optimality(::SCACOPFProblem, xc, g, alpha, y, ctx) = NaN
 
 # Avoid expensive fixed-dispatch contingency solves
-# purely for PETRA's verbose F_orig column.
+# purely for verbose F_orig column.
 _petra_original_for_log(::SCACOPFProblem, x::AbstractVector{<:Real}) = NaN
