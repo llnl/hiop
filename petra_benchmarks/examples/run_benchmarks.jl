@@ -600,7 +600,25 @@ function main(args::Vector{String}=ARGS)
         usage()
         return 0
     end
+    if cfg.problem === :scacopf
+        # Load ExaJuGO before entering the benchmark
+        # execution call chain.
+        try
+            SCACOPFSetup.load_exajugo(cfg.exajugo_root)
+        catch err
+            println(stderr, "Failed to load ExaJuGO: ", sprint(showerror, err))
+            return 2
+        end
 
+        # Ensure that ExaJuGO's newly loaded methods are visible throughout benchmarks.
+        return Base.invokelatest(_run_benchmarks, cfg)
+    end
+
+    # Original benchmarks require no dynamic import.
+    return _run_benchmarks(cfg)
+end
+
+function _run_benchmarks(cfg::Config)
     rows = NamedTuple[]
     failures = 0
     for kind in selected_problems(cfg)

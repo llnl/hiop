@@ -23,8 +23,12 @@ function load_exajugo(root=nothing)
     modules in LOAD_PATH || pushfirst!(LOAD_PATH, modules)
     path in LOAD_PATH || push!(LOAD_PATH, path)
 
-    @eval import SCACOPFSubproblems
-    return SCACOPFSubproblems
+    # Import only once to avoid another dynamic import inside this module
+    if !isdefined(@__MODULE__, :SCACOPFSubproblems)
+       @eval import SCACOPFSubproblems
+    end
+
+    return getfield(@__MODULE__, :SCACOPFSubproblems)
 end
 
 # Search the requested directory and up to two parents,
