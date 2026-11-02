@@ -16,6 +16,10 @@ module BenchmarkRunner
 
 using PetraBenchmarks
 using LinearAlgebra
+using JuMP, Ipopt
+
+include(joinpath(@__DIR__, "scacopf_setup.jl"))
+using .SCACOPFSetup
 
 const PROBLEMS = (:absolute, :capacity, :doublewell, :portfolio)
 const SOLVERS = (:als, :alps, :petra)
@@ -51,6 +55,17 @@ Base.@kwdef mutable struct Config
     upper_file::Union{Nothing,String} = nothing
     target_return::Union{Nothing,Float64} = nothing
     al_trace::Bool = false
+    # ExaJuGO / SC-ACOPF instance
+    exajugo_root::Union{Nothing,String} = nothing
+    case_dir::Union{Nothing,String} = nothing
+    raw_file::Union{Nothing,String} = nothing
+    rop_file::Union{Nothing,String} = nothing
+    inl_file::Union{Nothing,String} = nothing
+    con_file::Union{Nothing,String} = nothing
+
+    # Optional explicit PETRA continuation schedules
+    petra_lambdas::Union{Nothing,Vector{Float64}} = nothing
+    petra_epsilons::Union{Nothing,Vector{Float64}} = nothing    
 end
 
 function usage(io::IO=stdout)
@@ -96,18 +111,31 @@ function usage(io::IO=stdout)
       --upper-file PATH          Upper asset bounds CSV
       --target-return FLOAT      Minimum portfolio return
 
+    SC-ACOPF options:
+      --exajugo-root PATH       ExaJuGO checkout (or EXAJUGO_ROOT)
+      --case-dir PATH           Instance directory
+      --raw-file PATH           RAW network file
+      --rop-file PATH           ROP dispatch/cost file
+      --inl-file PATH           INL governor-response file
+      --con-file PATH           CON contingency file
+
     PETRA options:
       --petra-schedule smoke|full   Default smoke: lambda=[0.2], eps=[1e-3]
                                     Full: [0.2,0.05,0.01,0.002],
                                           [1e-3,1e-4,1e-5,1e-6]
-      --petra-max-inner INT        Max inner iterations per continuation stage
-      --alpha-strategy paper|affine_tight|adaptive_scalar|portfolio_diagonal
-                                   Stabilization update stategy
-      --petra-alpha-start FLOAT   Initial alpha for adaptive mode or gamma for portfolio_diagonal)(default 1)
-      --petra-alpha-min FLOAT     Adaptive lower bound (default 1e-4)
+      --petra-max-inner INT         Max inner iterations per continuation stage
+      --alpha-strategy paper|affine_tight|adaptive_scalar|portfolio_diagonal|adaptive_diagonal
+                                    Stabilization update stategy
+      --petra-alpha-start FLOAT     Initial alpha for adaptive mode or gamma for portfolio_diagonal)(default 1)
+      --petra-alpha-min FLOAT       Adaptive lower bound (default 1e-4)
+      --petra-lambda-schedule CSV   Explicit lambda values
+      --petra-epsilon-schedule CSV  Explicit epsilon values
 
     Notes: Option `--petra-schedule smoke` is a single-stage implementation
     test, not convergence of the continuation algorithm as lambda -> 0.
+
+    `problem=all` selects only the small scale benchmarks: absolute, capacity, doublewell, and
+    portfolio, while `problem=scacopf` must be selected explicitly.
 
     Portfolio defaults to synthetic data; it does not reproduce published
     200-asset De Marchi instances unless the published data are supplied.
@@ -125,6 +153,7 @@ function _problem(s::AbstractString)
                    "c"=>:doublewell, "doublewell"=>:doublewell,
                    "double_well"=>:doublewell,
                    "portfolio"=>:portfolio, "sparse_portfolio"=>:portfolio,
+                   "scacopf"  => :scacopf, "sc_acopf" => :scacopf,
                    "all"=>:all)
     haskey(aliases, name) || throw(ArgumentError("unknown problem: $s"))
     return aliases[name]
@@ -142,7 +171,10 @@ function _key_value!(values::Dict{String,String}, key::AbstractString, value::Ab
                "--tol", "--maxit", "--petra-schedule", "--petra-max-inner",
                "--alpha-strategy", "--petra-alpha-start", "--petra-alpha-min",
                "--petra-secant-memory", "--petra-secant-ridge", "--petra-secant-step-tol",
-               "--csv", "--q-file", "--returns-file", "--upper-file", "--target-return")
+               "--csv", "--q-file", "--returns-file", "--upper-file", "--target-return",
+               "--exajugo-root", "--case-dir",
+               "--raw-file", "--rop-file", "--inl-file", "--con-file",
+               "--petra-lambda-schedule", "--petra-epsilon-schedule")
     key in allowed || throw(ArgumentError("unknown option $key; use --help"))
     isempty(value) && throw(ArgumentError("missing value for $key"))
     haskey(values, key) && throw(ArgumentError("duplicate option $key"))
@@ -216,6 +248,23 @@ function parse_cli(args::Vector{String})
     cfg.target_return = haskey(values, "--target-return") ?
                         parse(Float64, values["--target-return"]) : nothing
 
+    # SC-ACOPF input files
+    cfg.exajugo_root = get(values, "--exajugo-root", nothing)
+    cfg.case_dir = get(values, "--case-dir", nothing)
+    cfg.raw_file = get(values, "--raw-file", nothing)
+    cfg.rop_file = get(values, "--rop-file", nothing)
+    cfg.inl_file = get(values, "--inl-file", nothing)
+    cfg.con_file = get(values, "--con-file", nothing)
+
+    # Explicit continuation schedules: comma-separated floats.
+    if haskey(values, "--petra-lambda-schedule")
+        cfg.petra_lambdas = parse.(Float64, split(values["--petra-lambda-schedule"], ','))
+    end
+
+    if haskey(values, "--petra-epsilon-schedule")
+        cfg.petra_epsilons = parse.(Float64, split(values["--petra-epsilon-schedule"], ','))
+    end
+
     cfg.nscenarios > 0 || throw(ArgumentError("--scenarios must be positive"))
     cfg.nassets >= 3 || throw(ArgumentError("--nassets must be at least 3"))
     isfinite(cfg.alpha) && cfg.alpha >= 0 ||
@@ -254,6 +303,41 @@ function parse_cli(args::Vector{String})
     if any(supplied) && cfg.problem != :portfolio
         throw(ArgumentError("published portfolio data are only valid with problem=portfolio"))
     end
+
+    # Both custom schedules must be supplied together.
+    if (cfg.petra_lambdas === nothing) != (cfg.petra_epsilons === nothing)
+        throw(ArgumentError("Specify both --petra-lambda-schedule " * "and --petra-epsilon-schedule"))
+    end
+
+    if cfg.petra_lambdas !== nothing
+        lambda = cfg.petra_lambdas
+        epsilon = cfg.petra_epsilons
+
+        length(lambda) == length(epsilon) && !isempty(lambda) ||
+            throw(ArgumentError("Continuation schedules must have equal nonzero length"))
+
+        all(v -> isfinite(v) && v > 0, lambda) || throw(ArgumentError("Invalid lambda schedule"))
+
+        all(v -> isfinite(v) && v > 0, epsilon) || throw(ArgumentError("Invalid epsilon schedule"))
+
+        all(diff(lambda) .< 0) || throw(ArgumentError("Lambda schedule must be strictly decreasing"))
+
+        all(diff(epsilon) .<= 0) || throw(ArgumentError("Epsilon schedule must be nonincreasing"))
+    end
+
+    # SC-ACOPF currently supports PETRA only.
+    # ALS/ALPS support can be enabled here later.
+    if cfg.problem === :scacopf
+        cfg.solver === :petra ||
+            throw(ArgumentError("SC-ACOPF currently supports solver=petra only; " * "ALS/ALPS integration is pending"))
+
+        cfg.alpha_strategy in (:paper, :adaptive_scalar, :adaptive_diagonal) ||
+            throw(ArgumentError("Unsupported SC-ACOPF alpha strategy"))
+
+        (cfg.case_dir !== nothing || cfg.raw_file !== nothing) ||
+            throw(ArgumentError("SC-ACOPF requires --case-dir or --raw-file"))
+    end
+
     return cfg
 end
 
@@ -276,6 +360,30 @@ function make_problem(kind::Symbol, cfg::Config)
         end
         return synthetic_portfolio(n=cfg.nassets, seed=cfg.seed,
                                    alpha=cfg.alpha, upper=cfg.asset_upper)
+
+    elseif kind === :scacopf
+
+        # Load ExaJuGO and its project dependencies for an SC-ACOPF run.
+        exa = SCACOPFSetup.load_exajugo(cfg.exajugo_root)
+
+        # Load exactly one shared data instance.
+        psd, files = SCACOPFSetup.load_instance(exa; case_dir=cfg.case_dir, raw_file=cfg.raw_file,
+                                                rop_file=cfg.rop_file, inl_file=cfg.inl_file,
+                                                con_file=cfg.con_file)
+
+        # Match the optimizer configuration used by the existing SC-ACOPF smoke test.
+       optimizer = JuMP.optimizer_with_attributes(Ipopt.Optimizer, "print_level" => 0, "tol" => 1e-7,
+                                                  "constr_viol_tol" => 1e-7, "max_iter" => 1000)
+
+        # The initial cached proximal coefficient corresponds to the solver's first lambda.
+        options = petra_options(cfg)
+        lambda0 = first(options.lambda_schedule)
+
+        println("Initial ProxDec lambda: ", lambda0)
+
+        p = PetraBenchmarks.scacopf(exa, psd, optimizer; lambda_init=lambda0, use_huber_like_penalty=true)
+
+        return p
     end
     throw(ArgumentError("unsupported problem kind: $kind"))
 end
@@ -310,6 +418,32 @@ function petra_options(cfg::Config)
         
         maxinner = cfg.petra_max_inner == 0 ? 3000 : cfg.petra_max_inner
     end
+
+    # SC-ACOPF needs different cost/dispatch scaling from the small synthetic benchmarks due to
+    # lower accuracy in the proximal subproblems (done via NLP solvers)
+    if cfg.problem === :scacopf
+
+        if cfg.petra_schedule === :smoke
+            lambda = [1e-3]
+            eps = [1e-2]
+
+        else
+            # Schedule for SC-ACOPF.
+            lambda = [1e-3, 1e-4, 1e-5, 1e-6]
+            eps =    [1e-2, 1e-3, 1e-4, 1e-5]
+        end
+
+        if cfg.petra_max_inner == 0
+            maxinner = cfg.petra_schedule === :smoke ? 10 : 100
+        end
+    end
+
+    # Explicit CLI schedules override all presets.
+    if cfg.petra_lambdas !== nothing
+        lambda = cfg.petra_lambdas
+        eps = cfg.petra_epsilons
+    end
+
     return PetraBenchmarks.PetraOptions(lambda_schedule=lambda, epsilon_schedule=eps,
                                          max_inner=maxinner, alpha_strategy=cfg.alpha_strategy,
                                          alpha_start=cfg.petra_alpha_start, alpha_min=cfg.petra_alpha_min,
@@ -376,8 +510,17 @@ function show_result(kind::Symbol, solver::Symbol, p, cfg::Config, result)
             println(rpad(string(k), 32), v)
         end
     end
-    println(rpad("x", 32), getfield_or(result, :x))
 
+    if kind === :scacopf
+        x = getfield_or(result, :x)
+        if x !== missing
+            println(rpad("master dimension", 32), length(x))
+            println(rpad("generator dispatch", 32), x[p.backend.dispatch])
+        end
+    else
+        println(rpad("x", 32), getfield_or(result, :x))
+    end
+    
     ref = reference_data(kind, p, cfg)
     if ref !== nothing
         xref, fref = ref
@@ -406,8 +549,7 @@ success_status(solver::Symbol, status) =
 
 function result_row(kind::Symbol, solver::Symbol, p, cfg::Config,
                     result, err::AbstractString="")
-    return (
-        problem=string(kind), solver=string(solver),
+    return (problem=string(kind), solver=string(solver),
         variant=problem_variant(kind, p, cfg),
         status=string(getfield_or(result, :status, :error)),
         objective=getfield_or(result, :objective),
@@ -424,8 +566,7 @@ function result_row(kind::Symbol, solver::Symbol, p, cfg::Config,
         final_lambda=getfield_or(result, :final_lambda),
         final_lagged_residual=getfield_or(result, :final_lagged_residual),
         x=string(getfield_or(result, :x)),
-        error=String(err),
-    )
+        error=String(err))
 end
 
 _csvvalue(v) = v === missing ? "" : string(v)
@@ -471,12 +612,24 @@ function main(args::Vector{String}=ARGS)
         end
         println("\n", repeat("=", 68))
         println("Problem: ", kind, " (", problem_variant(kind, p, cfg), ")")
-        println("Master variables: ", num_master(p),
-                "; scenarios: ", num_scenarios(p),
-                "; master equalities: ", num_equalities(p))
-        println("Starting objective: ", original_objective(p, p.x0),
-                "; master feasibility: ", master_feasibility(p, p.x0),
-                "; bound violation: ", bound_violation(p, p.x0))
+
+        if kind === :scacopf
+            println("Master variables: ", num_master(p), "; contingencies: ", num_scenarios(p),
+                    "; dispatch variables: ", length(p.backend.dispatch))
+
+            # Avoid expensive fixed-dispatch contingency solves before the algorithm has started.
+            println("Starting smooth objective: ", smooth_value(p, p.x0))
+            println("Starting master feasibility: ", master_feasibility(p, p.x0))
+            println("Starting bound violation: ", bound_violation(p, p.x0))
+        else
+            # Original small-scale benchmarks
+             println("Master variables: ", num_master(p), "; scenarios: ", num_scenarios(p),
+                     "; master equalities: ", num_equalities(p))
+
+            println("Starting objective: ", original_objective(p, p.x0), "; master feasibility: ",
+                    master_feasibility(p, p.x0), "; bound violation: ", bound_violation(p, p.x0))
+        end
+
         if cfg.dry_run
             continue
         end

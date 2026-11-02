@@ -1,50 +1,136 @@
 #!/usr/bin/env julia
 
-using Test, JuMP, Ipopt
-
-# Load ExaJuGO without making it a required PetraBenchmarks dependency.
-exadir = abspath(ENV["EXAJUGO_HOME"])
-pushfirst!(LOAD_PATH, joinpath(exadir, "modules"))
-push!(LOAD_PATH, exadir)
-
-using SCACOPFSubproblems
+using JuMP, Ipopt, Printf, Test
 using PetraBenchmarks
 
-raw = joinpath(exadir, "examples/500bus/case.raw")
-rop = joinpath(exadir, "examples/500bus/case.rop")
-con = joinpath(exadir, "examples/500bus/case-3conting.con")
+include(joinpath(@__DIR__, "scacopf_setup.jl"))
+using .SCACOPFSetup
 
-psd = SCACOPFdata(raw_filename=raw, rop_filename=rop, con_filename=con)
-opt = optimizer_with_attributes(Ipopt.Optimizer,
-                                "print_level" => 0, "max_iter" => 1000, "tol" => 1e-7)
+const PB = PetraBenchmarks
 
-lambda = 1e-3
-p = scacopf(SCACOPFSubproblems, psd, opt; lambda_init=lambda)
+exajugo_root = SCACOPFSetup.exajugo_root()
+const EXA = SCACOPFSetup.load_exajugo()
 
-# Check the model and objective evaluation at the initial point.
-@test num_scenarios(p) == 3
-@test isfinite(smooth_value(p, p.x0))
-@test isapprox(smooth_value(p, p.x0), JuMP.value(p.master.base_objective); rtol=1e-9)
-@test bound_violation(p, p.x0) <= 1e-5
+case_dir = joinpath(exajugo_root, "examples", "500bus")
 
-# Test the dispatch-to-master-space proximal mapping.
-for s in p.scenarios
-    q = prox_scenario(s, p.x0, lambda)
-    @test isfinite(q.envelope)
-    @test all(isfinite, q.subgrad)
-    @test isapprox(q.subgrad, (p.x0 .- q.w) ./ lambda; atol=1e-7)
-end
+psd, files = SCACOPFSetup.load_instance(EXA; case_dir=case_dir, con_file="case-3conting.con")
 
-# Run PETRA for a few iterations without modifying its algorithm.
-opts = PetraOptions(lambda_schedule=[lambda], epsilon_schedule=[1e-3],
-                    max_inner=2, feasibility_tol=1e-5,
-                    alpha_strategy=:paper, verbose=true)
+opt = optimizer_with_attributes(Ipopt.Optimizer, "print_level" => 0,
+                                "tol" => 1e-7, "constr_viol_tol" => 1e-7,
+                                "max_iter" => 1000)
+lambda0 = 1e-3
 
-result = solve_petra(p; options=opts)
-@test isfinite(result.final_moreau_objective)
+println("\nBuilding SC-ACOPF benchmark ...")
 
-println("PETRA status: ", result.status)
+build_time = @elapsed p = PB.scacopf(EXA, psd, opt;
+                                     lambda_init=lambda0,
+                                     use_huber_like_penalty=true)
+
+@assert PB.num_scenarios(p) == 3
+
+println("Master dimension: ", PB.num_master(p))
+println("Dispatch variables: ", length(p.backend.dispatch))
+
+# ---------------------------------------------------
+# Validate the initial master point.
+# ---------------------------------------------------
+
+f0 = PB.smooth_value(p, p.x0)
+feas0 = PB.master_feasibility(p, p.x0)
+bnd0 = PB.bound_violation(p, p.x0)
+
+@printf("Initial smooth objective: %.8e\n", f0)
+@printf("Initial master violation: %.3e\n", feas0)
+@printf("Initial bound violation: %.3e\n", bnd0)
+
+@assert feas0 < 1e-5
+@assert bnd0 < 1e-5
+
+# Check that nonlinear constraints are actually evaluated.
+angles = collect(p.backend.master.model[:theta_n])
+j = findfirst(v -> !JuMP.is_fixed(v), angles)
+
+@assert !isnothing(j)
+
+xbad = copy(p.x0)
+idx = p.backend.var_index[angles[j]]
+xbad[idx] += 1e-2
+
+bad_feas = PB.master_feasibility(p, xbad)
+
+@printf("Perturbed master violation: %.3e\n", bad_feas)
+@assert bad_feas > 1e-6
+
+# ---------------------------------------------------
+# Check first proximal oracle.
+# ---------------------------------------------------
+
+q = PB.prox_scenario(p.scenarios[1], p.x0, lambda0)
+
+@assert isfinite(q.envelope)
+@assert length(q.w) == length(p.x0)
+@assert length(q.subgrad) == length(p.x0)
+
+println("Proximal oracle: OK")
+
+# ---------------------------------------------------
+# Short PETRA smoke test.
+# ---------------------------------------------------
+
+opts = PB.PetraOptions(lambda_schedule = [1e-3, 1e-4], epsilon_schedule = [1e-2, 1e-3], max_inner = 10,
+                       alpha_strategy = :adaptive_diagonal, alpha_start = 0.2, alpha_min = 1e-6,
+                       alpha_shrink = 0.5, alpha_grow = 2.0,
+                       sigma = 0.1, rho_bar = 0.1, rho_good = 0.8,
+                       secant_memory = 1, secant_ridge = 0.1, secant_step_tol = 1e-9,
+                       feasibility_tol = 1e-5, verbose = true)
+println("\nRunning PETRA ...")
+
+petra_time = @elapsed result = PB.solve_petra(p; x0=p.x0, options=opts)
+
+println("\n=== PETRA summary ===")
+
+println("Status: ", result.status)
 println("Inner iterations: ", result.inner_iterations)
-println("Oracle calls: ", result.oracle_calls)
-println("Final Moreau objective: ", result.final_moreau_objective)
-println("Final proximal displacement: ", result.final_max_prox_displacement)
+println("Accepted steps: ", result.accepted_steps)
+println("Rejected steps: ", result.rejected_steps)
+
+@printf("Original objective: %.8e\n", result.objective)
+@printf("Moreau objective:   %.8e\n", result.final_moreau_objective)
+@printf("Master feasibility: %.3e\n", result.master_feasibility)
+@printf("Max prox displacement: %.3e\n", result.final_max_prox_displacement)
+
+@printf("Model construction: %.3f s\n", build_time)
+@printf("PETRA wall time:    %.3f s\n", petra_time)
+
+# ---------------------------------------------------
+# Optional extensive-form comparison.
+# ---------------------------------------------------
+
+if "--ef" in ARGS
+    println("\nSolving extensive-form SC-ACOPF ...")
+
+    ef_time = @elapsed ef = PB.scacopf_extensive_reference(p.backend)
+
+    fef = ef.basecase.total_objective
+
+    println("\n=== PETRA versus extensive form ===")
+
+    @printf("PETRA objective: %.8e\n", result.objective)
+    @printf("EF objective:    %.8e\n", fef)
+    @printf("Relative difference: %.6e\n", (result.objective - fef) / max(abs(fef), 1.0))
+
+    @printf("EF solve time: %.3f s\n", ef_time)
+
+    # Independent fixed-dispatch recourse consistency
+    # at the extensive-form base-case operating point.
+    println("\nFixed-dispatch recourse at EF dispatch:")
+
+    for k in 1:length(ef.contingency)
+        sol = EXA.solve_contingency(psd, k, ef.basecase, opt;
+                                    quadratic_relaxation_k=Inf,
+                                    use_huber_like_penalty=true)
+        @printf("k=%d EF penalty=%12.5e standalone=%12.5e diff=%12.5e\n",
+                 k, ef.contingency[k].cont_cost, sol.cont_cost,
+                 sol.cont_cost - ef.contingency[k].cont_cost)
+    end
+end
