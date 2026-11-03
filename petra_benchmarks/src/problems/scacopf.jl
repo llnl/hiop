@@ -74,7 +74,25 @@ function scacopf(exa::Module, psd, optimizer; lambda_init::Real=1e-3, use_huber_
     # Preserve the existing initialization strategy.
     # Reoptimize the base model with a small regularization to obtain a consistent full-state vector.
     starts = Float64[something(JuMP.start_value(v), 0.0) for v in vars]
-    x0 = exa.reoptimize_proxdec_master!(master, starts, zeros(n), 1.0).x
+
+    # Initialization of the cached master
+    rinit = exa.reoptimize_proxdec_master!(master, starts, zeros(n), 1.0)
+
+    # Constant omitted from the quadratic objective.
+    offset = sum(abs2, starts)
+
+    # Reconstruct the intended nonnegative stabilization.
+    quad = sum(abs2, rinit.x .- starts)
+
+    Printf.@printf("\n[MASTER-INIT] Ipopt objective = %+.10e\n", rinit.objective)
+    Printf.@printf("[MASTER-INIT] omitted constant = %.10e\n", offset)
+    Printf.@printf("[MASTER-INIT] Ipopt + constant = %+.10e\n", rinit.objective + offset)
+    Printf.@printf("[MASTER-INIT] smooth f0 = %.10e\n", rinit.base_value)
+    Printf.@printf("[MASTER-INIT] stabilization = %.10e\n", quad)
+    Printf.@printf("[MASTER-INIT] reconstructed M = %.10e\n", rinit.master_value)
+    Printf.@printf("[MASTER-INIT] reconstruction error = %.3e\n", (rinit.objective + offset) - rinit.master_value)
+
+    x0 = rinit.x
 
     backend = SCACOPFBackend(psd, exa, optimizer, base, master,
                              dispatch, index, use_huber_like_penalty)

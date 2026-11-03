@@ -371,9 +371,8 @@ function make_problem(kind::Symbol, cfg::Config)
                                                 rop_file=cfg.rop_file, inl_file=cfg.inl_file,
                                                 con_file=cfg.con_file)
 
-        # Match the optimizer configuration used by the existing SC-ACOPF smoke test.
-       optimizer = JuMP.optimizer_with_attributes(Ipopt.Optimizer, "print_level" => 0, "tol" => 1e-7,
-                                                  "constr_viol_tol" => 1e-7, "max_iter" => 1000)
+        optimizer = JuMP.optimizer_with_attributes(Ipopt.Optimizer, "print_level" => 0, "tol" => 1e-9,
+                                                   "constr_viol_tol" => 1e-9, "max_iter" => 1000)
 
         # The initial cached proximal coefficient corresponds to the solver's first lambda.
         options = petra_options(cfg)
@@ -428,9 +427,13 @@ function petra_options(cfg::Config)
             eps = [1e-2]
 
         else
+            lambda = [1e-2, 5e-3, 1e-3, 5e-4, 1e-4, 5e-5, 1e-5]
+            eps    = [1e-1, 1e-1, 1e-1, 1e-1, 1e-1, 1e-1, 1e-1]
             # Schedule for SC-ACOPF.
-            lambda = [1e-3, 1e-4, 1e-5, 1e-6]
-            eps =    [1e-2, 1e-3, 1e-4, 1e-5]
+            lambda = [1e-2, 5e-3]#, 1e-3, 5e-4, 1e-4]
+            eps =    [1e-1, 5e-2]#, 4e-2, 3e-2, 1e-2]
+
+            
         end
 
         if cfg.petra_max_inner == 0
@@ -445,12 +448,13 @@ function petra_options(cfg::Config)
     end
 
     return PetraBenchmarks.PetraOptions(lambda_schedule=lambda, epsilon_schedule=eps,
-                                         max_inner=maxinner, alpha_strategy=cfg.alpha_strategy,
-                                         alpha_start=cfg.petra_alpha_start, alpha_min=cfg.petra_alpha_min,
-                                         secant_memory=cfg.petra_secant_memory,
-                                         secant_ridge=cfg.petra_secant_ridge,
-                                         secant_step_tol=cfg.petra_secant_step_tol,
-                                         verbose=cfg.verbose)
+                                        feasibility_tol = cfg.problem === :scacopf ? 1e-6 : 1e-8,
+                                        max_inner=maxinner, alpha_strategy=cfg.alpha_strategy,
+                                        alpha_start=cfg.petra_alpha_start, alpha_min=cfg.petra_alpha_min,
+                                        secant_memory=cfg.petra_secant_memory,
+                                        secant_ridge=cfg.petra_secant_ridge,
+                                        secant_step_tol=cfg.petra_secant_step_tol,
+                                        verbose=cfg.verbose)
 end
 
 function run_solver(kind::Symbol, solver::Symbol, p, cfg::Config)

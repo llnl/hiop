@@ -16,6 +16,24 @@ end
 # A sparse KKT diagnostic can be implemented later.
 _petra_master_optimality(::SCACOPFProblem, xc, g, alpha, y, ctx) = NaN
 
-# Avoid expensive fixed-dispatch contingency solves
-# purely for verbose F_orig column.
+# Avoid expensive fixed-dispatch contingency solves purely for verbose F_orig column.
 _petra_original_for_log(::SCACOPFProblem, x::AbstractVector{<:Real}) = NaN
+
+
+# Adaptive diagonal stabilization only on generator dispatch.
+function _petra_diagonal_stabilization(p::SCACOPFProblem, alpha::Real, h::AbstractVector{<:Real})
+    n = num_master(p)
+    length(h) == n || throw(DimensionMismatch("Invalid secant diagonal"))
+    D = zeros(Float64, n)
+    for j in p.backend.dispatch
+        D[j] = Float64(alpha) + 0.5 * h[j]
+    end
+    return D
+end
+
+function _petra_ratio_step_sq(p::SCACOPFProblem, d::AbstractVector, strategy::Symbol)
+    if strategy === :adaptive_diagonal
+        return sum(abs2, view(d, p.backend.dispatch))
+    end
+    return dot(d, d)
+end

@@ -15,7 +15,7 @@ Base.@kwdef struct PetraOptions
     lambda_schedule::Vector{Float64} = [0.2, 0.05, 0.01, 0.002]
     epsilon_schedule::Vector{Float64} = [1e-3, 1e-4, 1e-5, 1e-6]
     rho_bar::Float64 = 0.1
-    sigma::Float64 = 0.1
+    sigma::Float64 = 1.0
     ratio_noise_factor::Float64 = 32.0
     max_numerical_retries::Int = 6    
     alpha_floor::Float64 = 1.0
@@ -106,6 +106,14 @@ petra_master_step(p::AbstractBenchmark, xc, g, alpha, context) = petra_master_st
 
 # Optional hook for iteration-level original-objective logging.
 _petra_original_for_log(p, x) = original_objective(p, x)
+
+# Default: all master variables are stabilized.
+function _petra_diagonal_stabilization(p::AbstractBenchmark, alpha::Real, h::AbstractVector{<:Real})
+    return Float64(alpha) .+ 0.5 .* h
+end
+
+# Squared step used in the strengthened acceptance test.
+_petra_ratio_step_sq(p::AbstractBenchmark, d::AbstractVector, strategy::Symbol) = dot(d, d)
 
 # The :paper value N is a general valid coefficient of the majorizing
 # quadratic N*||d||^2/(2lambda). For an affine scenario
@@ -469,7 +477,8 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
             stab = if options.alpha_strategy === :portfolio_diagonal
                 _petra_portfolio_diagonal(p, data, lambda, alpha)
             elseif options.alpha_strategy === :adaptive_diagonal
-                alpha .+ 0.5 .* secants.h
+                #alpha .+ 0.5 .* secants.h
+                 _petra_diagonal_stabilization(p, alpha, secants.h)
             else
                 alpha
             end
@@ -526,6 +535,9 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
             # STEP
             d = xtrial .- x
             sqstep = dot(d, d)
+            
+            # SC-ACOPF diagonal mode uses only coupling displacement  in the strengthened-decrease denominator.
+            sqstep_ratio = _petra_ratio_step_sq(p, d, options.alpha_strategy)
 
             # Master model at the trial point.
             f_center = data.smooth
@@ -572,7 +584,7 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
                            data.value_error_bound +
                            trial_data.value_error_bound
 
-                decision, ratio = _petra_ratio_decision(pred, ared, sqstep,
+                decision, ratio = _petra_ratio_decision(pred, ared, sqstep_ratio,
                                                         options.sigma, options.rho_bar,
                                                         err_pred, err_ared)
             end
@@ -588,6 +600,10 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
                 j = argmax(abs.(stab_grad))
                 Printf.@printf("  lag_max: j=%d gamma=%.3e D_j=%.3e  d_j=%.3e lag_j=%.3e\n",
                                j, alpha, stab[j], d[j], abs(stab_grad[j]))
+
+                if p isa SCACOPFProblem && (k == 1 || k % 10 == 0)
+                    println("  lag_variable: ", JuMP.name(p.backend.master.vars[j]), " coupling=", j in p.backend.dispatch)
+                end
             end
 
             # Diagnostics <-- verbose mode.
