@@ -640,6 +640,13 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
 
                     Printf.@printf("  prox_diag: j=%d dg=%.3e stab_grad=%.3e residual=%.3e grad_old=%.3e grad_new=%.3e\n",
                                   j, dg[j], stab_grad[j], rprox[j], data.g[j], trial_data.g[j])
+
+                    valid_steps = [abs(sk[j]) for sk in secants.s if sk[j] != 0.0]
+                    nvalid = length(valid_steps)
+                    smin = isempty(valid_steps) ? NaN : minimum(valid_steps)
+                    smax = isempty(valid_steps) ? NaN : maximum(valid_steps)
+
+                    Printf.@printf("  SECANT VALID: j=%d nvalid=%d smin=%.3e smax=%.3e\n", j, nvalid, smin, smax)
                 end
 
                 if options.verbose && p isa SCACOPFProblem

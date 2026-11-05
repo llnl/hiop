@@ -332,23 +332,18 @@ function parse_cli(args::Vector{String})
             throw(ArgumentError("Continuation schedules must have equal nonzero length"))
 
         all(v -> isfinite(v) && v > 0, lambda) || throw(ArgumentError("Invalid lambda schedule"))
-
         all(v -> isfinite(v) && v > 0, epsilon) || throw(ArgumentError("Invalid epsilon schedule"))
-
         all(diff(lambda) .< 0) || throw(ArgumentError("Lambda schedule must be strictly decreasing"))
-
         all(diff(epsilon) .<= 0) || throw(ArgumentError("Epsilon schedule must be nonincreasing"))
     end
 
     # SC-ACOPF currently supports PETRA only.
     # ALS/ALPS support can be enabled here later.
     if cfg.problem === :scacopf
-        cfg.solver === :petra ||
-            throw(ArgumentError("SC-ACOPF currently supports solver=petra only; " * "ALS/ALPS integration is pending"))
-
-        cfg.alpha_strategy in (:paper, :adaptive_scalar, :adaptive_diagonal) ||
-            throw(ArgumentError("Unsupported SC-ACOPF alpha strategy"))
-
+        if cfg.solver in (:petra, :all)
+            cfg.alpha_strategy in (:paper, :adaptive_scalar, :adaptive_diagonal) ||
+                throw(ArgumentError("Unsupported SC-ACOPF alpha strategy"))
+        end
         (cfg.case_dir !== nothing || cfg.raw_file !== nothing) ||
             throw(ArgumentError("SC-ACOPF requires --case-dir or --raw-file"))
     end
@@ -448,8 +443,8 @@ function make_problem(kind::Symbol, cfg::Config)
         hsl_lib = "/usr/WS2/hiop/software/spack/opt/spack/linux-rhel8-icelake/gcc-10.3.1/coinhsl-2015.06.23-nszs3vct4qvtgythawqu2kdue5zx5pjj/lib/libcoinhsl.so"
         @assert isfile(hsl_lib) "HSL library not found: $hsl_lib"
 
-        optimizer = JuMP.optimizer_with_attributes(Ipopt.Optimizer, "print_level" => 0, "tol" => 1e-10,
-                                                   "constr_viol_tol" => 1e-10, "max_iter" => 1000,
+        optimizer = JuMP.optimizer_with_attributes(Ipopt.Optimizer, "print_level" => 0, "tol" => 1e-9,
+                                                   "constr_viol_tol" => 1e-9, "max_iter" => 1000,
                                                    "hsllib" => hsl_lib, "linear_solver" => "ma57",
                                                    "ma57_pivot_order" => 2)
 
@@ -457,9 +452,11 @@ function make_problem(kind::Symbol, cfg::Config)
         #                                           "constr_viol_tol" => 1e-9, "max_iter" => 1000)
 
         # The initial cached proximal coefficient corresponds to the solver's first lambda.
-        options = petra_options(cfg)
-        lambda0 = first(options.lambda_schedule)
-
+        lambda0 = if cfg.solver in (:petra, :all)
+            first(petra_options(cfg).lambda_schedule)
+        else
+            1e-3
+        end
         println("Initial ProxDec lambda: ", lambda0)
 
         p = PetraBenchmarks.scacopf(exa, psd, optimizer; lambda_init=lambda0,
@@ -513,7 +510,7 @@ function petra_options(cfg::Config)
             #lambda = [1e-2, 8e-3, 5e-3, 2e-3, 1.8e-3, 1e-3, 9.9e-4, 9.5e-4, 9e-4, 8e-4, 7e-4, 6e-4, 5e-4, 4e-4, 3e-4, 2e-4, 1e-4]
             #eps    = [1e-1, 1e-2, 1e-2, 1e-2, 1e-2,   1e-2, 1e-2,   1e-2,  1e-2, 1e-2, 1e-2, 1e-2, 1e-2, 1e-2, 1e-2, 1e-2, 1e-2]
             # bbb
-            lambda = [1e-6]#, 1e-8]
+            lambda = [1e-8]#, 1e-8]
             eps   =  [1e-2]#, 1e-2]
             # Schedule for SC-ACOPF.
             #lambda = [1e-2, 5e-3]#, 1e-3, 5e-4, 1e-4]
@@ -547,12 +544,16 @@ function run_solver(kind::Symbol, solver::Symbol, p, cfg::Config)
             error("solve_petra is not defined. Check solver include/exports in src/PetraBenchmarks.jl.")
         return PetraBenchmarks.solve_petra(p; options=petra_options(cfg))
     elseif solver === :als || solver === :alps
-        if kind === :portfolio
-            return solve_portfolio_native(p; method=solver, tol=cfg.tol,
-                                          maxit=cfg.maxit, verbose=cfg.verbose, al_trace=cfg.al_trace)
+
+        if kind === :scacopf
+            return solve_scacopf_bazinga(p; method=solver, tol=cfg.tol, maxit=cfg.maxit,
+                                         verbose=cfg.verbose, al_trace=cfg.al_trace)
+        elseif kind === :portfolio
+            return solve_portfolio_native(p; method=solver, tol=cfg.tol, maxit=cfg.maxit,
+                                          verbose=cfg.verbose, al_trace=cfg.al_trace)
         end
-        return solve_bazinga(p; method=solver, tol=cfg.tol,
-                             maxit=cfg.maxit, verbose=cfg.verbose, al_trace=cfg.al_trace)
+
+        return solve_bazinga(p; method=solver, tol=cfg.tol, maxit=cfg.maxit, verbose=cfg.verbose, al_trace=cfg.al_trace)
     end
     throw(ArgumentError("unsupported solver $solver"))
 end
