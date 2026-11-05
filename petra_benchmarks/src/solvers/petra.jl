@@ -422,7 +422,8 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
 
     # Carried between continuation stages for adaptive mode.
     alpha_warm = max(options.alpha_min, options.alpha_start)
-    
+    h_warm = zeros(Float64, n)
+
     ninner = 0; naccepted = 0; nrejected = 0; nbatches = 0
     n_inconclusive = 0
     
@@ -454,6 +455,12 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
 
         # Reset multi-secant information at each continuation stage/out iteration
         secants = options.alpha_strategy === :adaptive_diagonal ? _PetraSecantHistory(n) : nothing
+
+        if secants !== nothing && stage > 1
+            lambda_old = options.lambda_schedule[stage - 1]
+            scale = min(2.0, sqrt(lambda_old / lambda))
+            secants.h .= clamp.(scale .* h_warm, 0.0, majorization_factor / lambda)
+        end
 
         data = _petra_moreau_data(p, x, lambda)
         nbatches += 1
@@ -591,7 +598,9 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
 
             accepted = decision in (:accept, :zero_step)
 
-            step_inf = norm(d, Inf)
+            #step_inf = norm(d, Inf)
+            step_inf = if p isa SCACOPFProblem norm(d[p.backend.dispatch], Inf) else norm(d, Inf) end
+
             #opt_lag = 2.0 * alpha * step_inf
             stab_grad = (2.0 .* stab) .* d
             opt_lag = norm(stab_grad, Inf)
@@ -616,6 +625,49 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
                 #opt_prox = norm(trial_data.g .- data.g .- (2.0 * alpha) .* d, Inf)
                 opt_prox = norm(trial_data.g .- data.g .- stab_grad, Inf)
 
+                if options.verbose && p isa SCACOPFProblem
+                    dg = trial_data.g .- data.g
+                    rprox = dg .- stab_grad
+                    j = argmax(abs.(rprox))
+                    Printf.@printf("  CURV: j=%d gamma=%.3e D_j=%.3e h_j=%.3e d_j=%+.3e secant_pairs=%d\n",
+                                   j, alpha, stab[j], secants.h[j], d[j], length(secants.s))
+
+                    ss = sum((s[j]^2 for s in secants.s); init=0.0)
+                    sy = sum((s[j] * y[j] for (s, y) in zip(secants.s, secants.y)); init=0.0)
+
+                    Printf.@printf("  SECANT: j=%d pairs=%d ss=%.4e sy=%+.4e raw_slope=%+.4e\n",
+                                   j, length(secants.s), ss, sy, ss > 0 ? sy / ss : NaN)
+
+                    Printf.@printf("  prox_diag: j=%d dg=%.3e stab_grad=%.3e residual=%.3e grad_old=%.3e grad_new=%.3e\n",
+                                  j, dg[j], stab_grad[j], rprox[j], data.g[j], trial_data.g[j])
+                end
+
+                if options.verbose && p isa SCACOPFProblem
+                    I = p.backend.dispatch
+
+                    rprox = trial_data.g .- data.g .- stab_grad
+                    j = I[argmax(abs.(rprox[I]))]
+
+                    # Proximal copies at the two centers.
+                    z0 = data.proximal_results[1].w
+                    z1 = trial_data.proximal_results[1].w
+
+                    dg_j = trial_data.g[j] - data.g[j]
+                    dz_j = z1[j] - z0[j]
+                    slope = abs(d[j]) > 1e-10 ? dg_j / d[j] : NaN
+
+                    # Globally valid Moreau upper-model check (N=1).
+                    E0 = data.objective - data.smooth
+                    E1 = trial_data.objective - trial_data.smooth
+
+                    Vglobal = E1 - E0 - dot(data.g, d) - sum(abs2, d[I]) / (2 * lambda)
+
+                    # Monotonicity of an exact proximal mapping.
+                    mono = dot(z1[I] .- z0[I], d[I])
+
+                    Printf.@printf("  PROX CHECK: j=%d dj=%+.4e dzj=%+.4e dg/dj=%+.4e Vglobal=%+.4e mono=%+.4e\n",
+                                   j, d[j], dz_j, slope, Vglobal, mono)
+                end
             else
                 f_orig = NaN
                 opt_master = NaN
@@ -628,6 +680,9 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
                      opt_prox=opt_prox, delta=trial_data.max_displacement, lambda=lambda, alpha=alpha_report,
                      rho=ratio, accepted=accepted, predicted=pred, actual=ared, decision=decision)
 
+            if secants !== nothing
+                h_warm .= secants.h
+            end
             push!(iteration_history, entry)
 
             if options.verbose

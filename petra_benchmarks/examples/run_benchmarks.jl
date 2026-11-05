@@ -18,6 +18,8 @@ using PetraBenchmarks
 using LinearAlgebra
 using JuMP, Ipopt
 
+using Printf
+
 include(joinpath(@__DIR__, "scacopf_setup.jl"))
 using .SCACOPFSetup
 
@@ -65,7 +67,11 @@ Base.@kwdef mutable struct Config
 
     # Optional explicit PETRA continuation schedules
     petra_lambdas::Union{Nothing,Vector{Float64}} = nothing
-    petra_epsilons::Union{Nothing,Vector{Float64}} = nothing    
+    petra_epsilons::Union{Nothing,Vector{Float64}} = nothing
+
+    #SC-ACOPF options
+    minutes_since_base::Float64 = 5.0
+    ef::Bool = false
 end
 
 function usage(io::IO=stdout)
@@ -118,7 +124,8 @@ function usage(io::IO=stdout)
       --rop-file PATH           ROP dispatch/cost file
       --inl-file PATH           INL governor-response file
       --con-file PATH           CON contingency file
-
+      --ef                         Solve extensive-form SC-ACOPF after PETRA
+      --minutes-since-base FLOAT   Contingency response time (default 5.0)
     PETRA options:
       --petra-schedule smoke|full   Default smoke: lambda=[0.2], eps=[1e-3]
                                     Full: [0.2,0.05,0.01,0.002],
@@ -172,7 +179,7 @@ function _key_value!(values::Dict{String,String}, key::AbstractString, value::Ab
                "--alpha-strategy", "--petra-alpha-start", "--petra-alpha-min",
                "--petra-secant-memory", "--petra-secant-ridge", "--petra-secant-step-tol",
                "--csv", "--q-file", "--returns-file", "--upper-file", "--target-return",
-               "--exajugo-root", "--case-dir",
+               "--exajugo-root", "--case-dir", "--minutes-since-base", "--ef",
                "--raw-file", "--rop-file", "--inl-file", "--con-file",
                "--petra-lambda-schedule", "--petra-epsilon-schedule")
     key in allowed || throw(ArgumentError("unknown option $key; use --help"))
@@ -192,7 +199,7 @@ function parse_cli(args::Vector{String})
         if arg in ("-h", "--help")
             cfg.help = true
             return cfg
-        elseif arg in ("--verbose", "--al-trace", "--strict", "--check-reference", "--dry-run")
+        elseif arg in ("--verbose", "--al-trace", "--strict", "--check-reference", "--dry-run", "--ef")
             push!(flags, arg)
         elseif startswith(arg, "--")
             if occursin('=', arg)
@@ -237,6 +244,7 @@ function parse_cli(args::Vector{String})
     cfg.petra_secant_ridge = parse(Float64, get(values, "--petra-secant-ridge", "0.1"))
     cfg.petra_secant_step_tol = parse(Float64, get(values, "--petra-secant-step-tol", "1e-9"))    
     cfg.verbose = "--verbose" in flags
+    cfg.ef = "--ef" in flags
     cfg.al_trace = "--al-trace" in flags
     cfg.strict = "--strict" in flags
     cfg.check_reference = "--check-reference" in flags
@@ -248,13 +256,20 @@ function parse_cli(args::Vector{String})
     cfg.target_return = haskey(values, "--target-return") ?
                         parse(Float64, values["--target-return"]) : nothing
 
-    # SC-ACOPF input files
+    # SC-ACOPF input files and other options
     cfg.exajugo_root = get(values, "--exajugo-root", nothing)
     cfg.case_dir = get(values, "--case-dir", nothing)
     cfg.raw_file = get(values, "--raw-file", nothing)
     cfg.rop_file = get(values, "--rop-file", nothing)
     cfg.inl_file = get(values, "--inl-file", nothing)
     cfg.con_file = get(values, "--con-file", nothing)
+    cfg.minutes_since_base = parse(Float64, get(values, "--minutes-since-base", "5.0"))
+    isfinite(cfg.minutes_since_base) && cfg.minutes_since_base > 0 ||
+        throw(ArgumentError("--minutes-since-base must be positive"))
+
+    if cfg.ef && cfg.problem !== :scacopf
+        throw(ArgumentError("--ef is supported only for scacopf"))
+    end
 
     # Explicit continuation schedules: comma-separated floats.
     if haskey(values, "--petra-lambda-schedule")
@@ -344,6 +359,44 @@ end
 selected_problems(cfg::Config) = cfg.problem === :all ? PROBLEMS : (cfg.problem,)
 selected_solvers(cfg::Config) = cfg.solver === :all ? SOLVERS : (cfg.solver,)
 
+# Break ties between generators
+function break_generation_cost_ties!(psd; max_tie_per_mw=0.1)
+    @assert psd.G[1, :CTYP] != 1  # PWL cost formulation
+
+    # Group generators with identical epigraph cost functions.
+    groups = Dict{Any, Vector{Int}}()
+
+    for g in 1:size(psd.G, 1)
+        key = (Tuple(psd.G_epicost_slope[g]), Tuple(psd.G_epicost_intercept[g]))
+        push!(get!(groups, key, Int[]), g)
+    end
+
+    perturbed = 0
+
+    for group in values(groups)
+        length(group) <= 1 && continue
+
+        # Deterministic ordering.
+        sort!(group, by=g -> (psd.G[g, :Bus], string(psd.G[g, :BusUnitNum])))
+
+        for (i, g) in enumerate(group)
+            epsilon = max_tie_per_mw * (i - 1) / (length(group) - 1)
+
+            # Epigraph slopes use per-unit power.
+            psd.G_epicost_slope[g] .+= epsilon * psd.MVAbase
+
+            # Keep the stored PWL cost data consistent.
+            # Assign a new vector rather than mutating a
+            # potentially shared cost-table vector.
+            psd.G[g, :CostCi] = psd.G[g, :CostCi] .+ epsilon * psd.MVAbase .* psd.G[g, :CostPi]
+
+            perturbed += epsilon > 0
+        end
+    end
+    println("Generation cost tie-breaking: $perturbed generators modified")
+    return nothing
+end
+
 function make_problem(kind::Symbol, cfg::Config)
     if kind === :absolute
         return absolute_recourse()
@@ -371,8 +424,37 @@ function make_problem(kind::Symbol, cfg::Config)
                                                 rop_file=cfg.rop_file, inl_file=cfg.inl_file,
                                                 con_file=cfg.con_file)
 
-        optimizer = JuMP.optimizer_with_attributes(Ipopt.Optimizer, "print_level" => 0, "tol" => 1e-9,
-                                                   "constr_viol_tol" => 1e-9, "max_iter" => 1000)
+        break_generation_cost_ties!(psd; max_tie_per_mw=0.05)
+
+        # --------------------------------------------------
+        # Experimental scaling of physical violation penalties
+        # --------------------------------------------------
+        penalty_scales = Dict(
+            :P => 1.0,    # Active-power imbalance
+            :Q => 1.0,   # Reactive-power imbalance
+            :S => 1.0,   # Line and transformer overloads
+       )
+
+       for (kind, scale) in penalty_scales
+           psd.a[kind] *= scale
+           psd.b[kind] *= scale
+       end
+
+       println("SC-ACOPF penalty coefficients:")
+       for kind in (:P, :Q, :S)
+           println("  $kind: a=$(psd.a[kind]), b=$(psd.b[kind])")
+       end
+
+        hsl_lib = "/usr/WS2/hiop/software/spack/opt/spack/linux-rhel8-icelake/gcc-10.3.1/coinhsl-2015.06.23-nszs3vct4qvtgythawqu2kdue5zx5pjj/lib/libcoinhsl.so"
+        @assert isfile(hsl_lib) "HSL library not found: $hsl_lib"
+
+        optimizer = JuMP.optimizer_with_attributes(Ipopt.Optimizer, "print_level" => 0, "tol" => 1e-10,
+                                                   "constr_viol_tol" => 1e-10, "max_iter" => 1000,
+                                                   "hsllib" => hsl_lib, "linear_solver" => "ma57",
+                                                   "ma57_pivot_order" => 2)
+
+        #optimizer = JuMP.optimizer_with_attributes(Ipopt.Optimizer, "print_level" => 0, "tol" => 1e-9,
+        #                                           "constr_viol_tol" => 1e-9, "max_iter" => 1000)
 
         # The initial cached proximal coefficient corresponds to the solver's first lambda.
         options = petra_options(cfg)
@@ -380,7 +462,8 @@ function make_problem(kind::Symbol, cfg::Config)
 
         println("Initial ProxDec lambda: ", lambda0)
 
-        p = PetraBenchmarks.scacopf(exa, psd, optimizer; lambda_init=lambda0, use_huber_like_penalty=true)
+        p = PetraBenchmarks.scacopf(exa, psd, optimizer; lambda_init=lambda0,
+                                    use_huber_like_penalty=true, minutes_since_base=cfg.minutes_since_base)
 
         return p
     end
@@ -427,13 +510,14 @@ function petra_options(cfg::Config)
             eps = [1e-2]
 
         else
-            lambda = [1e-2, 5e-3, 1e-3, 5e-4, 1e-4, 5e-5, 1e-5]
-            eps    = [1e-1, 1e-1, 1e-1, 1e-1, 1e-1, 1e-1, 1e-1]
+            #lambda = [1e-2, 8e-3, 5e-3, 2e-3, 1.8e-3, 1e-3, 9.9e-4, 9.5e-4, 9e-4, 8e-4, 7e-4, 6e-4, 5e-4, 4e-4, 3e-4, 2e-4, 1e-4]
+            #eps    = [1e-1, 1e-2, 1e-2, 1e-2, 1e-2,   1e-2, 1e-2,   1e-2,  1e-2, 1e-2, 1e-2, 1e-2, 1e-2, 1e-2, 1e-2, 1e-2, 1e-2]
+            # bbb
+            lambda = [1e-6]#, 1e-8]
+            eps   =  [1e-2]#, 1e-2]
             # Schedule for SC-ACOPF.
-            lambda = [1e-2, 5e-3]#, 1e-3, 5e-4, 1e-4]
-            eps =    [1e-1, 5e-2]#, 4e-2, 3e-2, 1e-2]
-
-            
+            #lambda = [1e-2, 5e-3]#, 1e-3, 5e-4, 1e-4]
+            #eps =    [1e-1, 5e-2]#, 4e-2, 3e-2, 1e-2]
         end
 
         if cfg.petra_max_inner == 0
@@ -535,6 +619,64 @@ function show_result(kind::Symbol, solver::Symbol, p, cfg::Config, result)
     elseif kind === :doublewell && cfg.equality === :linear
         println("Approximate local-minimum references: ", reference_local_minima(p))
     end
+end
+
+function run_ef_comparison(p::PetraBenchmarks.SCACOPFProblem, result)
+    b = p.backend
+
+    println("\n=== EXTENSIVE-FORM SC-ACOPF ===")
+    println("Contingencies: ", length(p.scenarios))
+    println("Response time: ", b.minutes_since_base, " minutes")
+    println("Same psd as PETRA: ", b.psd === p.backend.psd)
+
+    # Reuse the PETRA problem's original psd, ExaJuGO
+    # module, Ipopt optimizer, and base-case initialization.
+    ef = nothing
+    ef_seconds = @elapsed begin
+        ef = PetraBenchmarks.scacopf_extensive_reference(b)
+    end
+
+    f_ef = ef.basecase.total_objective
+    f_petra = result.objective
+
+    @assert f_ef !== nothing && isfinite(f_ef)
+    @assert isfinite(f_petra)
+
+    # Compare base-case dispatch in MW.
+    pg_petra = result.x[b.dispatch]
+    pg_ef = ef.basecase.p_g
+
+    @assert length(pg_petra) == length(pg_ef)
+
+    dispatch_diff = norm(pg_petra .- pg_ef, Inf) * b.psd.MVAbase
+
+    diff = f_petra - f_ef
+    rel_diff = diff / max(abs(f_ef), 1.0)
+
+    println("\n=== PETRA vs EXTENSIVE FORM ===")
+
+    @printf("PETRA objective:       %.10e\n", f_petra)
+    @printf("EF objective:          %.10e\n", f_ef)
+    @printf("Objective difference:  %+.6e\n", diff)
+    @printf("Relative difference:   %+.6e\n", rel_diff)
+
+    @printf("EF base cost:          %.10e\n", ef.basecase.base_cost)
+    @printf("EF recourse cost:      %.10e\n", ef.basecase.recourse_cost)
+
+    omega = (1.0 - b.psd.delta) / length(ef.contingency)
+    recourse_check = omega * sum(c.cont_cost for c in ef.contingency)
+    @printf("EF recourse reconstructed: %.10e\n", recourse_check)
+    @printf("EF recourse discrepancy:   %.3e\n", recourse_check - ef.basecase.recourse_cost)
+
+    @printf("Max dispatch diff:     %.6e MW\n", dispatch_diff)
+
+    println("ProxDec pg:", pg_petra)
+    println("EF      pg:", pg_ef)
+
+    @printf("PETRA solve time:      %.3f s\n", result.elapsed_seconds)
+    @printf("EF solve time:         %.3f s\n", ef_seconds)
+
+    return ef
 end
 
 function reference_ok(kind::Symbol, p, cfg::Config, result)
@@ -661,6 +803,21 @@ function _run_benchmarks(cfg::Config)
                 result = run_solver(kind, solver, p, cfg)
                 show_result(kind, solver, p, cfg, result)
                 push!(rows, result_row(kind, solver, p, cfg, result))
+
+                # Optional extensive-form comparison for SC-ACOPF.
+                if kind === :scacopf && cfg.ef
+                    try
+                        run_ef_comparison(p, result)
+                    catch err
+                        println(stderr, "ERROR in SC-ACOPF extensive-form solve: ", sprint(showerror, err))
+                        if cfg.verbose
+                           showerror(stderr, err, catch_backtrace())
+                           println(stderr)
+                        end
+                        failures += 1
+                    end
+                end
+
                 status = getfield_or(result, :status, :unknown)
                 converged = success_status(solver, status)
                 if !converged

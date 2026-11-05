@@ -8,25 +8,92 @@ using .SCACOPFSetup
 
 const PB = PetraBenchmarks
 
+function parse_smoke_args(args)
+    minutes = 5.0
+    do_ef = false
+
+    i = 1
+    while i <= length(args)
+        arg = args[i]
+
+        if arg == "--minutes-since-base"
+            i < length(args) || error("Missing value for --minutes-since-base")
+            i += 1
+            minutes = parse(Float64, args[i])
+
+        elseif arg == "--ef"
+            do_ef = true
+
+        elseif arg in ("--help", "-h")
+            println("Usage: smoke_scacopf.jl [--minutes-since-base FLOAT] [--ef]")
+            exit(0)
+        else
+            error("Unknown option: $arg")
+        end
+
+        i += 1
+    end
+
+    isfinite(minutes) && minutes > 0 || error("--minutes-since-base must be positive and finite")
+    return minutes, do_ef
+end
+
+minutes_since_base, do_ef = parse_smoke_args(ARGS)
+@printf("Contingency response time: %.2f minutes\n", minutes_since_base)
+if do_ef
+    println("Extensive form SC-ACOPF will be solved at the end.")
+end
+
 exajugo_root = SCACOPFSetup.exajugo_root()
 const EXA = SCACOPFSetup.load_exajugo()
 
 case_dir = joinpath(exajugo_root, "examples", "500bus")
 
-psd, files = SCACOPFSetup.load_instance(EXA; case_dir=case_dir, con_file="case-3conting.con")
+#psd, files = SCACOPFSetup.load_instance(EXA; case_dir=case_dir, con_file="case-3conting.con")
+#psd, files = SCACOPFSetup.load_instance(EXA; case_dir=case_dir, con_file="case-8contingsevere.con")
+psd, files = SCACOPFSetup.load_instance(EXA; case_dir=case_dir, con_file="case-sandbox.con")
 
-opt = optimizer_with_attributes(Ipopt.Optimizer, "print_level" => 0,
-                                "tol" => 1e-7, "constr_viol_tol" => 1e-7,
-                                "max_iter" => 1000)
+
+# --------------------------------------------------
+# Experimental scaling of physical violation penalties
+# --------------------------------------------------
+penalty_scales = Dict(
+    :P => 1.0,   # Active-power imbalance
+    :Q => 1.0,   # Reactive-power imbalance
+    :S => 1.0,   # Line and transformer overloads
+)
+
+for (kind, scale) in penalty_scales
+    psd.a[kind] *= scale
+    psd.b[kind] *= scale
+end
+
+println("SC-ACOPF penalty coefficients:")
+for kind in (:P, :Q, :S)
+    println("  $kind: a=$(psd.a[kind]), b=$(psd.b[kind])")
+end
+
+
+#opt = optimizer_with_attributes(Ipopt.Optimizer, "print_level" => 0,
+#                                "tol" => 1e-7, "constr_viol_tol" => 1e-7,
+#                                "max_iter" => 1000)
+
+hsl_lib = "/usr/WS2/hiop/software/spack/opt/spack/linux-rhel8-icelake/gcc-10.3.1/coinhsl-2015.06.23-nszs3vct4qvtgythawqu2kdue5zx5pjj/lib/libcoinhsl.so"
+@assert isfile(hsl_lib) "HSL library not found: $hsl_lib"
+
+opt = JuMP.optimizer_with_attributes(Ipopt.Optimizer, "print_level" => 0, "tol" => 1e-8,
+                                     "constr_viol_tol" => 1e-8, "max_iter" => 1000,
+                                     "hsllib" => hsl_lib, "linear_solver" => "ma57",
+                                     "ma57_pivot_order" => 2)
+
 lambda0 = 1e-3
 
 println("\nBuilding SC-ACOPF benchmark ...")
 
-build_time = @elapsed p = PB.scacopf(EXA, psd, opt;
-                                     lambda_init=lambda0,
-                                     use_huber_like_penalty=true)
+build_time = @elapsed p = PB.scacopf(EXA, psd, opt; lambda_init=lambda0, use_huber_like_penalty=true,
+                                     minutes_since_base=minutes_since_base)
 
-@assert PB.num_scenarios(p) == 3
+#@assert PB.num_scenarios(p) == 3
 
 println("Master dimension: ", PB.num_master(p))
 println("Dispatch variables: ", length(p.backend.dispatch))
@@ -77,8 +144,8 @@ println("Proximal oracle: OK")
 # Short PETRA smoke test.
 # ---------------------------------------------------
 
-opts = PB.PetraOptions(lambda_schedule = [1e-3, 1e-4], epsilon_schedule = [1e-2, 1e-3], max_inner = 10,
-                       alpha_strategy = :adaptive_diagonal, alpha_start = 0.2, alpha_min = 1e-6,
+opts = PB.PetraOptions(lambda_schedule = [1e-8, 1e-9], epsilon_schedule = [1e-2, 1e-3], max_inner = 50,
+                       alpha_strategy = :adaptive_diagonal, alpha_start = 4000, alpha_min = 1.0,
                        alpha_shrink = 0.5, alpha_grow = 2.0,
                        sigma = 0.1, rho_bar = 0.1, rho_good = 0.8,
                        secant_memory = 1, secant_ridge = 0.1, secant_step_tol = 1e-9,
@@ -106,7 +173,7 @@ println("Rejected steps: ", result.rejected_steps)
 # Optional extensive-form comparison.
 # ---------------------------------------------------
 
-if "--ef" in ARGS
+if do_ef 
     println("\nSolving extensive-form SC-ACOPF ...")
 
     ef_time = @elapsed ef = PB.scacopf_extensive_reference(p.backend)
@@ -126,8 +193,8 @@ if "--ef" in ARGS
     println("\nFixed-dispatch recourse at EF dispatch:")
 
     for k in 1:length(ef.contingency)
-        sol = EXA.solve_contingency(psd, k, ef.basecase, opt;
-                                    quadratic_relaxation_k=Inf,
+        sol = EXA.solve_contingency(psd, k, ef.basecase, opt; quadratic_relaxation_k=Inf,
+                                    minutes_since_base=minutes_since_base,
                                     use_huber_like_penalty=true)
         @printf("k=%d EF penalty=%12.5e standalone=%12.5e diff=%12.5e\n",
                  k, ef.contingency[k].cont_cost, sol.cont_cost,

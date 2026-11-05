@@ -17,6 +17,7 @@ struct SCACOPFBackend{D,O,B,M}
     dispatch::Vector{Int}
     var_index::Dict{JuMP.VariableRef,Int}
     use_huber::Bool
+    minutes_since_base::Float64 
 end
 
 struct SCACOPFScenario{B,C}
@@ -45,9 +46,13 @@ The base ACOPF is solved once to obtain a starting point.
 One reusable master and one reusable proximal NLP per
 contingency are constructed.
 """
-function scacopf(exa::Module, psd, optimizer; lambda_init::Real=1e-3, use_huber_like_penalty::Bool=true)
+function scacopf(exa::Module, psd, optimizer; lambda_init::Real=1e-3,
+                 use_huber_like_penalty::Bool=true, minutes_since_base::Float64=5.0)
     lambda_init > 0 && isfinite(lambda_init) ||
         throw(ArgumentError("lambda_init must be positive"))
+
+    isfinite(minutes_since_base) && minutes_since_base > 0 ||
+        throw(ArgumentError("minutes_since_base must be positive"))
 
     ncont = size(psd.K, 1)
     ncont > 0 || error("SC-ACOPF needs at least one contingency")
@@ -94,8 +99,8 @@ function scacopf(exa::Module, psd, optimizer; lambda_init::Real=1e-3, use_huber_
 
     x0 = rinit.x
 
-    backend = SCACOPFBackend(psd, exa, optimizer, base, master,
-                             dispatch, index, use_huber_like_penalty)
+    backend = SCACOPFBackend(psd, exa, optimizer, base, master, dispatch, index,
+                             use_huber_like_penalty, minutes_since_base::Float64)
 
     # Build every proximal contingency model once.
     kappa0 = 1.0 / (2.0 * lambda_init * omega)
@@ -103,6 +108,7 @@ function scacopf(exa::Module, psd, optimizer; lambda_init::Real=1e-3, use_huber_
 
     for k in 1:ncont
         ctx = exa.solve_contingency(psd, k, base, optimizer; quadratic_relaxation_k=kappa0,
+                                    minutes_since_base=minutes_since_base,
                                     use_huber_like_penalty=use_huber_like_penalty, build_for_proxdec=true)
 
         push!(scenarios, SCACOPFScenario(backend, k, ctx, omega))

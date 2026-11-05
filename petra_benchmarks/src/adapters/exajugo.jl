@@ -44,6 +44,7 @@ function scacopf_fixed_contingency(b::SCACOPFBackend, k::Int, x::AbstractVector{
     base = scacopf_base_solution(b, x)
 
     return b.exa.solve_contingency(b.psd, k, base, b.optimizer; quadratic_relaxation_k=Inf,
+                                   minutes_since_base=b.minutes_since_base,
                                    use_huber_like_penalty=b.use_huber)
 end
 
@@ -98,5 +99,6 @@ end
 function scacopf_extensive_reference(b::SCACOPFBackend)
     return b.exa.solve_SC_ACOPF(b.psd, b.optimizer; previous_solution=b.base_solution,
                                 quadratic_relaxation_k=Inf,
+                                minutes_since_base=b.minutes_since_base,
                                 use_huber_like_penalty=b.use_huber)
 end
