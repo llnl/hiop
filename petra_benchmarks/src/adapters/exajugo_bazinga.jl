@@ -103,7 +103,9 @@ function (g::SCACOPFALProx)(u::AbstractVector)
         val += scenario_value(s, x)
     end
 
-    return val
+    # Return the objective centered at the initial point.
+    offset = g.initial_value
+    return offset === nothing ? val : val - offset
 end
 
 function Bazinga.prox!(out::AbstractVector, g::SCACOPFALProx, v::AbstractVector, gamma::Real)
@@ -123,23 +125,26 @@ function Bazinga.prox!(out::AbstractVector, g::SCACOPFALProx, v::AbstractVector,
     isfinite(gamma) && gamma > 0 ||
         throw(ArgumentError("Invalid proximal stepsize"))
 
-    # Bazinga ALS/ALPS initializes with gamma = eps(Float64).
-    # Such a coefficient would be numerically impossible
-    # for Ipopt. At the feasible starting point, use the
-    # limiting identity proximal step instead.
+    # Bazinga ALS/ALPS initializes with gamma = eps(Float64). Such a coefficient would be
+    # numerically impossible At the feasible starting point, use the limiting identity
+    # proximal step instead.
     if gamma == eps(Float64)
         maximum(abs, v .- g.u0) <= 1e-10 ||
-            error("Machine-epsilon prox outside initial point")
+             error("Machine-epsilon prox outside initial point")
 
         copyto!(out, v)
 
         if g.initial_value === nothing
-            g.initial_value = g(v)
-            isfinite(g.initial_value) ||
-                error("Initial SCACOPF AL objective is not finite")
+            f0 = g(v)  # Unshifted initial objective
+            isfinite(f0) || error("Initial SCACOPF AL objective is not finite")
+
+            g.initial_value = f0
+
+            Printf.@printf("[SCACOPF-AL] objective offset = %.12e\n", f0)
+            Printf.@printf("[SCACOPF-AL] centered initial objective = 0; expected mu0 = 0.1\n")
         end
 
-        return g.initial_value::Float64
+        return 0.0
     end
 
     # -----------------------------------------------
@@ -149,7 +154,28 @@ function Bazinga.prox!(out::AbstractVector, g::SCACOPFALProx, v::AbstractVector,
     alpha = 1.0 / (2.0*gamma)
     isfinite(alpha) || error("Master proximal coefficient overflow")
 
+    # Report the first few actual PANOC+ proximal stepsizes.
+    if g.master_nlps < 5
+       v_master = @view v[1:n]
+
+       # Constant omitted from the expanded quadratic objective.
+       omitted = alpha * sum(abs2, v_master)
+
+       Printf.@printf("[AL-PROX] call=%d gamma=%.6e alpha=%.6e omitted=%.6e ulp=%.6e\n",
+                       g.master_nlps + 1, gamma, alpha, omitted, eps(abs(omitted)))
+    end
+
     r = b.exa.reoptimize_proxdec_master!(b.master, @view(v[1:n]), zeros(Float64, n), alpha)
+
+    if g.master_nlps < 5
+       dx = r.x .- @view(v[1:n])
+
+       # Numerically stable reconstruction of the proximal objective.
+       reconstructed = r.base_value + alpha * sum(abs2, dx)
+
+       Printf.@printf("[AL-MASTER] step_inf=%.6e base=%.9e M_recon=%.9e recon_err=%.3e\n",
+                       norm(dx, Inf), r.base_value, reconstructed, r.master_value - reconstructed)
+    end
 
     out[1:n] .= r.x
     g.master_nlps += 1
@@ -176,12 +202,26 @@ function Bazinga.prox!(out::AbstractVector, g::SCACOPFALProx, v::AbstractVector,
         g.scenario_nlps += 1
     end
 
-    return val
+    # Return centered g(prox_gamma(v)), not the Moreau envelope.
+    offset = g.initial_value
+    offset === nothing && error("SCACOPF AL objective offset not initialized")
+
+    return val - offset
 end
 
 # -------------------------------------------------------
 # Model construction
 # -------------------------------------------------------
+struct SCACOPFALConstant <: Bazinga.ProximableFunction
+    C::Float64
+end
+
+(f::SCACOPFALConstant)(u::AbstractVector) = f.C
+
+function Bazinga.gradient!(out::AbstractVector, f::SCACOPFALConstant, u::AbstractVector)
+    fill!(out, 0.0)
+    return f.C
+end
 
 function scacopf_bazinga_model(p::SCACOPFProblem)
     dispatch = p.backend.dispatch
@@ -193,14 +233,14 @@ function scacopf_bazinga_model(p::SCACOPFProblem)
     # Complete master state + one dispatch copy per scenario.
     u0 = vcat(p.x0, repeat(pg0, N))
 
-    return (
-        f = SCACOPFALZero(),
-        g = SCACOPFALProx(p, u0),
-        c = SCACOPFALConsensus(p),
-        D = Bazinga.ZeroSet(),
-        u0 = u0,
-        y0 = zeros(Float64, N*ng)
-    )
+    return (f = SCACOPFALConstant(100.0), g = SCACOPFALProx(p, u0),
+            c = SCACOPFALConsensus(p), D = Bazinga.ZeroSet(),
+            u0 = u0, y0 = zeros(Float64, N*ng))
+
+
+    return (f = SCACOPFALZero(), g = SCACOPFALProx(p, u0),
+            c = SCACOPFALConsensus(p), D = Bazinga.ZeroSet(),
+            u0 = u0, y0 = zeros(Float64, N*ng))
 end
 
 # -------------------------------------------------------
