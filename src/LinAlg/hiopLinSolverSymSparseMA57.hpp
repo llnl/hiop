@@ -204,7 +204,6 @@ protected:
   virtual void fill_triplet_values_array(double* values_triplet)
   {
     // no fill is required for this base "triplet" implementation since the triplet array is already populated
-    assert(dynamic_cast<hiopMatrixSparseTriplet*>(M_));
     assert(M_->M() == values_triplet);  // pointers should coincide
   }
 

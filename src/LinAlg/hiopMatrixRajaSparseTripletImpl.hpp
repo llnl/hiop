@@ -140,6 +140,11 @@ template<class MEMBACKEND, class RAJAEXECPOL>
 void hiopMatrixRajaSparseTriplet<MEMBACKEND, RAJAEXECPOL>::setToZero()
 {
   setToConstant(0.0);
+  // KKT assembly registers row blocks incrementally. Clearing the matrix starts
+  // a new assembly pass, so the registration cursor must be reset as well.
+  if(row_starts_ != nullptr) {
+    row_starts_->register_row_st_ = 0;
+  }
 }
 
 /**
@@ -642,10 +647,10 @@ template<class MEMBACKEND, class RAJAEXECPOL>
 void hiopMatrixRajaSparseTriplet<MEMBACKEND, RAJAEXECPOL>::copy_to(int* irow, int* jcol, double* val)
 {
   assert(irow && jcol && val);
-  auto& resmgr = umpire::ResourceManager::getInstance();
-  resmgr.copy(irow, iRow_);
-  resmgr.copy(jcol, jCol_);
-  resmgr.copy(val, values_);
+  copyFromDev();
+  std::memcpy(irow, iRow_host_, nnz_ * sizeof(int));
+  std::memcpy(jcol, jCol_host_, nnz_ * sizeof(int));
+  std::memcpy(val, values_host_, nnz_ * sizeof(double));
 }
 
 template<class MEMBACKEND, class RAJAEXECPOL>

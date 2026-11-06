@@ -16,6 +16,9 @@ hiopLinSolverSymSparseMA57::hiopLinSolverSymSparseMA57(hiopMatrixSparse* M, hiop
     : hiopLinSolverSymSparse(M, nlp)
 {
   constructor_part();
+  assert(M);
+  n_ = M->n();
+  nnz_ = M->numberOfNonzeros();
 }
 hiopLinSolverSymSparseMA57::~hiopLinSolverSymSparseMA57()
 {

@@ -148,6 +148,9 @@ public:
   /// Total number of inner IR steps
   double nTotalIterRefinInner;
 
+  /// Number of current-system GPU linear-solver retries performed with a CPU fallback
+  int nGpuLinsolFallbacks;
+
   inline void initialize()
   {
     tmTotalPerIter.reset();
@@ -168,6 +171,7 @@ public:
     tmTotalSolveInner = 0.;
     tmTotalResid = 0.;
     nTotalIterRefinInner = 0.;
+    nGpuLinsolFallbacks = 0;
   }
 
   inline void start_optimiz_iteration()
@@ -229,7 +233,8 @@ public:
     ss << "\tsolve rhs-manip " << tmTotalSolveRhsManip << "s  "
        << "  inner solve " << tmTotalSolveInner << "s  "
        << "  resid " << tmTotalResid << "s  "
-       << "  IR " << nTotalIterRefinInner << "iters  " << std::endl;
+       << "  IR " << nTotalIterRefinInner << "iters  "
+       << "  GPU fallbacks " << nGpuLinsolFallbacks << std::endl;
 
     return ss.str();
   }

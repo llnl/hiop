@@ -498,12 +498,24 @@ bool hiopBiCGStabSolver::solve(hiopVector* b)
     }
 
     if(ML_opr_) {
-      ML_opr_->times_vec(*ph_, *pk_);
+      if(!ML_opr_->times_vec(*ph_, *pk_)) {
+        flag_ = 5;
+        iter_ = ii;
+        b->copyFrom(*xmin_);
+        ss_info_ << "BiCGStab preconditioner application failed at iteration " << ii << "." << std::endl;
+        return false;
+      }
     } else {
       ph_->copyFrom(*pk_);
     }
     if(MR_opr_) {
-      MR_opr_->times_vec(*ph_, *ph_);
+      if(!MR_opr_->times_vec(*ph_, *ph_)) {
+        flag_ = 5;
+        iter_ = ii;
+        b->copyFrom(*xmin_);
+        ss_info_ << "BiCGStab preconditioner application failed at iteration " << ii << "." << std::endl;
+        return false;
+      }
     }
 
     A_opr_->times_vec(*v_, *ph_);
@@ -578,12 +590,24 @@ bool hiopBiCGStabSolver::solve(hiopVector* b)
     }
 
     if(ML_opr_) {
-      ML_opr_->times_vec(*ph_, *sk_);
+      if(!ML_opr_->times_vec(*ph_, *sk_)) {
+        flag_ = 5;
+        iter_ = ii + 0.5;
+        b->copyFrom(*xmin_);
+        ss_info_ << "BiCGStab preconditioner application failed at iteration " << iter_ << "." << std::endl;
+        return false;
+      }
     } else {
       ph_->copyFrom(*sk_);
     }
     if(MR_opr_) {
-      MR_opr_->times_vec(*ph_, *ph_);
+      if(!MR_opr_->times_vec(*ph_, *ph_)) {
+        flag_ = 5;
+        iter_ = ii + 0.5;
+        b->copyFrom(*xmin_);
+        ss_info_ << "BiCGStab preconditioner application failed at iteration " << iter_ << "." << std::endl;
+        return false;
+      }
     }
 
     A_opr_->times_vec(*t_, *ph_);
