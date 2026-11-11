@@ -25,6 +25,7 @@ include("adapters/exajugo.jl")
 include("adapters/exajugo_petra.jl")
 
 include("adapters/exajugo_bazinga_masternlp.jl")
+include("adapters/exajugo_bazinga_reduced.jl")
 
 export AbstractBenchmark, AbstractScalarOracle, WeightedAbsolute, AffineScenario
 export scalar_value, scalar_prox, scenario_value, prox_scenario

@@ -179,6 +179,16 @@ function Bazinga.prox!(out::AbstractVector, g::SCACOPFALProx, v::AbstractVector,
                        norm(dx, Inf), r.base_value, reconstructed, r.master_value - reconstructed)
     end
 
+    if g.master_nlps < 5 || g.master_nlps % 20 == 0
+        vmaster = @view v[1:n]
+
+        center_feas = master_feasibility(p, vmaster)
+        center_bounds = bound_violation(p, vmaster)
+
+        Printf.@printf(
+        "[AL-MASTER-CENTER] call=%d feas=%.3e bounds=%.3e\n", g.master_nlps + 1, center_feas, center_bounds)
+    end
+    
     out[1:n] .= r.x
     g.master_nlps += 1
 
@@ -235,9 +245,9 @@ function scacopf_bazinga_model(p::SCACOPFProblem)
     # Complete master state + one dispatch copy per scenario.
     u0 = vcat(p.x0, repeat(pg0, N))
 
-    return (f = SCACOPFALConstant(100.0), g = SCACOPFALProx(p, u0),
-            c = SCACOPFALConsensus(p), D = Bazinga.ZeroSet(),
-            u0 = u0, y0 = zeros(Float64, N*ng))
+    #return (f = SCACOPFALConstant(100.0), g = SCACOPFALProx(p, u0),
+    #        c = SCACOPFALConsensus(p), D = Bazinga.ZeroSet(),
+    #        u0 = u0, y0 = zeros(Float64, N*ng))
 
 
     return (f = SCACOPFALZero(), g = SCACOPFALProx(p, u0),
@@ -250,9 +260,17 @@ end
 # -------------------------------------------------------
 
 function solve_scacopf_bazinga(p::SCACOPFProblem; method::Symbol=:alps, tol::Real=1e-4,
-                               maxit::Int=100, verbose::Bool=false, al_trace::Bool=false)
-    data = scacopf_bazinga_model(p)
+                               maxit::Int=100, verbose::Bool=false, al_trace::Bool=false,
+                               reduced::Bool=get(ENV, "SCACOPF_AL_REDUCED", "1") == "1")
+    data = reduced ? scacopf_bazinga_reduced_model(p) : scacopf_bazinga_model(p)
+    ng = length(p.backend.dispatch)
+    N = num_scenarios(p)
 
+    Printf.@printf("[SCACOPF-AL] method=%s reduced=%s primal_dim=%d panoc_dim=%d multipliers=%d\n",
+                   string(method), string(reduced), length(data.u0),
+                   length(data.u0) + (method === :als ? length(data.y0) : 0),
+                   length(data.y0))
+    
     stats = ALWorkStats(nterms=num_scenarios(p), trace=al_trace)
 
     g_counted = CountedNonsmooth(data.g, stats)
@@ -265,14 +283,19 @@ function solve_scacopf_bazinga(p::SCACOPFProblem; method::Symbol=:alps, tol::Rea
         throw(ArgumentError("Expected :als or :alps"))
     end
 
+    panoc_maxit = parse(Int, get(ENV, "SCACOPF_PANOC_MAXIT", "1000"))
+    
     (u, y, nouter, ninner, elapsed, status,
      inner_tol, residual, slack, penalties) =
         algorithm(data.f, g_counted, data.c, data.D, data.u0, data.y0;
                   tol=tol, maxit=maxit, verbose=verbose,
-                  subsolver=TracedPANOCFactory(stats))
+                  subsolver=TracedPANOCFactory(stats, panoc_maxit),
+                  subsolver_maxit=panoc_maxit)
 
     n = num_master(p)
-    x = copy(u[1:n])
+    x = if reduced scacopf_recover_reduced_master!(data.g, u)
+    else copy(u[1:num_master(p)])
+    end
 
     cval = zeros(Float64, length(data.y0))
     Bazinga.eval!(cval, data.c, u)
@@ -288,5 +311,7 @@ function solve_scacopf_bazinga(p::SCACOPFProblem; method::Symbol=:alps, tol::Rea
             penalties=copy(penalties), prox_calls=stats.prox_calls, master_prox_calls=data.g.master_nlps,
             scenario_prox_calls=data.g.scenario_nlps,
             panoc_seconds=sum(row.panoc_seconds for row in stats.history; init=0.0),
-            al_history=copy(stats.history))
+            al_history=copy(stats.history), bazinga_variables = length(data.u0),
+            dispatch_dimension = length(p.backend.dispatch),
+            fixed_master_value_nlps = reduced ? data.g.fixed_master_nlps : 0)
 end

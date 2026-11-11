@@ -69,17 +69,20 @@ end
 # `subsolver` keyword argument.
 struct TracedPANOCFactory
     stats::ALWorkStats
+    maxit::Int
 end
+TracedPANOCFactory(stats::ALWorkStats) = TracedPANOCFactory(stats, 1000)
 
 struct TracedPANOC{S}
     solver::S
     stats::ALWorkStats
     inner_tol::Float64
+    maxit::Int
 end
 
 function (factory::TracedPANOCFactory)(; tol, verbose)
-    solver = Bazinga.ProximalAlgorithms.PANOCplus(tol=tol, verbose=verbose)
-    return TracedPANOC(solver, factory.stats, Float64(tol))
+    solver = Bazinga.ProximalAlgorithms.PANOCplus(tol=tol, verbose=verbose, maxit=factory.maxit)
+    return TracedPANOC(solver, factory.stats, Float64(tol), factory.maxit)
 end
 
 function (wrapper::TracedPANOC)(; f, g, x0)
@@ -107,6 +110,11 @@ function (wrapper::TracedPANOC)(; f, g, x0)
                 rpad(row.scenario_prox_calls, 12), rpad(round(row.panoc_seconds; digits=6), 14), row.inner_tol)
     end
 
+    if niter >= wrapper.maxit
+        error("PANOC+ reached maxit=$(wrapper.maxit) at inner_tol=$(wrapper.inner_tol); " *
+              "aborting ALS before multiplier update.")
+    end
+    
     return solution, niter
 end
 
