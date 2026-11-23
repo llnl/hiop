@@ -90,7 +90,26 @@ function (wrapper::TracedPANOC)(; f, g, x0)
     prox_before = stats.prox_calls
 
     t0 = time_ns()
-    solution, niter = wrapper.solver(f=f, g=g, x0=x0)
+    #solution, niter = wrapper.solver(f=f, g=g, x0=x0)
+    if f isa Bazinga.AugLagFun && (f.c isa SCACOPFALDispatchConsensus || f.c isa SCACOPFALConsensus)
+
+        # ALPS with SC-ACOPF dispatch-consensus constraints.
+        N = num_scenarios(f.c.p)
+        mu_min = minimum(f.mu)
+
+        (isfinite(mu_min) && mu_min > 0) || error("Invalid ALPS penalty parameter: $mu_min")
+
+        # Lipschitz bound for the implicit AL smooth gradient  L <= (N+1)/minimum(mu).
+        L = (N + 1) / mu_min
+        gamma0 = 0.95 / L
+
+        Printf.@printf("[ALPS-PANOC] mu_min=%.6e L=%.6e gamma0=%.6e\n", mu_min, L, gamma0)
+
+        solution, niter = wrapper.solver(f=f, g=g, x0=x0, gamma=gamma0, adaptive=true)
+    else
+        # Preserve existing ALS and other benchmark behavior.
+        solution, niter = wrapper.solver(f=f, g=g, x0=x0)
+    end
     elapsed = (time_ns() - t0) * 1e-9
 
     nprox = stats.prox_calls - prox_before

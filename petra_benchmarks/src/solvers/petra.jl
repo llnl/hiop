@@ -29,7 +29,7 @@ Base.@kwdef struct PetraOptions
     max_inner::Int = 300
     max_consecutive_rejections::Int = 20
     feasibility_tol::Float64 = 1e-8
-    model_decrease_tol::Float64 = 1e-12
+    #model_decrease_tol::Float64 = 1e-12
 
     # accuracy for master solves, \eps^{master}_s in the revision paper
     eps_master::Float64 = 1e-12
@@ -97,7 +97,7 @@ function _check_petra_options(o::PetraOptions)
     o.max_consecutive_rejections > 0 ||
         throw(ArgumentError("max_consecutive_rejections must be positive"))
     o.feasibility_tol > 0 || throw(ArgumentError("feasibility_tol must be positive"))
-    o.model_decrease_tol >= 0 || throw(ArgumentError("model_decrease_tol must be nonnegative"))
+    #o.model_decrease_tol >= 0 || throw(ArgumentError("model_decrease_tol must be nonnegative"))
 
     if o.alpha_strategy === :adaptive_diagonal
         o.secant_memory >= 1 || throw(ArgumentError("secant_memory must be positive"))
@@ -584,7 +584,8 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
                        (abs(f_center) + abs(f_trial) +
                        abs(linear_term) + abs(quadratic_term))
 
-            if !isfinite(pred) || pred < -max(options.model_decrease_tol, err_pred)
+            #if !isfinite(pred) || pred < -max(options.model_decrease_tol, err_pred)
+            if !isfinite(pred) || pred < -max(eps_master, err_pred)
                 println("master_no_descent: pred is ", pred)
                 stage_status = :master_no_descent
                 break
