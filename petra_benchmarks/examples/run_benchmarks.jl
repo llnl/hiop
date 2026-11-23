@@ -69,6 +69,11 @@ Base.@kwdef mutable struct Config
     petra_lambdas::Union{Nothing,Vector{Float64}} = nothing
     petra_epsilons::Union{Nothing,Vector{Float64}} = nothing
 
+    # accuracies of oracles, options in petra.jl
+    petra_eps_master::Float64 = 1e-12
+    petra_eps_proxpoint::Float64 = 1e-12
+    petra_eps_proxgrad::Float64 = 0
+    
     #SC-ACOPF options
     minutes_since_base::Float64 = 5.0
     ef::Bool = false
@@ -135,6 +140,9 @@ function usage(io::IO=stdout)
                                     Stabilization update stategy
       --petra-alpha-start FLOAT     Initial alpha for adaptive mode or gamma for portfolio_diagonal)(default 1)
       --petra-alpha-min FLOAT       Adaptive lower bound (default 1e-4)
+      --petra-eps-master FLOAT      Accuracy of master solves
+      --petra-eps-proxpoint FLOAT   Accuracy of oracle proximal points
+      --petra-eps-proxgrad          Accuracy of oracle proximal subgradients
       --petra-lambda-schedule CSV   Explicit lambda values
       --petra-epsilon-schedule CSV  Explicit epsilon values
 
@@ -181,7 +189,8 @@ function _key_value!(values::Dict{String,String}, key::AbstractString, value::Ab
                "--csv", "--q-file", "--returns-file", "--upper-file", "--target-return",
                "--exajugo-root", "--case-dir", "--minutes-since-base", "--ef",
                "--raw-file", "--rop-file", "--inl-file", "--con-file",
-               "--petra-lambda-schedule", "--petra-epsilon-schedule")
+               "--petra-lambda-schedule", "--petra-epsilon-schedule", "--petra-eps-master",
+               "--petra-eps-proxpoint", "--petra-eps-proxgrad")
     key in allowed || throw(ArgumentError("unknown option $key; use --help"))
     isempty(value) && throw(ArgumentError("missing value for $key"))
     haskey(values, key) && throw(ArgumentError("duplicate option $key"))
@@ -240,6 +249,11 @@ function parse_cli(args::Vector{String})
     cfg.alpha_strategy = Symbol(_normalize(get(values, "--alpha-strategy", "paper")))
     cfg.petra_alpha_start = parse(Float64, get(values, "--petra-alpha-start", "1.0"))
     cfg.petra_alpha_min = parse(Float64, get(values, "--petra-alpha-min", "1e-4"))
+
+    cfg.petra_eps_master = parse(Float64, get(values, "--petra-eps-master", "1e-12"))
+    cfg.petra_eps_proxpoint = parse(Float64, get(values, "--petra-eps-proxpoint", "1e-12"))
+    cfg.petra_eps_proxgrad = parse(Float64, get(values, "--petra-eps-proxgrad", "0.0"))
+
     cfg.petra_secant_memory = parse(Int, get(values, "--petra-secant-memory", "5"))
     cfg.petra_secant_ridge = parse(Float64, get(values, "--petra-secant-ridge", "0.1"))
     cfg.petra_secant_step_tol = parse(Float64, get(values, "--petra-secant-step-tol", "1e-9"))    
@@ -302,7 +316,14 @@ function parse_cli(args::Vector{String})
         throw(ArgumentError("--petra-alpha-start must be positive"))
     isfinite(cfg.petra_alpha_min) && cfg.petra_alpha_min > 0 ||
         throw(ArgumentError("--petra-alpha-min must be positive"))
-        
+
+    isfinite(cfg.petra_eps_master) && cfg.petra_eps_master > 0 ||
+        throw(ArgumentError("--petra-eps-master must be positive"))
+    isfinite(cfg.petra_eps_proxpoint) && cfg.petra_eps_proxpoint > 0 ||
+        throw(ArgumentError("--petra-eps-proxpoint must be positive"))
+    isfinite(cfg.petra_eps_proxgrad) && cfg.petra_eps_proxgrad >= 0 ||
+        throw(ArgumentError("--petra-eps-proxgrad must be nonnegative"))
+    
     cfg.petra_secant_memory >= 1 || throw(ArgumentError("--petra-secant-memory must be positive"))
     isfinite(cfg.petra_secant_ridge) && cfg.petra_secant_ridge >= 0 ||
         throw(ArgumentError("--petra-secant-ridge must be nonnegative"))
@@ -418,9 +439,12 @@ function make_problem(kind::Symbol, cfg::Config)
         psd, files = SCACOPFSetup.load_instance(exa; case_dir=cfg.case_dir, raw_file=cfg.raw_file,
                                                 rop_file=cfg.rop_file, inl_file=cfg.inl_file,
                                                 con_file=cfg.con_file)
-
-        break_generation_cost_ties!(psd; max_tie_per_mw=0.05)
-
+        if psd.G[1, :CTYP] != 1
+            break_generation_cost_ties!(psd; max_tie_per_mw=0.05)
+        else
+            @info "Polynomial generator costs: skipping PWL tie-breaking"
+        end
+        
         # --------------------------------------------------
         # Experimental scaling of physical violation penalties
         # --------------------------------------------------
@@ -443,6 +467,7 @@ function make_problem(kind::Symbol, cfg::Config)
         hsl_lib = "/usr/WS2/hiop/software/spack/opt/spack/linux-rhel8-icelake/gcc-10.3.1/coinhsl-2015.06.23-nszs3vct4qvtgythawqu2kdue5zx5pjj/lib/libcoinhsl.so"
         @assert isfile(hsl_lib) "HSL library not found: $hsl_lib"
 
+        println("HSLLIB:", hsl_lib)
         optimizer = JuMP.optimizer_with_attributes(Ipopt.Optimizer, "print_level" => 0, "tol" => 1e-9,
                                                    "constr_viol_tol" => 1e-9, "max_iter" => 1000,
                                                    "hsllib" => hsl_lib, "linear_solver" => "ma57",
@@ -532,6 +557,8 @@ function petra_options(cfg::Config)
                                         feasibility_tol = cfg.problem === :scacopf ? 1e-6 : 1e-8,
                                         max_inner=maxinner, alpha_strategy=cfg.alpha_strategy,
                                         alpha_start=cfg.petra_alpha_start, alpha_min=cfg.petra_alpha_min,
+                                        eps_master=cfg.petra_eps_master, eps_proxpoint=cfg.petra_eps_proxpoint,
+                                        eps_proxgrad=cfg.petra_eps_proxgrad,
                                         secant_memory=cfg.petra_secant_memory,
                                         secant_ridge=cfg.petra_secant_ridge,
                                         secant_step_tol=cfg.petra_secant_step_tol,

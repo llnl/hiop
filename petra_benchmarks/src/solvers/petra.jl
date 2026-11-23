@@ -29,8 +29,19 @@ Base.@kwdef struct PetraOptions
     max_inner::Int = 300
     max_consecutive_rejections::Int = 20
     feasibility_tol::Float64 = 1e-8
-    model_decrease_tol::Float64 = 1e-10
+    model_decrease_tol::Float64 = 1e-12
 
+    # accuracy for master solves, \eps^{master}_s in the revision paper
+    eps_master::Float64 = 1e-12
+    # accuracy for the oracle's proximal points, \omega_{is} in the revision paper 
+    eps_proxpoint::Float64 = 1e-12
+
+    # Accuracy for the oracle's proximal subgradient, \beta_{is} in the rev. paper.
+    # By default it is set dynamically at the beginning of inner iterations to
+    # eps_proxpoint/\lambda_s. This is default behaviour corresponds to a nonpositive
+    # value. A positive value indicates a fixed accuracy across all iterations.
+    eps_proxgrad::Float64 = 0
+    
     # Rolling "multi"-secant diagonal stabilization
     secant_memory::Int = 5
     secant_ridge::Float64 = 0.1
@@ -57,6 +68,12 @@ function _check_petra_options(o::PetraOptions)
     isfinite(o.ratio_noise_factor) && o.ratio_noise_factor > 0 ||
         throw(ArgumentError("ratio_noise_factor must be positive"))
     o.max_numerical_retries >= 0 || throw(ArgumentError("max_numerical_retries must be nonnegative"))
+
+    isfinite(o.eps_master) && o.eps_master > 0 || throw(ArgumentError("eps_master must be positive"))
+    isfinite(o.eps_proxpoint) && o.eps_proxpoint > 0 ||
+        throw(ArgumentError("eps_proxpoint must be positive"))
+    isfinite(o.eps_proxgrad) && o.eps_proxgrad >= 0 ||
+        throw(ArgumentError("eps_proxgrad must be nonnegative"))
 
     isfinite(o.alpha_floor) && o.alpha_floor > 0 ||
         throw(ArgumentError("alpha_floor must be positive"))
@@ -154,15 +171,6 @@ function _petra_moreau_data(p::AbstractBenchmark, x::AbstractVector{<:Real}, lam
         abs_terms += abs(q.envelope)
         grad .+= q.subgrad
         max_displacement = max(max_displacement, norm(x .- q.w, Inf))
-
-        # Optional certified envelope-value accuracy.
-        # Absence means an exact oracle is assumed.
-        if hasproperty(q, :envelope_error_bound)
-            err = Float64(q.envelope_error_bound)
-            isfinite(err) && err >= 0 ||
-                throw(ArgumentError("Invalid oracle value error bound"))
-            value_error_bound += err
-        end
     end
 
     return (objective=Float64(value), smooth=f, abs_terms=abs_terms,
@@ -340,10 +348,10 @@ function _petra_ratio_decision(pred::Real, ared::Real, sqstep::Real, sigma::Real
     err_den = err_pred + 8.0 * eps(Float64) * (abs(pred) + abs(sigma * sqstep))
 
     # The master model has a reliably negative denominator.
-    if den < -err_den
-        println("master_no_descent: den is negative.", den, "    err_den is ", err_den)
-        return (:master_no_descent, NaN)
-    end
+    #if den < -err_den
+    #    println("master_no_descent: den is negative. ", den, "    err_den is ", err_den)
+    #    return (:master_no_descent, NaN)
+    #end
 
     # Actual objective increase beyond the error bound.
     if ared < -err_ared
@@ -462,6 +470,14 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
             secants.h .= clamp.(scale .* h_warm, 0.0, majorization_factor / lambda)
         end
 
+        # solve accuracies for master and oracles
+        eps_master = options.eps_master
+        eps_proxpoint = options.eps_proxpoint
+        eps_proxgrad = options.eps_proxgrad <=0 ? eps_proxpoint/lambda : options.eps_proxgrad
+        # accuracy floor
+        E = eps_master + num_scenarios(p) * eps_proxgrad
+        kappa = 10
+        
         data = _petra_moreau_data(p, x, lambda)
         nbatches += 1
         last_data = data
@@ -475,6 +491,8 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
 
         if options.verbose
             println("\nPETRA stage=", stage, " lambda=", lambda, " epsilon=", epsilon, " alpha0=", alpha_initial)
+            println("      eps: master=", eps_master, " proxpoint=", eps_proxpoint,
+                    " proxgrad=", eps_proxgrad, " | accuracy floor=", E)
             _petra_print_header()
         end
 
@@ -719,9 +737,8 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
                     accepted = true
                 else
                     
-                    # No reliable ratio -> check if the step is zero in floating point arithmetic
-                    #fixme: need to introduce master KKT tolerance and fixed-lambda acceptable stationarity tolerance
-                    if step_inf <= 1e-10 && opt_lag <= 1e-3
+                    # Inconclusive reduction -> check if approximate stationarity condition 
+                    if step_inf <= eps_master && opt_lag <= kappa*E
                         Printf.@printf("  approximate stationarity\n")
                         stage_status = :approx_stationarity
                         accepted = true
