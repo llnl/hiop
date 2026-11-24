@@ -122,18 +122,18 @@ class EvaluationManager:
     self._wait_times = [] if profiling else None
     self._turnaround_times = [] if profiling else None
 
-    self.logger.info(f"{self.task_name} EvaluationManager initialized with executors:")
+    self.logger.info("%s EvaluationManager initialized with executors:", self.task_name)
     for key, executor in self.executors.items():
-      self.logger.info(f"  - {key}: {executor}")
+      self.logger.info("  - %s: %s", key, executor)
 
   def __del__(self) -> None:
     """Shutdown managed executors during object destruction."""
     for executor in self.executors.values():
       try:
         executor.shutdown(wait=False)
-        self.logger.info(f"{self.task_name} EvaluationManager destroyed and executors shut down.")
+        self.logger.info("%s EvaluationManager destroyed and executors shut down.", self.task_name)
       except Exception as e:
-        self.logger.warning(f"{self.task_name} Error shutting down executor: {e}")    
+        self.logger.warning("%s Error shutting down executor: %s", self.task_name, e)
 
   def _get_num_workers(self):
     """Return number of workers."""
@@ -238,7 +238,7 @@ class EvaluationManager:
           future_obj = self.executors[key].submit(fn, *args, **kwargs)
 
         self._queue.append([x, future_obj, key, submit_time])
-        self.logger.info(f"{self.task_name} Submitted f({x})")
+        self.logger.info("%s Submitted f(%s)", self.task_name, x)
 
   def retrieve_results(self) -> tuple[list, list]:
     """Retrieves the results of completed tasks.
@@ -358,12 +358,12 @@ class EvaluationManager:
               print(f"DEBUG: Profiling enabled but result type is {type(fx)}, not a timing dict", flush=True)
 
           self._completed_F[-1] = fx
-          self.logger.info(f"{self.task_name} Completed: f({x}) = {fx}")
+          self.logger.info("%s Completed: f(%s) = %s", self.task_name, x, fx)
 
         except CancelledError:
-          self.logger.warning(f"{self.task_name} The execution of x={x} was cancelled.")
+          self.logger.warning("%s The execution of x=%s was cancelled.", self.task_name, x)
         except Exception as e:
-          self.logger.warning(f"{self.task_name} Task f({x}) raised an exception: {e}")
+          self.logger.warning("%s Task f(%s) raised an exception: %s", self.task_name, x, e)
 
       else:
         new_queue.append(item)
@@ -377,9 +377,7 @@ class EvaluationManager:
       n_running_futures = sum(1 for f in futures if not f.done())
       n_done_futures = len(futures) - n_running_futures
       self.logger.info(
-          f"Status: {len(self._completed_X)} harvested results, "
-          f"{n_running_futures} running tasks, {n_done_futures} completed tasks still in queue."
+          "Status: %d harvested results, "
+          "%d running tasks, %d completed tasks still in queue.",
+          len(self._completed_X), n_running_futures, n_done_futures
       )
-
-
-  
