@@ -32,9 +32,9 @@ Base.@kwdef struct PetraOptions
     #model_decrease_tol::Float64 = 1e-12
 
     # accuracy for master solves, \eps^{master}_s in the revision paper
-    eps_master::Float64 = 1e-12
-    # accuracy for the oracle's proximal points, \omega_{is} in the revision paper 
-    eps_proxpoint::Float64 = 1e-12
+    eps_master::Float64 = 1e-14
+    # accuracy for the oracle's proximal points, eps^{oracle} in the revision paper 
+    eps_proxpoint::Float64 = 1e-14
 
     # Accuracy for the oracle's proximal subgradient, \beta_{is} in the rev. paper.
     # By default it is set dynamically at the beginning of inner iterations to
@@ -348,10 +348,10 @@ function _petra_ratio_decision(pred::Real, ared::Real, sqstep::Real, sigma::Real
     err_den = err_pred + 8.0 * eps(Float64) * (abs(pred) + abs(sigma * sqstep))
 
     # The master model has a reliably negative denominator.
-    #if den < -err_den
-    #    println("master_no_descent: den is negative. ", den, "    err_den is ", err_den)
-    #    return (:master_no_descent, NaN)
-    #end
+    if den < -err_den
+        println("master_no_descent: den is negative. ", den, "    err_den is ", err_den)
+        return (:master_no_descent, NaN)
+    end
 
     # Actual objective increase beyond the error bound.
     if ared < -err_ared
@@ -447,7 +447,7 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
         # :paper reproduces Algorithm 4.1 initialization;
         # :adaptive_scalar uses the value from the last outer iteration (see alpha_warm) and is adaptive
         #within the inner iterations, in the spirit of trust-region
-        # :affine_tight  uses a valid tighter upper model for the present affine scenarios.
+        # :affine_tight  uses a valid tighter upper model for the present affine scenarios (not supported anymore)
 
         alpha = if options.alpha_strategy === :portfolio_diagonal
             options.alpha_start  # This is gamma, not max(D).
@@ -477,6 +477,7 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
         # accuracy floor
         E = eps_master + num_scenarios(p) * eps_proxgrad
         kappa = 10
+        epsilon = max(epsilon, kappa*E)
         
         data = _petra_moreau_data(p, x, lambda)
         nbatches += 1
@@ -583,9 +584,9 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
             err_pred = options.ratio_noise_factor * eps(Float64) *
                        (abs(f_center) + abs(f_trial) +
                        abs(linear_term) + abs(quadratic_term))
-
-            #if !isfinite(pred) || pred < -max(options.model_decrease_tol, err_pred)
-            if !isfinite(pred) || pred < -max(eps_master, err_pred)
+            err_pred = max(eps_master, err_pred)
+            
+            if !isfinite(pred) || pred < -err_pred
                 println("master_no_descent: pred is ", pred)
                 stage_status = :master_no_descent
                 break
@@ -604,12 +605,13 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
 
                 ared = data.objective - trial_data.objective
 
-                # Floating-point uncertainty plus oracle value errors.
+                # Floating-point uncertainty 
                 err_ared = options.ratio_noise_factor * eps(Float64) *
                            (data.abs_terms + trial_data.abs_terms) +
                            data.value_error_bound +
                            trial_data.value_error_bound
-
+                err_ared = max(eps_proxpoint, err_ared)
+                err_ared = max(eps_master, err_ared)
                 decision, ratio = _petra_ratio_decision(pred, ared, sqstep_ratio,
                                                         options.sigma, options.rho_bar,
                                                         err_pred, err_ared)
@@ -738,9 +740,9 @@ function solve_petra(p::AbstractBenchmark; x0::AbstractVector{<:Real}=p.x0, opti
                     accepted = true
                 else
                     
-                    # Inconclusive reduction -> check if approximate stationarity condition 
+                    # Inconclusive reduction 
                     if step_inf <= eps_master && opt_lag <= kappa*E
-                        Printf.@printf("  approximate stationarity\n")
+                        Printf.@printf("  reached  stationarity with an Inconclusive step\n")
                         stage_status = :approx_stationarity
                         accepted = true
                     else

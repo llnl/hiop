@@ -70,8 +70,8 @@ Base.@kwdef mutable struct Config
     petra_epsilons::Union{Nothing,Vector{Float64}} = nothing
 
     # accuracies of oracles, options in petra.jl
-    petra_eps_master::Float64 = 1e-12
-    petra_eps_proxpoint::Float64 = 1e-12
+    petra_eps_master::Float64 = 1e-14
+    petra_eps_proxpoint::Float64 = 1e-14
     petra_eps_proxgrad::Float64 = 0
     
     #SC-ACOPF options
@@ -250,8 +250,8 @@ function parse_cli(args::Vector{String})
     cfg.petra_alpha_start = parse(Float64, get(values, "--petra-alpha-start", "1.0"))
     cfg.petra_alpha_min = parse(Float64, get(values, "--petra-alpha-min", "1e-4"))
 
-    cfg.petra_eps_master = parse(Float64, get(values, "--petra-eps-master", "1e-12"))
-    cfg.petra_eps_proxpoint = parse(Float64, get(values, "--petra-eps-proxpoint", "1e-12"))
+    cfg.petra_eps_master = parse(Float64, get(values, "--petra-eps-master", "1e-14"))
+    cfg.petra_eps_proxpoint = parse(Float64, get(values, "--petra-eps-proxpoint", "1e-14"))
     cfg.petra_eps_proxgrad = parse(Float64, get(values, "--petra-eps-proxgrad", "0.0"))
 
     cfg.petra_secant_memory = parse(Int, get(values, "--petra-secant-memory", "5"))
