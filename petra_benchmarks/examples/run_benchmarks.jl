@@ -627,6 +627,44 @@ function show_result(kind::Symbol, solver::Symbol, p, cfg::Config, result)
         end
     end
 
+    # Common portfolio postprocessing for PETRA, ALS, and ALPS.
+    if kind === :portfolio
+        tol_zero = 1e-8
+        x_raw = result.x
+        x_proj = copy(x_raw)
+
+        w = @view x_proj[1:p.n_assets]
+
+        n_zeroed = count(v -> v != 0.0 && abs(v) < tol_zero, w)
+
+        for i in eachindex(w)
+            if abs(w[i]) < tol_zero
+                w[i] = 0.0
+            end
+        end
+
+        # Update the return slack after thresholding.
+        x_proj[end] = max(0.0, dot(p.returns, w) - p.target_return)
+
+        # Use the SAME original objective evaluator for all solvers.
+        f_raw = original_objective(p, x_raw)
+        f_proj = original_objective(p, x_proj)
+
+        println("\n--- $(uppercase(string(solver))) portfolio postprocessing ---")
+        @printf("Threshold:                 %.1e\n", tol_zero)
+        @printf("Entries zeroed:            %d\n", n_zeroed)
+        @printf("Solver-reported objective: %.12e\n", result.objective)
+        @printf("Original objective:        %.12e\n", f_raw)
+        @printf("Thresholded objective:     %.12e\n", f_proj)
+        @printf("Objective difference:      %+.12e\n", f_proj - f_raw)
+        @printf("Nonzero assets:            %d\n", count(!iszero, w))
+        @printf("Budget residual:           %.3e\n", abs(sum(w) - 1.0))
+        @printf("Return violation:          %.3e\n", max(0.0, p.target_return - dot(p.returns, w)))
+        @printf("Master feasibility:        %.3e\n", master_feasibility(p, x_proj))
+        @printf("Bound violation:           %.3e\n", bound_violation(p, x_proj))
+        println("Thresholded weights:       ", collect(w))
+    end    
+    
     if kind === :scacopf
         x = getfield_or(result, :x)
         if x !== missing
