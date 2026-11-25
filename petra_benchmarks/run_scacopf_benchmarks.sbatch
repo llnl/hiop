@@ -32,7 +32,7 @@ SCACOPF_SOLVERS=(petra als alps)
 # --tol and --maxit affect ALS/ALPS, not the PETRA continuation tolerances.
 SCACOPF_OPTIONS=(
   --verbose --al-trace
-  --tol 1e-6 --maxit 250
+  --tol 1e-6 --maxit 200 --max-proxcalls 
   --petra-schedule full
   --petra-alpha-start 4000
   --petra-alpha-min 1
@@ -40,8 +40,8 @@ SCACOPF_OPTIONS=(
   --petra-secant-ridge 0.1
   --petra-secant-memory 5
   --alpha-strategy adaptive_diagonal
-  --petra-lambda-schedule 1e-2,1e-3,1e-4,1e-5,1e-6,1e-7,1e-8
-  --petra-epsilon-schedule 1e-2,1e-3,1e-4,1e-5,1e-6,1e-7,1e-8
+  --petra-lambda-schedule  1e-2,1e-3,1e-4,1e-5,1e-6,1e-7,1e-8
+  --petra-epsilon-schedule 1000,1000,1000,1000,1000,1000,1000
   --petra-eps-master 1e-8
   --petra-eps-proxpoint 1e-6
 )
@@ -85,7 +85,7 @@ exitfile="${SCACOPF_RUN_DIR}/${stem}.exitcode"
 cmdfile="${SCACOPF_RUN_DIR}/${stem}.command"
 
 cd "$SCACOPF_BENCH_DIR"
-cmd=(julia --project=. examples/run_benchmarks.jl scacopf "$solver"
+cmd=(julia --color=no --project=. examples/run_benchmarks.jl scacopf "$solver"
   --raw-file "$raw_file" --rop-file "$rop_file"
   --inl-file "$inl_file" --con-file "$con_file"
   --minutes-since-base "$minutes"
@@ -103,9 +103,15 @@ printf 'Case: %s, minutes-since-base: %s, solver: %s\n' \
   "$case_name" "$minutes" "$solver" > "$log"
 printf 'Command: %s\n' "$(cat "$cmdfile")" >> "$log"
 
+# Give Julia a pseudo-terminal so it emits progress output promptly.
+# Preserve safe shell quoting for every command argument.
+printf -v cmdline '%q ' "${cmd[@]}"
+
 set +e
-"${cmd[@]}" >> "$log" 2>&1
+script -q -e -f -c "$cmdline" /dev/null \
+    < /dev/null >> "$log" 2>&1
 rc=$?
 set -e
+
 printf '%s\n' "$rc" > "$exitfile"
 exit "$rc"

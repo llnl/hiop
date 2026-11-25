@@ -46,9 +46,25 @@ end
 Base.@kwdef mutable struct ALWorkStats
     nterms::Int
     trace::Bool = false
+    # Includes the machine-epsilon initialization callback.
     prox_calls::Int = 0
+    # Completed master + all-contingency proximal batches.
+    real_prox_calls::Int = 0
+    # Maximum number of complete batches; 0 = unlimited.
+    max_proxcalls::Int = 0
+    # Used to account for time in an interrupted PANOC+ solve.
+    active_inner_start_ns::UInt64 = 0
     history::Vector{NamedTuple} = NamedTuple[]
 end
+
+struct ProxCallLimitReached <: Exception
+    limit::Int
+    completed::Int
+end
+
+Base.showerror(io::IO, err::ProxCallLimitReached) =
+    print(io, "SC-ACOPF proximal batch limit ", err.limit,
+          " reached (", err.completed, " complete batches)")
 
 # Count calls to the nonsmooth proximal operator.
 # Each call evaluates nterms individual scenario proximal maps.
@@ -60,8 +76,22 @@ end
 (g::CountedNonsmooth)(x) = g.original(x)
 
 function Bazinga.prox!(out, g::CountedNonsmooth, x, gamma)
+    # Bazinga initializes at gamma=eps(Float64).
+    # This special callback does not perform ACOPF proximal solves.
+    initialization = (gamma == eps(Float64))
+
+    # Stop BEFORE starting another complete proximal batch.
+    if !initialization && g.stats.max_proxcalls > 0 &&
+        g.stats.real_prox_calls >= g.stats.max_proxcalls
+        throw(ProxCallLimitReached(g.stats.max_proxcalls, g.stats.real_prox_calls))
+    end
+
+    # One master proximal NLP + all contingency proximal NLPs.
     value = Bazinga.prox!(out, g.original, x, gamma)
     g.stats.prox_calls += 1
+    if !initialization
+        g.stats.real_prox_calls += 1
+    end
     return value
 end
 
@@ -87,9 +117,11 @@ end
 
 function (wrapper::TracedPANOC)(; f, g, x0)
     stats = wrapper.stats
-    prox_before = stats.prox_calls
 
+    prox_before = stats.prox_calls
     t0 = time_ns()
+    stats.active_inner_start_ns = t0
+
     #solution, niter = wrapper.solver(f=f, g=g, x0=x0)
     if f isa Bazinga.AugLagFun && (f.c isa SCACOPFALDispatchConsensus || f.c isa SCACOPFALConsensus)
 
@@ -110,8 +142,9 @@ function (wrapper::TracedPANOC)(; f, g, x0)
         # Preserve existing ALS and other benchmark behavior.
         solution, niter = wrapper.solver(f=f, g=g, x0=x0)
     end
+    
     elapsed = (time_ns() - t0) * 1e-9
-
+    stats.active_inner_start_ns = 0
     nprox = stats.prox_calls - prox_before
 
     row = (outer = length(stats.history) + 1, panoc_iterations = niter, prox_calls = nprox,

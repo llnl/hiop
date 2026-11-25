@@ -260,19 +260,21 @@ end
 # -------------------------------------------------------
 
 function solve_scacopf_bazinga(p::SCACOPFProblem; method::Symbol=:alps, tol::Real=1e-4,
-                               maxit::Int=100, verbose::Bool=false, al_trace::Bool=false,
+                               maxit::Int=100, max_proxcalls::Int=0,
+                               verbose::Bool=false, al_trace::Bool=false,
                                reduced::Bool=get(ENV, "SCACOPF_AL_REDUCED", "1") == "1")
     data = reduced ? scacopf_bazinga_reduced_model(p) : scacopf_bazinga_model(p)
     ng = length(p.backend.dispatch)
     N = num_scenarios(p)
 
+    max_proxcalls >= 0 || throw(ArgumentError("max_proxcalls must be nonnegative"))
+    
     Printf.@printf("[SCACOPF-AL] method=%s reduced=%s primal_dim=%d panoc_dim=%d multipliers=%d\n",
                    string(method), string(reduced), length(data.u0),
                    length(data.u0) + (method === :als ? length(data.y0) : 0),
                    length(data.y0))
     
-    stats = ALWorkStats(nterms=num_scenarios(p), trace=al_trace)
-
+    stats = ALWorkStats(nterms=num_scenarios(p), trace=al_trace, max_proxcalls=max_proxcalls)
     g_counted = CountedNonsmooth(data.g, stats)
 
     algorithm = if method === :als
@@ -285,12 +287,63 @@ function solve_scacopf_bazinga(p::SCACOPFProblem; method::Symbol=:alps, tol::Rea
 
     panoc_maxit = parse(Int, get(ENV, "SCACOPF_PANOC_MAXIT", "1000"))
     
-    (u, y, nouter, ninner, elapsed, status,
-     inner_tol, residual, slack, penalties) =
+    #(u, y, nouter, ninner, elapsed, status,
+    # inner_tol, residual, slack, penalties) =
+    #    algorithm(data.f, g_counted, data.c, data.D, data.u0, data.y0;
+    #              tol=tol, maxit=maxit, verbose=verbose,
+    #              subsolver=TracedPANOCFactory(stats, panoc_maxit),
+    #              subsolver_maxit=panoc_maxit)
+
+    
+    solve_start_ns = time_ns()
+
+    outcome = try
         algorithm(data.f, g_counted, data.c, data.D, data.u0, data.y0;
                   tol=tol, maxit=maxit, verbose=verbose,
                   subsolver=TracedPANOCFactory(stats, panoc_maxit),
                   subsolver_maxit=panoc_maxit)
+
+    catch err
+        # Propagate unrelated numerical and programming errors.
+        err isa ProxCallLimitReached || rethrow()
+
+        # PANOC+ was interrupted during a subproblem.
+        # There is no accepted final AL iterate to recover.
+        # Counts from finished subsolves remain available.
+
+        partial_seconds = stats.active_inner_start_ns ==
+            0 ? 0.0 : (time_ns() - stats.active_inner_start_ns) * 1e-9
+        elapsed = (time_ns() - solve_start_ns) * 1e-9
+
+        msg = "max_proxcalls=$(err.limit) reached after " *
+            "$(err.completed) complete joint prox batches; " *
+            "iteration counts exclude unfinished PANOC+ subsolve"
+
+        println(stderr, "[SCACOPF-AL-LIMIT] ", msg)
+        flush(stderr)
+
+    return (method=method, status=:max_proxcalls,
+            # No verified final solution at an interrupted PANOC+ step.
+            x=missing, objective=missing, master_feasibility=missing,
+            bound_violation=missing, consensus_residual=missing,
+            # Only completed inner subsolves are included.
+            outer_iterations=length(stats.history),
+            inner_iterations=sum(row.panoc_iterations for row in stats.history; init=0),
+            # Completed proximal batches, including interrupted inner solve.
+            prox_calls=stats.real_prox_calls,
+            master_prox_calls=data.g.master_nlps,
+            scenario_prox_calls=data.g.scenario_nlps,
+            elapsed_seconds=elapsed,
+            panoc_seconds=sum(row.panoc_seconds for row in stats.history; init=0.0) + partial_seconds,
+            al_history=copy(stats.history),
+            bazinga_variables=length(data.u0),
+            dispatch_dimension=ng,
+            fixed_master_value_nlps= reduced ? data.g.fixed_master_nlps : 0,
+            error=msg)
+    end
+
+    # Normal termination (no proximal-call limit reached).
+    (u, y, nouter, ninner, elapsed, status, inner_tol, residual, slack, penalties) = outcome
 
     n = num_master(p)
     x = if reduced scacopf_recover_reduced_master!(data.g, u)
@@ -308,7 +361,7 @@ function solve_scacopf_bazinga(p::SCACOPFProblem; method::Symbol=:alps, tol::Rea
             consensus_residual=norm(cval, Inf), bazinga_primal_residual=residual,
             outer_iterations=nouter, inner_iterations=ninner, elapsed_seconds=elapsed,
             final_inner_tolerance=inner_tol, multipliers=copy(y), slacks=copy(slack),
-            penalties=copy(penalties), prox_calls=stats.prox_calls, master_prox_calls=data.g.master_nlps,
+            penalties=copy(penalties), prox_calls=stats.real_prox_calls, master_prox_calls=data.g.master_nlps,
             scenario_prox_calls=data.g.scenario_nlps,
             panoc_seconds=sum(row.panoc_seconds for row in stats.history; init=0.0),
             al_history=copy(stats.history), bazinga_variables = length(data.u0),

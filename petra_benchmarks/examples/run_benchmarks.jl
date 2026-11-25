@@ -37,6 +37,7 @@ Base.@kwdef mutable struct Config
     equality::Symbol = :linear        # double-well master equality
     tol::Float64 = 1e-6              # ALS/ALPS outer tolerance
     maxit::Int = 150                 # ALS/ALPS outer iterations
+    max_proxcalls::Int = 0           # SC-ACOPF ALS/ALPS proximal batches (0 = unlimited)
     petra_schedule::Symbol = :smoke   # :smoke or :full
     petra_max_inner::Int = 0         # 0 means preset: smoke=300, full=3000
     # :paper or :affine_tight or :adaptive_scalar or :adaptive_diagonal or :portfolio_diagonal
@@ -100,6 +101,7 @@ function usage(io::IO=stdout)
       --solver NAME              Alternative to positional SOLVER
       --tol FLOAT                ALS/ALPS outer tolerance (default 1e-6)
       --maxit INT                ALS/ALPS max outer iterations (default 150)
+      --max-proxcalls INT        SC-ACOPF ALS/ALPS proximal batches (0 = unlimited)
       --verbose                  Enable each solver's detailed iteration output
       --al-trace                 Print one cost summary per ALS/ALPS outer iteration
       --strict                   Exit nonzero if a solver doesn't converge
@@ -183,7 +185,7 @@ end
 function _key_value!(values::Dict{String,String}, key::AbstractString, value::AbstractString)
     allowed = ("--problem", "--solver", "--scenarios", "--nassets",
                "--alpha", "--seed", "--asset-upper", "--equality",
-               "--tol", "--maxit", "--petra-schedule", "--petra-max-inner",
+               "--tol", "--maxit", "--max-proxcalls", "--petra-schedule", "--petra-max-inner",
                "--alpha-strategy", "--petra-alpha-start", "--petra-alpha-min",
                "--petra-secant-memory", "--petra-secant-ridge", "--petra-secant-step-tol",
                "--csv", "--q-file", "--returns-file", "--upper-file", "--target-return",
@@ -243,6 +245,7 @@ function parse_cli(args::Vector{String})
     cfg.asset_upper = parse(Float64, get(values, "--asset-upper", "0.4"))
     cfg.tol = parse(Float64, get(values, "--tol", "1e-6"))
     cfg.maxit = parse(Int, get(values, "--maxit", "150"))
+    cfg.max_proxcalls = parse(Int, get(values, "--max-proxcalls", "0"))
     cfg.petra_max_inner = parse(Int, get(values, "--petra-max-inner", "0"))
     cfg.equality = Symbol(_normalize(get(values, "--equality", "linear")))
     cfg.petra_schedule = Symbol(_normalize(get(values, "--petra-schedule", "smoke")))
@@ -280,7 +283,9 @@ function parse_cli(args::Vector{String})
     cfg.minutes_since_base = parse(Float64, get(values, "--minutes-since-base", "5.0"))
     isfinite(cfg.minutes_since_base) && cfg.minutes_since_base > 0 ||
         throw(ArgumentError("--minutes-since-base must be positive"))
-
+    if cfg.max_proxcalls > 0 && cfg.problem !== :scacopf
+        throw(ArgumentError("--max-proxcalls applies only to scacopf ALS/ALPS"))
+    end
     if cfg.ef && cfg.problem !== :scacopf
         throw(ArgumentError("--ef is supported only for scacopf"))
     end
@@ -303,6 +308,8 @@ function parse_cli(args::Vector{String})
     isfinite(cfg.tol) && cfg.tol > 0 ||
         throw(ArgumentError("--tol must be positive and finite"))
     cfg.maxit > 0 || throw(ArgumentError("--maxit must be positive"))
+    cfg.max_proxcalls >= 0 ||
+        throw(ArgumentError("--max-proxcalls must be nonnegative (0 = unlimited)"))
     cfg.petra_max_inner >= 0 ||
         throw(ArgumentError("--petra-max-inner must be nonnegative"))
     cfg.equality in (:linear, :curved) ||
@@ -574,7 +581,7 @@ function run_solver(kind::Symbol, solver::Symbol, p, cfg::Config)
 
         if kind === :scacopf
             return solve_scacopf_bazinga(p; method=solver, tol=cfg.tol, maxit=cfg.maxit,
-                                         verbose=cfg.verbose, al_trace=cfg.al_trace)
+                                         max_proxcalls=cfg.max_proxcalls, verbose=cfg.verbose, al_trace=cfg.al_trace)
         elseif kind === :portfolio
             return solve_portfolio_native(p; method=solver, tol=cfg.tol, maxit=cfg.maxit,
                                           verbose=cfg.verbose, al_trace=cfg.al_trace)

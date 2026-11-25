@@ -15,6 +15,10 @@ import math
 import re
 from pathlib import Path
 
+# SC-ACOPF CSV files can contain large serialized solution vectors.
+# Python's default CSV field limit (128 KiB) is insufficient.
+csv.field_size_limit(100 * 1024 * 1024)
+
 SOLVERS = ('petra', 'als', 'alps')
 GOOD_STATUS = {'petra': 'converged', 'als': 'first_order', 'alps': 'first_order'}
 NUMBER = r'[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eEdD][+-]?\d+)?'
