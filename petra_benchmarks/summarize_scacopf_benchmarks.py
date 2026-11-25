@@ -29,6 +29,7 @@ FIELDS = (
     'case', 'minutes_since_base', 'solver', 'status', 'exitcode',
     'objective', 'ef_objective', 'delta_percent',
     'outer_iterations', 'inner_iterations', 'prox_evaluations',
+    'master_nlp_solves', 'nlp_solves',
     'master_feasibility', 'bound_violation', 'consensus_residual',
     'elapsed_seconds', 'ef_seconds', 'error',
     'raw_file', 'rop_file', 'inl_file', 'con_file',
@@ -82,6 +83,45 @@ def read_manifest(path):
     return cases
 
 
+def nonnegative_int(value):
+    """Return a nonnegative integer from a Julia CSV field, or None."""
+    value = '' if value is None else str(value).strip()
+    return int(value) if re.fullmatch(r'[0-9]+', value) else None
+
+def algorithm_nlp_counts(data, solver):
+    """Count NLP subproblem calls within the algorithmic iterations.
+
+    PETRA:
+        one master sequential NLP per inner iteration
+        + contingency proximal oracle calls.
+
+    ALS/ALPS:
+        one master proximal NLP per real prox batch
+        + contingency proximal NLP calls.
+
+    Excludes initialization, fixed-dispatch value evaluations,
+    postprocessing, and the separate EF reference solve.
+    """
+    if not data:
+        return '', ''
+
+    if solver == 'petra':
+        master = nonnegative_int(data.get('inner_iterations'))
+        contingency = nonnegative_int(data.get('oracle_calls'))
+    else:
+        # Prefer the explicit master NLP counter, if available.
+        master = nonnegative_int(data.get('master_prox_calls'))
+
+        if master is None:
+            # Current Julia CSV uses prox_calls for batch count.
+            master = nonnegative_int(data.get('prox_calls'))
+
+        contingency = nonnegative_int(data.get('scenario_prox_calls'))
+
+    if master is None or contingency is None:
+        return (str(master) if master is not None else ''), ''
+    return str(master), str(master + contingency)
+
 def gather(run_dir):
     cases = read_manifest(run_dir / 'manifest.tsv')
     rows = []
@@ -94,8 +134,11 @@ def gather(run_dir):
             data, parse_error = read_one_csv(run_dir / f'{task_stem}.csv')
             exit_path = run_dir / f'{task_stem}.exitcode'
             exitcode = exit_path.read_text(encoding='utf-8').strip() if exit_path.is_file() else ''
+
             data = data or {}
+            master_nlp_solves, nlp_solves = algorithm_nlp_counts(data, solver)
             objective = finite_float(data.get('objective'))
+            
             delta = None
             if f_ef is not None and objective is not None:
                 # Match the Julia driver's relative-difference denominator.
@@ -123,9 +166,9 @@ def gather(run_dir):
                 'delta_percent': format(delta, '.15g') if delta is not None else '',
                 'outer_iterations': data.get('outer_iterations', ''),
                 'inner_iterations': data.get('inner_iterations', ''),
-                'prox_evaluations': data.get(
-                    'oracle_calls' if solver == 'petra' else 'scenario_prox_calls', ''
-                ),
+                'master_nlp_solves': master_nlp_solves,
+                'nlp_solves': nlp_solves,
+                'prox_evaluations': data.get('oracle_calls' if solver == 'petra' else 'scenario_prox_calls', ''),
                 'master_feasibility': data.get('master_feasibility', ''),
                 'bound_violation': data.get('bound_violation', ''),
                 'consensus_residual': data.get('consensus_residual', ''),
@@ -145,10 +188,15 @@ def slash_iterations(row):
     return f'{outer}/{inner}' if outer and inner else '--'
 
 
-def prox(row):
+#def prox(row):
+#    if not row:
+#        return '--'
+#    value = str(row['prox_evaluations']).strip()
+#    return value or '--'
+def nlps(row):
     if not row:
         return '--'
-    value = str(row['prox_evaluations']).strip()
+    value = str(row.get('nlp_solves', '')).strip()
     return value or '--'
 
 
@@ -171,32 +219,32 @@ def latex_table(cases, rows):
         r'\centering',
         r'\small',
         r'\setlength{\tabcolsep}{3pt}',
-        r'\begin{tabular}{l|rrr|rrr|rrr}',
+        r'\begin{tabular}{|l|crr|crr|crr|}',
         r'\toprule',
-        r'& \multicolumn{3}{c|}{ProxNlp} & \multicolumn{3}{c|}{ALS} & \multicolumn{3}{c}{ALPS} \\',
+        r'& \multicolumn{3}{c|}{ProxNlp} & \multicolumn{3}{c|}{ALS} & \multicolumn{3}{c|}{ALPS} \\',
         r'\midrule',
-        r'\textbf{Problem} & Iter. & Prox. & $\Delta f$ (\%) & Iter. & Prox. & $\Delta f$ (\%) & Iter. & Prox. & $\Delta f$ (\%) \\',
+        r'\textbf{Problem} & Iter & NLPs & $\Delta f$(\%) & Iter & NLPs & $\Delta f$(\%) & Iter & NLPs & $\Delta f$(\%) \\',        
         r'\midrule',
     ]
     for i, case in enumerate(cases):
         key = (case['case'], case['minutes_since_base'])
         label = tex_escape(case['case']) + ' (' + tex_escape(case['minutes_since_base']) + ' min)'
         cells = [label]
+
         for solver in SOLVERS:
             row = by_case.get((*key, solver))
-            cells.extend((slash_iterations(row), prox(row), scientific_percent(row['delta_percent']) if row else '--'))
+            cells.extend((slash_iterations(row), nlps(row), scientific_percent(row['delta_percent']) if row else '--'))        
         out.append(' & '.join(cells) + r' \\')
         if i != len(cases) - 1:
             out.append(r'\midrule')
     out.extend([
         r'\bottomrule',
         r'\end{tabular}',
-        r'\caption{SC-ACOPF benchmarks. Iter. reports outer/inner iterations and Prox. reports '
-        r'proximal-oracle evaluations. $\Delta f=100(f_{\mathrm{method}}-f_{\mathrm{EF}})/'
+        r'\caption{SC-ACOPF benchmarks. Iter reports outer/inner iterations; NLPs counts '
+        r'master subproblem and contingency proximal NLP solves. '
+        r'$\Delta f=100(f_{\mathrm{method}}-f_{\mathrm{EF}})/'
         r'\max\{|f_{\mathrm{EF}}|,1\}$, expressed in percent relative to the '
-        r'extensive-form (EF) reference for the same case and response time. '
-        r'The EF reference is computed after PETRA. Dashes denote unavailable results; '
-        r'check the accompanying CSV for convergence status and feasibility.}',
+        r'extensive-form (EF) reference for the same grid case.}',
         r'\label{tab:scacopf_benchmark_counts}',
         r'\end{table}',
     ])
@@ -213,7 +261,7 @@ def text_report(cases, rows):
         for r in grouped:
             lines.append(
                 f"  {r['solver']:5s} status={r['status']:20s} "
-                f"iter={slash_iterations(r):>11s} prox={prox(r):>9s} "
+                f"iter={slash_iterations(r):>11s} prox={nlps(r):>9s} "
                 f"objective={r['objective'] or '--':>18s} "
                 f"delta%={scientific_percent(r['delta_percent']):>12s} "
                 f"exit={r['exitcode'] or '?'}"
