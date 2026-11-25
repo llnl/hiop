@@ -3,7 +3,6 @@
 
 Usage:
   python3 summarize_simple_benchmarks.py /absolute/path/to/results/run
-
 Creates summary.csv and summary.tex in that directory. Missing jobs remain
 explicitly marked 'missing_csv' rather than being mistaken for convergence.
 The thresholded portfolio objective is read from the Julia log, which prints
@@ -14,7 +13,6 @@ import csv
 import math
 import re
 from pathlib import Path
-
 PROBLEMS = ('absolute', 'capacity', 'doublewell', 'portfolio')
 SOLVERS = ('petra', 'als', 'alps')
 PORTFOLIO_SEEDS = (43, 44, 45)
@@ -30,7 +28,6 @@ FIELDS = (
     'elapsed_seconds', 'error',
 )
 
-
 def petra_step_counts(log_path):
     """Infer '?' classifications from the documented 14-column verbose table.
 
@@ -40,12 +37,10 @@ def petra_step_counts(log_path):
     if not log_path.is_file():
         return '', '', ''
     contents = log_path.read_text(encoding='utf-8', errors='replace')
-
     def get_field(field):
         match = re.search(r'^\s*' + re.escape(field) + r'\s+(\d+)\s*$',
                           contents, flags=re.MULTILINE)
         return match.group(1) if match else ''
-
     inconclusive = 0
     for line in contents.splitlines():
         tokens = line.split()
@@ -57,10 +52,8 @@ def petra_step_counts(log_path):
     return (get_field('accepted_steps'), get_field('rejected_steps'),
             str(inconclusive) if has_trace else '')
 
-
 def portfolio_thresholded_objective(log_path):
     """Extract the reevaluated objective after thresholding portfolio weights.
-
     The current Julia runner prints 'Thresholded objective:', while an earlier
     version printed 'Projected objective:'. Accept both for existing logs.
     """
@@ -74,7 +67,6 @@ def portfolio_thresholded_objective(log_path):
     matches = re.findall(pattern, contents, flags=re.MULTILINE | re.IGNORECASE)
     return matches[-1] if matches else ''
 
-
 def read_single_row(path):
     if not path.is_file():
         return None
@@ -83,7 +75,6 @@ def read_single_row(path):
     if len(data) != 1:
         raise ValueError(f'{path} should contain exactly one result row; found {len(data)}')
     return data[0]
-
 
 def gather(run_dir):
     rows = []
@@ -127,7 +118,6 @@ def gather(run_dir):
             rows.append(result)
     return rows
 
-
 def format_objective(value):
     """Display an objective with 8 significant digits; preserve the raw CSV."""
     try:
@@ -141,57 +131,97 @@ def tex_escape(s):
     return (str(s).replace('\\', r'\textbackslash{}').replace('_', r'\_')
             .replace('&', r'\&').replace('%', r'\%').replace('#', r'\#'))
 
-
 def tex_table(rows):
+    """Compact PETRA/ALS/ALPS comparison; portfolio uses thresholded costs."""
+    def cell(row, field):
+        if row is None:
+            return '--'
+        value = row.get(field)
+        if value is None or str(value).strip() == '':
+            return '--'
+        return tex_escape(value)
+
+    def joined(row, *fields):
+        if row is None:
+            return '--'
+        values = [cell(row, field) for field in fields]
+        return '/'.join(values) if any(v != '--' for v in values) else '--'
+
+    def comparable_objective(row):
+        if row is None:
+            return None
+        # Do not silently substitute raw portfolio objectives if the
+        # post-threshold objective is unavailable for any of the methods.
+        key = ('objective_thresholded' if row['problem'] == 'portfolio'
+               else 'objective')
+        try:
+            val = float(row.get(key, ''))
+        except (ValueError, TypeError):
+            return None
+        return val if math.isfinite(val) else None
+
+    def signed_difference(petra, other):
+        base = comparable_objective(petra)
+        value = comparable_objective(other)
+        if base is None or value is None:
+            return '--'
+        # Signed method-minus-PETRA difference, e.g. +1.2e-8 or -3.4e-7.
+        return re.sub(r'e([+-])0+(\d+)$', r'e\1\2', f'{value - base:+.1e}')
+
+    groups = {}
+    for row in rows:
+        key = (row['problem'], str(row.get('seed') or ''))
+        groups.setdefault(key, {})[row['solver']] = row
+
     out = [
         r'\begin{table}[t]',
         r'\centering',
         r'\small',
-        r'\begin{tabular}{llrrrrrrrrrrl}',
+        r'\begin{tabular}{l|ccc|ccc|ccc}',
         r'\toprule',
-        r'Problem & Method & $f_{\mathrm{final}}$ & $f_{\mathrm{thr}}$ & Outer & Inner & Master & Prox. & Acc. & Rej. & Inc. & Time (s) & Status \\',
+        r'& \multicolumn{3}{c|}{PETRA} & \multicolumn{3}{c|}{ALS} & \multicolumn{3}{c}{ALPS} \\',
+        r'\midrule',
+        r'Problem & Iter. & Prox. & Steps & Iter. & Prox. & $\Delta f$ & Iter. & Prox. & $\Delta f$ \\',
         r'\midrule',
     ]
-    for i, row in enumerate(rows):
-        def cell(field, missing='--'):
-            value = row[field]
-            return tex_escape(value) if value else missing
 
-        secs = row['elapsed_seconds']
-        try:
-            secs = f'{float(secs):.2f}'
-        except (ValueError, TypeError):
-            secs = '--'
-        problem_label = row['problem']
-        if row['seed']:
-            problem_label += f"-{row['seed']}"
-        cols = [
-            tex_escape(problem_label), tex_escape(row['solver']).upper(),
-            format_objective(row['objective']),
-            format_objective(row['objective_thresholded']),
-            cell('outer_iterations'), cell('inner_iterations'),
-            cell('master_nlp_attempts'), cell('scenario_prox_evaluations'),
-            cell('accepted_steps'), cell('rejected_steps'),
-            cell('inconclusive_steps'), secs, cell('status'),
+    for (problem, seed), methods in groups.items():
+        petra, als, alps = (methods.get(s) for s in SOLVERS)
+        label = f'{problem}-{seed}' if seed else problem
+        columns = [
+            tex_escape(label),
+            joined(petra, 'outer_iterations', 'inner_iterations'),
+            cell(petra, 'scenario_prox_evaluations'),
+            joined(petra, 'accepted_steps', 'rejected_steps',
+                   'inconclusive_steps'),
+            joined(als, 'outer_iterations', 'inner_iterations'),
+            cell(als, 'scenario_prox_evaluations'),
+            signed_difference(petra, als),
+            joined(alps, 'outer_iterations', 'inner_iterations'),
+            cell(alps, 'scenario_prox_evaluations'),
+            signed_difference(petra, alps),
         ]
-        out.append(' & '.join(cols) + r' \\')
-        if row['solver'] == 'alps':
-            out.append(r'\bottomrule' if i == len(rows) - 1 else r'\midrule')
+        out.append(' & '.join(columns) + r' \\')
+        out.append(r'\midrule')
+
+    if groups:
+        out[-1] = r'\bottomrule'
+    else:
+        out.append(r'\bottomrule')
+
     out += [
         r'\end{tabular}',
-        r'\caption{Simple benchmarks. PETRA outer iterations are continuation stages;',
-        r'ALS/ALPS outer iterations are augmented-Lagrangian updates. Master counts',
-        r'are PETRA NLP attempts. Prox. counts per-term proximal evaluations;',
-        r'$f_{\mathrm{final}}$ is the solver-reported original objective.',
-        r'For portfolio instances, $f_{\mathrm{thr}}$ is the original objective',
-        r'after setting asset weights of absolute value below $10^{-8}$ to zero.',
-        r'Acc. and Inc. may overlap in PETRA.',
-        r'Dashes mean not applicable or unavailable.}',
+        r'\caption{Simple benchmarks. Iter.: outer/inner iterations; Prox.:',
+        r'proximal-oracle evaluations; Steps: PETRA accepted/rejected/inconclusive',
+        r'(accepted and inconclusive counts can overlap).',
+        r'$\Delta f=f_{\mathrm{method}}-f_{\mathrm{PETRA}}$ is signed.',
+        r'For portfolio, all objectives in $\Delta f$ are reevaluated after',
+        r'setting asset weights with $|w_i|<10^{-8}$ to zero.',
+        r'Dashes denote unavailable values.}',
         r'\label{tab:simple_benchmark_counts}',
         r'\end{table}',
     ]
     return '\n'.join(out) + '\n'
-
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -216,7 +246,6 @@ def main():
               f"inner={row['inner_iterations'] or '-':>5} "
               f"prox={row['scenario_prox_evaluations'] or '-':>7}")
     print(f'Wrote {run_dir / "summary.csv"} and {run_dir / "summary.tex"}')
-
 
 if __name__ == '__main__':
     main()
