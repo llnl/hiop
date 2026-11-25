@@ -518,35 +518,22 @@ function petra_options(cfg::Config)
         eps = [1e-3]
         maxinner = cfg.petra_max_inner == 0 ? 300 : cfg.petra_max_inner
     else
-        # aaa
-        #lambda = [0.1, 0.01, 1e-3, 1e-4, 1e-5, 1e-6, 1e-7, 1e-8]
-        #eps =   [1e-4, 9e-5, 8e-5, 1e-5, 1e-6, 1e-7, 5e-8, 1e-8]
         lambda = [1.0,      0.1,        0.01,     1e-3,        1e-4,       1e-5, 1e-6, 1e-7, 1e-8]
         eps =   [1.01e-5, 1.001e-5,   1.0001e-5, 1.00001e-5, 1.0000001e-5, 1e-5, 1e-6, 1e-7, 1e-8]
-
-        #lambda = [1.0,  0.1,  0.01, 1e-3, 1e-4, 1e-5, 1e-6]
-        #eps =    [0.000016, 0.000015, 0.000014, 0.000013, 0.000012, 0.000001, 0.000001] 
         
         maxinner = cfg.petra_max_inner == 0 ? 3000 : cfg.petra_max_inner
     end
 
-    # SC-ACOPF needs different cost/dispatch scaling from the small synthetic benchmarks due to
+    # SC-ACOPF may need different cost/dispatch scaling  due to
     # lower accuracy in the proximal subproblems (done via NLP solvers)
     if cfg.problem === :scacopf
-
         if cfg.petra_schedule === :smoke
             lambda = [1e-3]
             eps = [1e-2]
 
         else
-            #lambda = [1e-2, 8e-3, 5e-3, 2e-3, 1.8e-3, 1e-3, 9.9e-4, 9.5e-4, 9e-4, 8e-4, 7e-4, 6e-4, 5e-4, 4e-4, 3e-4, 2e-4, 1e-4]
-            #eps    = [1e-1, 1e-2, 1e-2, 1e-2, 1e-2,   1e-2, 1e-2,   1e-2,  1e-2, 1e-2, 1e-2, 1e-2, 1e-2, 1e-2, 1e-2, 1e-2, 1e-2]
-            # bbb
-            lambda = [1e-8]#, 1e-8]
-            eps   =  [1e-2]#, 1e-2]
-            # Schedule for SC-ACOPF.
-            #lambda = [1e-2, 5e-3]#, 1e-3, 5e-4, 1e-4]
-            #eps =    [1e-1, 5e-2]#, 4e-2, 3e-2, 1e-2]
+            lambda = [1e-2, 1e-3, 1e-4, 1e-5, 1e-6, 1e-7, 1e-8]
+            eps =    [100,  100,  100,  100,  10,      1,  0.1]
         end
 
         if cfg.petra_max_inner == 0
@@ -785,7 +772,7 @@ function result_row(kind::Symbol, solver::Symbol, p, cfg::Config,
         final_lambda=getfield_or(result, :final_lambda),
         final_lagged_residual=getfield_or(result, :final_lagged_residual),
         x=string(getfield_or(result, :x)),
-        error=String(err))
+        error=isempty(err) ? String(getfield_or(result, :error, "")) : String(err))
 end
 
 _csvvalue(v) = v === missing ? "" : string(v)

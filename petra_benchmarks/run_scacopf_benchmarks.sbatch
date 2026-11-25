@@ -17,10 +17,11 @@
 # The submit script automatically expands (case, response time, solver).
 # ---------------------------------------------------------------------------
 SCACOPF_CASES=(
-  'n01_s1|/g/g15/petra1/exajugo/examples/T1S3_Offline/Network_01O-3/scenario_1/case.raw|/g/g15/petra1/exajugo/examples/T1S3_Offline/Network_01O-3/case.rop|/g/g15/petra1/exajugo/examples/T1S3_Offline/Network_01O-3/case.inl|/g/g15/petra1/exajugo/examples/T1S3_Offline/Network_01O-3/scenario_1/case_severe.con|1'
-  'n02_s3|/g/g15/petra1/exajugo/examples/T1S3_Offline/Network_02O-3/scenario_3/case.raw|/g/g15/petra1/exajugo/examples/T1S3_Offline/Network_02O-3/case.rop|/g/g15/petra1/exajugo/examples/T1S3_Offline/Network_02O-3/case.inl|/g/g15/petra1/exajugo/examples/T1S3_Offline/Network_02O-3/scenario_3/case_severe.con|1'
-  'n01_s3|/g/g15/petra1/exajugo/examples/T1S3_Offline/Network_01O-3/scenario_3/case.raw|/g/g15/petra1/exajugo/examples/T1S3_Offline/Network_01O-3/case.rop|/g/g15/petra1/exajugo/examples/T1S3_Offline/Network_01O-3/case.inl|/g/g15/petra1/exajugo/examples/T1S3_Offline/Network_01O-3/scenario_3/case_severe.con|1'
-  'bus500_8severe|/g/g15/petra1/exajugo/examples/500bus/case.raw|/g/g15/petra1/exajugo/examples/500bus/case.rop|/g/g15/petra1/exajugo/examples/500bus/case.inl|/g/g15/petra1/exajugo/examples/500bus/case-8contingsevere.con|10,15'
+    'Bus500K1|/g/g15/petra1/exajugo/examples/500bus/case.raw|/g/g15/petra1/exajugo/examples/500bus/case.rop|/g/g15/petra1/exajugo/examples/500bus/case.inl|/g/g15/petra1/exajugo/examples/500bus/case-sandbox.con|15,10'
+    'Bus500K8|/g/g15/petra1/exajugo/examples/500bus/case.raw|/g/g15/petra1/exajugo/examples/500bus/case.rop|/g/g15/petra1/exajugo/examples/500bus/case.inl|/g/g15/petra1/exajugo/examples/500bus/case-8contingsevere.con|15,10'
+  'Net01O1|/g/g15/petra1/exajugo/examples/T1S3_Offline/Network_01O-3/scenario_1/case.raw|/g/g15/petra1/exajugo/examples/T1S3_Offline/Network_01O-3/case.rop|/g/g15/petra1/exajugo/examples/T1S3_Offline/Network_01O-3/case.inl|/g/g15/petra1/exajugo/examples/T1S3_Offline/Network_01O-3/scenario_1/case_severe.con|1'
+  'Net01O2|/g/g15/petra1/exajugo/examples/T1S3_Offline/Network_01O-3/scenario_3/case.raw|/g/g15/petra1/exajugo/examples/T1S3_Offline/Network_01O-3/case.rop|/g/g15/petra1/exajugo/examples/T1S3_Offline/Network_01O-3/case.inl|/g/g15/petra1/exajugo/examples/T1S3_Offline/Network_01O-3/scenario_3/case_severe.con|1'
+  'Net02O|/g/g15/petra1/exajugo/examples/T1S3_Offline/Network_02O-3/scenario_3/case.raw|/g/g15/petra1/exajugo/examples/T1S3_Offline/Network_02O-3/case.rop|/g/g15/petra1/exajugo/examples/T1S3_Offline/Network_02O-3/case.inl|/g/g15/petra1/exajugo/examples/T1S3_Offline/Network_02O-3/scenario_3/case_severe.con|1'
 )
 
 # Slurm concurrency; the submission helper calculates the array range.
@@ -32,7 +33,7 @@ SCACOPF_SOLVERS=(petra als alps)
 # --tol and --maxit affect ALS/ALPS, not the PETRA continuation tolerances.
 SCACOPF_OPTIONS=(
   --verbose --al-trace
-  --tol 1e-6 --maxit 200 --max-proxcalls 
+  --tol 1e-4 --maxit 200 --max-proxcalls 1000
   --petra-schedule full
   --petra-alpha-start 4000
   --petra-alpha-min 1
@@ -40,10 +41,10 @@ SCACOPF_OPTIONS=(
   --petra-secant-ridge 0.1
   --petra-secant-memory 5
   --alpha-strategy adaptive_diagonal
-  --petra-lambda-schedule  1e-2,1e-3,1e-4,1e-5,1e-6,1e-7,1e-8
-  --petra-epsilon-schedule 1000,1000,1000,1000,1000,1000,1000
-  --petra-eps-master 1e-8
-  --petra-eps-proxpoint 1e-6
+  --petra-lambda-schedule  1,1e-1,1e-2,1e-3,1e-4,1e-5,1e-6,1e-7,1e-8
+  --petra-epsilon-schedule 1000,1000,1000,1000,1000,1000,100,10,1
+  --petra-eps-master 1e-7
+  --petra-eps-proxpoint 1e-5
 )
 # ---------------------------------------------------------------------------
 # Do not edit below unless changing the workflow.
