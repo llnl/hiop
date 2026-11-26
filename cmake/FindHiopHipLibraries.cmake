@@ -31,6 +31,7 @@ message(STATUS "Found Hipblas include: ${HIPBLAS_INCLUDE_DIR}")
 message(STATUS "Found Hipblas library: ${HIPBLAS_LIBRARY}")
 find_package(hipcub REQUIRED)
 find_package(rocprim REQUIRED)
+find_package(rocthrust REQUIRED)
 
 target_link_libraries(Hipblas INTERFACE ${HIPBLAS_LIBRARY})
 target_include_directories(Hipblas INTERFACE ${HIPBLAS_INCLUDE_DIR})
@@ -47,6 +48,8 @@ if(HIOP_USE_MAGMA)
 endif()
 
 target_include_directories(hiop_hip INTERFACE ${ROCM_PATH}/include/hipfft)
+# The HIP vector kernels use rocThrust
+target_include_directories(hiop_hip INTERFACE $<BUILD_INTERFACE:${rocthrust_INCLUDE_DIRS}>)
 target_link_libraries(hiop_hip INTERFACE
   hip::hiprand roc::rocrand
   hip::hipfft
